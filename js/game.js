@@ -1,0 +1,5026 @@
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+
+  const TILE = 16;
+  const TEX = 96;
+  const SCALE_DEFAULT = 2.4;
+  const SCALE_FAR = 1;
+  const SCALE_UI = 3;
+  const COLS = 520;
+  const ROWS = 148;
+  const ISLAND_C = 260;
+  const ISLAND_HALF = 228;
+  const ISLAND_ROWS = 85;
+  const SHORE_BASE = 112;
+  const MAX_SLOTS = 8;
+  const HUD_COLS = 4;
+  const MAX_HP = 7;
+  let zoom = SCALE_DEFAULT;
+  let viewW = canvas.width / zoom;
+  let viewH = canvas.height / zoom;
+
+  const TILES = { DEEP: 0, SAND: 3, DIRT: 5, GRASS: 4 };
+
+  const WASH_PERIOD = 12.6;
+
+  const ITEM_DEFS = {
+    shell: { name: "Sea shell", max: 1, xp: 4 },
+    gem: { name: "Sea gem", max: 24, xp: 12 },
+    crystal: { name: "Sea crystal", max: 16, xp: 28 },
+    jelly: { name: "Jellyfish", max: 24, xp: 10 },
+    jelly_green: { name: "Green jellyfish", max: 24, xp: 16 },
+    jelly_white: { name: "White jellyfish", max: 24, xp: 32 },
+    fish_blue: { name: "Blue fish", max: 24, xp: 6 },
+    fish_gold: { name: "Gold fish", max: 24, xp: 8 },
+    fish_reef: { name: "Reef fish", max: 24, xp: 7 },
+    cod: { name: "Cod", max: 24, xp: 6 },
+    trout: { name: "Trout", max: 24, xp: 7 },
+    salmon: { name: "Salmon", max: 24, xp: 8 },
+    catch_crab: { name: "Crab", max: 24, xp: 12 },
+    mini_shark: { name: "Mini shark", max: 24, xp: 18 },
+    shark: { name: "Shark", max: 24, xp: 36 },
+    chest: { name: "Treasure chest", max: 1, xp: 40 },
+  };
+  const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
+  const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
+  const CATCH_RARE = ["catch_crab", "mini_shark", "jelly_green"];
+  const CATCH_LEGEND = ["shark", "jelly_white", "chest"];
+  const TRADE_VALUE = { gem: 5, crystal: 25, jelly: 15 };
+  const GEM_TRADE = { gem: 5, crystal: 25 };
+  const FISH_TRADE = {
+    jelly: 15,
+    cod: 6,
+    trout: 8,
+    salmon: 10,
+    catch_crab: 18,
+    mini_shark: 22,
+    jelly_green: 28,
+    shark: 55,
+    jelly_white: 60,
+    fish_blue: 6,
+    fish_gold: 8,
+    fish_reef: 7,
+  };
+  const FISHER_MENU = [
+    ["cod", "COD"],
+    ["trout", "TROUT"],
+    ["salmon", "SALMON"],
+    ["jelly", "JELLY"],
+    ["catch_crab", "CRAB"],
+    ["mini_shark", "MINI"],
+    ["jelly_green", "GREEN"],
+    ["shark", "SHARK"],
+    ["jelly_white", "WHITE"],
+  ];
+
+  const keys = Object.create(null);
+  const WORLD_W = COLS * TILE;
+  const WORLD_H = ROWS * TILE;
+  const FOAM_MASK_W = 512;
+  const FOAM_MASK_H = 32;
+  const world = [];
+  const loot = [];
+  const inventory = [null, null, null, null, null, null, null, null];
+  const DOCK_C = 150;
+  const RIVER_X0 = DOCK_C * TILE - 300;
+  const BOAT_PRICE = 10;
+  const rocks = [];
+  const palms = [];
+  const trees = [];
+  const crabs = [];
+  const insects = [];
+  const fishJumps = [];
+  const sharkFins = [];
+  const JUMP_KINDS = ["cod", "trout", "salmon", "fish_gold", "fish_reef", "fish_blue", "mini_shark", "shark"];
+  const splashes = [];
+  const MAX_CRABS = 16;
+  const MAX_FISH = 6;
+  const MAX_SPLASH = 56;
+  let loudNoiseActive = false;
+  let scareUntil = 0;
+  let wildlifeScared = false;
+  let scene = "island";
+  const SHOP_W = 176;
+  const SHOP_H = 128;
+  const FISH_W = 120;
+  const FISH_H = 96;
+  const walkPads = [];
+  const islandSolids = [];
+  const shopSolids = [];
+  const fishSolids = [];
+  const npcs = [];
+  const boats = [];
+  const swimFish = [];
+  const sandBits = [];
+  const MAX_SAND = 120;
+  let shopCanvas = null;
+  let fishCanvas = null;
+  let shopDoor = null;
+  let shopExit = null;
+  let fishDoor = null;
+  let fishExit = null;
+  let fishDockExit = null;
+  let fishCastT = 0;
+  let jellySpawnT = 18;
+  const rod = { phase: "idle", t: 0, wait: 0, face: 1 };
+  let chestTalk = 0;
+  const keepouts = [];
+  const shopTrade = { phase: "idle", t: 0, dur: 0, id: null, value: 0, refuse: 0 };
+  const shopSales = [];
+  let tradePackSeq = 1;
+  let fade = 0;
+  let fadeMode = 0;
+  let fadeNext = null;
+  let islandHold = null;
+  let dockExit = null;
+  let doorCool = 0;
+  const foamBlockers = [];
+  const dockBlit = [];
+  let bldgCanvas = null;
+  let bldgOX = 0;
+  let bldgOY = 0;
+  let fishSpawnT = 0.85;
+  let landCanvas = null;
+  let shoreLut = null;
+  let foamMask = null;
+  let waveCycle = 0;
+  let lastWaveCycle = -1;
+  let guideOpen = false;
+  const dockLamps = [];
+  const windowLights = [];
+  const eaveShades = [];
+  let lightCanvas = null;
+  let lightCtx = null;
+  let glowLamp = null;
+  let glowWindow = null;
+  let glowFeet = null;
+
+  const player = {
+    x: 0,
+    y: 0,
+    w: 8,
+    h: 14,
+    facing: 1,
+    moving: false,
+    inWater: false,
+    frame: 0,
+    anim: 0,
+    bob: 0,
+    xp: 0,
+    level: 1,
+    hp: MAX_HP,
+    coins: 0,
+    submerged: 0,
+    drownTick: 0,
+    hurt: 0,
+    dead: 0,
+    aboard: false,
+  };
+  let ownedBoat = null;
+  let boatThrow = null;
+  let harborTalk = 0;
+  let harborDrop = null;
+
+  const camera = { x: 0, y: 0 };
+  let spawnX = 0;
+  let spawnY = 0;
+  let nearestLoot = null;
+  let time = 0;
+  let shake = 0;
+  const pickupAnims = [];
+  let heldSlot = 0;
+  let useFx = null;
+  let audioCtx = null;
+  let oceanGain = null;
+  let oceanReady = false;
+  let hornVoice = null;
+  let xpFx = null;
+
+  function rand(min, max) {
+    return min + Math.random() * (max - min);
+  }
+  function irand(min, max) {
+    return Math.floor(rand(min, max + 1));
+  }
+  function hash(x, y) {
+    let n = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263)) | 0;
+    n = (n ^ (n >>> 13)) | 0;
+    return ((n >>> 0) % 10000) / 10000;
+  }
+  function n2(x, y) {
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const tx = x - x0;
+    const ty = y - y0;
+    const u = tx * tx * (3 - 2 * tx);
+    const v = ty * ty * (3 - 2 * ty);
+    const a = hash(x0, y0);
+    const b = hash(x0 + 1, y0);
+    const c = hash(x0, y0 + 1);
+    const d = hash(x0 + 1, y0 + 1);
+    return a + (b - a) * u + (c + (d - c) * u - (a + (b - a) * u)) * v;
+  }
+  function inBounds(c, r) {
+    return c >= 0 && r >= 0 && c < COLS && r < ROWS;
+  }
+
+  function coastNoise(c, salt) {
+    return (
+      Math.sin(c * 0.038 + salt) * 3.2 +
+      Math.sin(c * 0.092 + salt * 1.7) * 2.1 +
+      Math.sin(c * 0.157 + salt * 0.55) * 1.25 +
+      (n2(c * 0.035, salt) - 0.5) * 4.4
+    );
+  }
+
+  function islandHalfAt(c) {
+    const bulge = Math.sin((c - ISLAND_C) * 0.013) * 8 + Math.sin(c * 0.027) * 4;
+    return ISLAND_HALF + bulge * 0.22;
+  }
+
+  function islandCap(c) {
+    const half = islandHalfAt(c);
+    const ax = Math.abs(c - ISLAND_C);
+    if (ax >= half) return 0;
+    const t = ax / half;
+    const tip = 0.76;
+    if (t <= tip) return 1;
+    const u = (t - tip) / (1 - tip);
+    return Math.sqrt(Math.max(0, 1 - u * u));
+  }
+
+  function eastness(c) {
+    const u = (c - (ISLAND_C - ISLAND_HALF)) / (ISLAND_HALF * 2);
+    const t = u < 0 ? 0 : u > 1 ? 1 : u;
+    const n = (n2(c * 0.018, 4.2) - 0.5) * 0.16;
+    const s = t * t * (3 - 2 * t) + n;
+    return s < 0 ? 0 : s > 1 ? 1 : s;
+  }
+
+  function shoreMid() {
+    return SHORE_BASE - ISLAND_ROWS * 0.42;
+  }
+
+  function baseShoreRow(c) {
+    const cap = islandCap(c);
+    if (cap <= 0) return SHORE_BASE;
+    const wobble = coastNoise(c, 0.35) * (0.42 + 0.58 * cap);
+    return shoreMid() + ISLAND_ROWS * 0.5 * cap + wobble;
+  }
+
+  function northCliffRow(c) {
+    const cap = islandCap(c);
+    if (cap <= 0) return SHORE_BASE + 1;
+    const wobble = coastNoise(c, 8.4) * (0.42 + 0.58 * cap);
+    const south = baseShoreRow(c);
+    let north = shoreMid() - ISLAND_ROWS * 0.5 * cap + wobble;
+    if (north > south - 4) north = south - 4;
+    return north;
+  }
+
+  function landPresent(wx) {
+    return islandCap(wx / TILE) > 0.035;
+  }
+
+  function onIslandLand(px, py) {
+    if (!landPresent(px)) return false;
+    return py >= northCliffY(px) && py <= restShoreY(px);
+  }
+
+  function isIndoor() {
+    return scene === "shop" || scene === "fish";
+  }
+
+  function indoorW() {
+    return scene === "fish" ? FISH_W : SHOP_W;
+  }
+
+  function indoorH() {
+    return scene === "fish" ? FISH_H : SHOP_H;
+  }
+
+  function northCliffY(wx) {
+    return Math.floor(northCliffRow(wx / TILE) * TILE);
+  }
+
+  function restShoreY(wx) {
+    return Math.floor(baseShoreRow(wx / TILE) * TILE);
+  }
+
+  function riverXAt(wy) {
+    const mouthY = restShoreY(RIVER_X0);
+    const endY = northCliffY(RIVER_X0) + 96;
+    if (wy < endY || wy > mouthY + 48) return null;
+    const span = Math.max(8, mouthY - endY);
+    const u = Math.max(0, Math.min(1, (mouthY - wy) / span));
+    const x = RIVER_X0 + Math.sin(u * 2.6) * 20 + Math.sin(u * 5.4) * 7;
+    if (!landPresent(x)) return null;
+    const shore = shoreYAt(x);
+    if (wy > shore + 24) return null;
+    if (wy < shore - 20 && !onIslandLand(x, wy)) return null;
+    return x;
+  }
+
+  function riverHalfAt(wy) {
+    const mouthY = restShoreY(RIVER_X0);
+    const endY = northCliffY(RIVER_X0) + 96;
+    const span = Math.max(8, mouthY - endY);
+    const u = Math.max(0, Math.min(1, (mouthY - wy) / span));
+    const taper = u > 0.78 ? Math.max(0.28, 1 - (u - 0.78) / 0.22) : 1;
+    return (9.5 + (1 - u) * 5) * taper;
+  }
+
+  function inRiverWater(px, py) {
+    const cx = riverXAt(py);
+    if (cx == null) return false;
+    return Math.abs(px - cx) < riverHalfAt(py);
+  }
+
+  const FOAM_WAVES = [
+    { period: 10.8, travel: 52, crash: 34, salt: 0.02, along: 0.00038 },
+    { period: 14.6, travel: 68, crash: 46, salt: 0.38, along: 0.00021 },
+    { period: 18.4, travel: 40, crash: 24, salt: 0.71, along: 0.0005 },
+  ];
+
+  function foamAt(wx, t, w) {
+    let p = (t / w.period - wx * w.along + w.salt) % 1;
+    if (p < 0) p += 1;
+    const rest = shoreLut ? shoreLut[wx | 0] : shoreYAt(wx);
+    const crash =
+      w.crash * (0.65 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.055 + w.salt * 8 + wx * 0.004)));
+    if (p < 0.46) {
+      const u = p / 0.46;
+      const run = u * u;
+      return {
+        y: rest + w.travel - run * w.travel,
+        a: 0.3 + u * 0.7,
+        crash: false,
+        rest,
+      };
+    }
+    if (p < 0.66) {
+      const u = (p - 0.46) / 0.2;
+      const run = 1 - (1 - u) * (1 - u);
+      return {
+        y: rest - run * crash,
+        a: 1,
+        crash: true,
+        rest,
+      };
+    }
+    const u = (p - 0.66) / 0.34;
+    return {
+      y: rest - crash * (1 - u * u),
+      a: 0.5 * (1 - u),
+      crash: true,
+      rest,
+    };
+  }
+
+  function hitPad(px, py, list) {
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      if (px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) return r;
+    }
+    return null;
+  }
+
+  function isSolidPoint(px, py) {
+    if (scene === "shop") return !!hitPad(px, py, shopSolids);
+    if (scene === "fish") return !!hitPad(px, py, fishSolids);
+    if (hitPad(px, py, islandSolids)) return true;
+    for (const rock of rocks) {
+      if (px > rock.x && px < rock.x + rock.w && py > rock.y && py < rock.y + rock.h) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function canStand(px, py) {
+    if (isSolidPoint(px, py)) return false;
+    if (scene === "shop") {
+      return px >= 8 && py >= 10 && px < SHOP_W - 8 && py < SHOP_H - 6;
+    }
+    if (scene === "fish") {
+      return px >= 8 && py >= 10 && px < FISH_W - 8 && py < FISH_H - 6;
+    }
+    if (hitPad(px, py, walkPads)) return true;
+    if (landPresent(px) && py < northCliffY(px)) return false;
+    return px >= 0 && py >= 0 && px < WORLD_W && py < WORLD_H;
+  }
+
+  function isWaterAt(px, py) {
+    if (hitPad(px, py, walkPads)) return false;
+    if (inRiverWater(px, py)) return true;
+    return !onIslandLand(px, py);
+  }
+
+  function sandWidth(c) {
+    const cap = islandCap(c);
+    return (10 + Math.sin(c * 0.14) * 2 + n2(c * 0.07, 3.2) * 3) * (0.55 + 0.45 * cap);
+  }
+
+  function dirtWidth(c) {
+    const cap = islandCap(c);
+    return (8 + Math.sin(c * 0.09) * 2 + n2(c * 0.05, 8.1) * 3) * (0.55 + 0.45 * cap);
+  }
+
+  function buildWorld() {
+    for (let r = 0; r < ROWS; r++) {
+      world[r] = [];
+      for (let c = 0; c < COLS; c++) {
+        const shore = baseShoreRow(c);
+        const cliff = northCliffRow(c);
+        const sandW = sandWidth(c);
+        const dirtW = dirtWidth(c);
+        let tile = TILES.DEEP;
+        if (r < cliff || r > shore) tile = TILES.DEEP;
+        else if (r > shore - sandW) tile = TILES.SAND;
+        else if (r > shore - sandW - dirtW) tile = TILES.DIRT;
+        else tile = TILES.GRASS;
+        world[r][c] = tile;
+      }
+    }
+    for (let r = 0; r < ROWS; r++) {
+      const wy = r * TILE + 8;
+      const cx = riverXAt(wy);
+      if (cx == null) continue;
+      const half = riverHalfAt(wy) + 2;
+      const c0 = Math.max(0, Math.floor((cx - half) / TILE));
+      const c1 = Math.min(COLS - 1, Math.floor((cx + half) / TILE));
+      for (let c = c0; c <= c1; c++) {
+        const px = c * TILE + 8;
+        if (wy > shoreYAt(px)) continue;
+        if (Math.abs(px - cx) < riverHalfAt(wy)) world[r][c] = TILES.DEEP;
+      }
+    }
+
+    const spawnC = DOCK_C + 2;
+    const spawnR = Math.floor(baseShoreRow(spawnC) - 8);
+    player.x = spawnC * TILE + 4;
+    player.y = spawnR * TILE + 2;
+    spawnX = player.x;
+    spawnY = player.y;
+
+    for (let i = 0; i < 240; i++) {
+      const c = ISLAND_C - ISLAND_HALF + 24 + hash(i, 19) * (ISLAND_HALF * 2 - 48);
+      if (hash(i, 23) > 0.08 + eastness(c) * 0.92) continue;
+      const cliff = northCliffRow(c);
+      const shore = baseShoreRow(c);
+      const span = shore - cliff - sandWidth(c) - 3;
+      if (span < 4) continue;
+      const r = cliff + 2 + hash(i, 29) * span;
+      if (!inBounds(c | 0, r | 0) || r < northCliffRow(c) + 1) continue;
+      const t = world[r | 0][c | 0];
+      if (t !== TILES.GRASS && t !== TILES.DIRT) continue;
+      if (inRiverWater(c * TILE + 4, r * TILE + 4)) continue;
+      const big = eastness(c) > 0.62 && hash(i, 31) > 0.55;
+      rocks.push({
+        x: Math.floor(c * TILE + rand(0, 10)),
+        y: Math.floor(r * TILE + rand(0, 8)),
+        w: big ? 10 : 7,
+        h: big ? 6 : 5,
+      });
+    }
+
+    for (let g = 0; g < 22; g++) {
+      const c0 = ISLAND_C - ISLAND_HALF + 36 + g * 10 + irand(-2, 2);
+      if (eastness(c0) > 0.42) continue;
+      const r0 = Math.floor(baseShoreRow(c0) - sandWidth(c0) * 0.42);
+      const n = irand(2, 4);
+      for (let i = 0; i < n; i++) {
+        const c = Math.max(2, Math.min(COLS - 3, c0 + irand(-2, 2)));
+        const r = r0 + irand(-1, 1);
+        if (!inBounds(c, r) || world[r][c] !== TILES.SAND) continue;
+        if (inRiverWater(c * TILE + 4, r * TILE + 8)) continue;
+        palms.push({
+          x: Math.floor(c * TILE + rand(0, 6)),
+          y: r * TILE + 12,
+          s: 0.85 + hash(c, r + g) * 0.3,
+        });
+      }
+    }
+
+    for (let g = 0; g < 36; g++) {
+      const c0 = ISLAND_C - ISLAND_HALF + 40 + (g / 36) * ISLAND_HALF * 1.45 + irand(-3, 3);
+      const e = eastness(c0);
+      if (e > 0.7) continue;
+      const cliff = northCliffRow(c0);
+      const shore = baseShoreRow(c0);
+      const r0 = Math.floor(cliff + 6 + hash(g, 4) * Math.max(6, shore - cliff - 16));
+      const n = e > 0.38 ? irand(2, 4) : irand(3, 7);
+      const kind = e > 0.36 ? "pine" : "leaf";
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * Math.PI * 2 + hash(g, i) * 0.7;
+        const rad = 6 + hash(i * 3, g) * 18;
+        const c = Math.floor(c0 + Math.cos(ang) * (rad / TILE));
+        const r = Math.floor(r0 + Math.sin(ang) * (rad / TILE) * 0.55);
+        if (!inBounds(c, r) || r < northCliffRow(c) + 2) continue;
+        const t = world[r][c];
+        if (t !== TILES.DIRT && t !== TILES.GRASS) continue;
+        if (inRiverWater(c * TILE + 4, r * TILE + 8)) continue;
+        trees.push({
+          x: Math.floor(c * TILE + 2 + hash(c, r) * 8),
+          y: Math.floor(r * TILE + 6 + hash(r, c) * 8),
+          s: 0.75 + hash(c * 3, r) * 0.5,
+          kind,
+        });
+      }
+    }
+
+    for (let i = 0; i < 22; i++) {
+      placeBeachShell();
+    }
+    spawnFauna();
+    spawnInsects();
+    bakeStaticWorld();
+    buildDockAndShop();
+  }
+
+  function isSandAt(px, py) {
+    const c = Math.floor(px / TILE);
+    const r = Math.floor(py / TILE);
+    return inBounds(c, r) && world[r][c] === TILES.SAND;
+  }
+
+  function inKeepout(px, py) {
+    return !!hitPad(px, py, keepouts);
+  }
+
+  function beachOpen(px, py) {
+    if (inKeepout(px, py)) return false;
+    if (hitPad(px, py, walkPads)) return false;
+    if (hitPad(px, py, islandSolids)) return false;
+    return true;
+  }
+
+  function placeBeachShell() {
+    for (let tries = 0; tries < 90; tries++) {
+      const c = irand(2, COLS - 3);
+      const rest = restShoreY(c * TILE);
+      const x = c * TILE + irand(2, 12);
+      const y = rest - irand(16, 170);
+      if (!isSandAt(x, y) || !beachOpen(x, y) || inRiverWater(x, y)) continue;
+      loot.push({
+        id: "shell",
+        x,
+        y,
+        taken: false,
+        born: 0,
+        life: Infinity,
+      });
+      return;
+    }
+  }
+
+  function dockSandCol() {
+    return Math.max(2, Math.min(COLS - 3, (spawnX / TILE) | 0));
+  }
+
+  function placeWashLoot(id, life, nearC) {
+    const near = nearC != null;
+    const triesN = near ? 180 : 70;
+    for (let tries = 0; tries < triesN; tries++) {
+      let c;
+      if (!near) c = irand(2, COLS - 3);
+      else {
+        const spread = 2 + (tries % 24);
+        const dir = tries & 1 ? 1 : -1;
+        c = Math.max(2, Math.min(COLS - 3, (nearC + dir * spread) | 0));
+      }
+      const rest = restShoreY(c * TILE + 8);
+      const x = c * TILE + irand(2, 12);
+      const y = rest - irand(8, near ? 52 : 28);
+      if (!isSandAt(x, y) || inRiverWater(x, y) || !beachOpen(x, y)) continue;
+      loot.push({
+        id,
+        x,
+        y,
+        taken: false,
+        born: waveCycle,
+        life,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function beachSpotOpen(x, y, margin) {
+    if (!isSandAt(x, y) || inRiverWater(x, y)) return false;
+    const m = margin | 0;
+    if (m <= 0) return beachOpen(x, y);
+    for (let dy = -m; dy <= m; dy += m) {
+      for (let dx = -m; dx <= m; dx += m) {
+        if (!beachOpen(x + dx, y + dy)) return false;
+      }
+    }
+    return true;
+  }
+
+  function placeStarterBeachLoot() {
+    const want = ["gem", "gem", "crystal", "gem", "gem", "gem", "crystal", "gem"];
+    const ax = spawnX + player.w / 2;
+    const ay = spawnY + 8;
+    const spots = [];
+    for (let pass = 0; pass < 2 && spots.length < 28; pass++) {
+      const margin = pass === 0 ? 12 : 4;
+      for (let dx = -220; dx <= 280; dx += 12) {
+        const x = (ax + dx) | 0;
+        const rest = restShoreY(x);
+        for (let inland = 12; inland <= 72; inland += 12) {
+          const y = rest - inland;
+          if (!beachSpotOpen(x, y, margin)) continue;
+          spots.push({ x, y, d: Math.abs(x - ax) + Math.abs(y - ay) * 0.7 });
+        }
+      }
+      if (spots.length >= want.length) break;
+    }
+    spots.sort(function (a, b) {
+      return a.d - b.d;
+    });
+    const used = [];
+    let n = 0;
+    for (let i = 0; i < spots.length && n < want.length; i++) {
+      const s = spots[i];
+      let close = false;
+      for (let u = 0; u < used.length; u++) {
+        if (Math.abs(used[u].x - s.x) < 16 && Math.abs(used[u].y - s.y) < 10) close = true;
+      }
+      if (close) continue;
+      loot.push({
+        id: want[n],
+        x: s.x,
+        y: s.y,
+        taken: false,
+        born: 0,
+        life: Infinity,
+      });
+      used.push(s);
+      n++;
+    }
+  }
+
+  function updateLoot() {
+    waveCycle = Math.floor(time / WASH_PERIOD);
+    for (const item of loot) {
+      if (item.taken || item.life === Infinity) continue;
+      if (waveCycle - item.born >= item.life) item.taken = true;
+    }
+    if (waveCycle === lastWaveCycle) return;
+    lastWaveCycle = waveCycle;
+    if (waveCycle <= 0) return;
+    const nearDock = dockSandCol();
+    if (Math.random() < 0.55) placeWashLoot("gem", irand(4, 5), nearDock);
+    if (Math.random() < 0.22) placeWashLoot("gem", irand(4, 5));
+    if (Math.random() < 0.035) placeWashLoot("crystal", irand(4, 5), Math.random() < 0.7 ? nearDock : null);
+    if (Math.random() < 0.05) placeWashLoot("jelly", irand(2, 4));
+  }
+
+  function isDryBeachSand(px, py) {
+    if (!isSandAt(px, py) || !isSandAt(px + 3, py) || !isSandAt(px - 2, py)) return false;
+    if (!beachOpen(px, py) || !beachOpen(px + 3, py)) return false;
+    const rest = restShoreY(px);
+    if (py >= rest - 40) return false;
+    const inland = rest - py;
+    if (inland < 48 || inland > sandWidth(px / TILE) * TILE - 18) return false;
+    if (inRiverWater(px, py) || py < northCliffY(px) + 8) return false;
+    return true;
+  }
+
+  function spawnFauna() {
+    for (let i = 0; i < MAX_SPLASH; i++) {
+      splashes.push({ life: 0, x: 0, y: 0, vx: 0, vy: 0, col: "#ffffff" });
+    }
+    for (let i = 0; i < MAX_SAND; i++) {
+      sandBits.push({ life: 0, x: 0, y: 0, vx: 0, vy: 0, col: "#d8bc86", crab: null });
+    }
+    const nCrabs = irand(11, 16);
+    for (let i = 0; i < nCrabs; i++) {
+      let placed = false;
+      for (let t = 0; t < 50 && !placed; t++) {
+        const near = i < 3;
+        const x = near
+          ? spawnX + (i - 1) * 70 + rand(-18, 18)
+          : 24 + ((i + hash(i, t + 4)) / nCrabs) * (WORLD_W - 48);
+        const rest = restShoreY(x);
+        const sandPx = sandWidth(x / TILE) * TILE;
+        const y = rest - rand(58, Math.max(80, sandPx * 0.62));
+        if (!isDryBeachSand(x, y)) continue;
+        const w = 5 + (hash(i, 11) * 3.2) | 0;
+        const hidden = near ? false : hash(i, 3) > 0.55;
+        crabs.push({
+          x,
+          y,
+          w,
+          h: 3 + (w > 6 ? 1 : 0),
+          dir: hash(i, 8) > 0.5 ? 1 : -1,
+          state: hidden ? "hidden" : hash(i, 1) > 0.5 ? "idle" : "scuttle",
+          t: hidden ? rand(2, 11) : rand(0.8, 3.6),
+          bury: hidden ? 1 : 0,
+          hop: 0,
+          mound: hidden ? 1 : 0,
+          cover: [],
+          sandBurst: false,
+          anim: rand(0, 8),
+          seen: hidden ? 0 : rand(0.2, 1.8),
+          squash: 1,
+        });
+        placed = true;
+      }
+    }
+  }
+
+  function spawnInsects() {
+    for (let i = 0; i < 32; i++) {
+      const c = ISLAND_C - ISLAND_HALF + 28 + hash(i, 4) * ISLAND_HALF * 0.95;
+      if (eastness(c) > 0.46) continue;
+      const cliff = northCliffRow(c);
+      const shore = baseShoreRow(c);
+      const r = cliff + 3 + hash(i, 9) * Math.max(4, shore - cliff - 8);
+      const ci = c | 0;
+      const ri = r | 0;
+      if (!inBounds(ci, ri)) continue;
+      const tile = world[ri][ci];
+      if (tile !== TILES.GRASS && tile !== TILES.DIRT && tile !== TILES.SAND) continue;
+      if (inRiverWater(ci * TILE + 4, ri * TILE + 4)) continue;
+      insects.push({
+        x: ci * TILE + hash(i, 2) * 12,
+        y: ri * TILE + 4,
+        phase: hash(i, 7) * 6.28,
+      });
+    }
+  }
+
+  function spawnOneSwimFish(kind) {
+    for (let t = 0; t < 40; t++) {
+      const x = rand(40, WORLD_W - 40);
+      const rest = restShoreY(x);
+      const y = rest + rand(18, 90);
+      if (hitPad(x, y, walkPads) || inKeepout(x, y)) continue;
+      if (onIslandLand(x, y)) continue;
+      swimFish.push({
+        x,
+        y,
+        id: kind || FISH_CATCH[irand(0, FISH_CATCH.length - 1)],
+        dir: Math.random() > 0.5 ? 1 : -1,
+        span: rand(6, 16),
+        phase: rand(0, 6),
+        alive: true,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  function spawnSwimFish() {
+    for (let i = 0; i < 14; i++) {
+      spawnOneSwimFish(FISH_CATCH[i % FISH_CATCH.length]);
+    }
+  }
+
+  function updateSwimFish(dt) {
+    let live = 0;
+    for (let i = 0; i < swimFish.length; i++) {
+      const f = swimFish[i];
+      if (!f.alive) continue;
+      live++;
+      f.phase += dt * 0.9;
+      f.x += f.dir * dt * 8;
+      if (f.x < 20 || f.x > WORLD_W - 20 || onIslandLand(f.x, f.y) || hitPad(f.x, f.y, walkPads)) {
+        f.dir *= -1;
+        f.x += f.dir * 4;
+      }
+    }
+    if (live < 12 && Math.random() < dt * 0.35) spawnOneSwimFish();
+  }
+
+  function crabSetState(c, state) {
+    c.state = state;
+    if (state === "idle") c.t = rand(0.5, 2.4);
+    else if (state === "scuttle") {
+      c.t = rand(0.45, 1.8);
+      if (Math.random() < 0.35) c.dir *= -1;
+    } else if (state === "pause") c.t = rand(0.35, 1.5);
+    else if (state === "bury") c.t = 0.82;
+    else if (state === "hidden") c.t = rand(5.5, 16);
+    else if (state === "unbury") c.t = 0.56;
+  }
+
+  function loudNoiseOn() {
+    return loudNoiseActive || time < scareUntil;
+  }
+
+  function crabBeginBury(c) {
+    if (c.state === "hidden" && (c.bury || 0) >= 0.9) {
+      c.mound = 1;
+      c.t = Math.max(c.t, 0.35);
+      return;
+    }
+    if (c.state === "bury") return;
+    c.state = "bury";
+    c.t = 0.82;
+    c.sandBurst = false;
+    c.splitBurst = false;
+    c.hop = 0;
+    if ((c.bury || 0) < 0.45) {
+      c.mound = 0;
+      c.cover.length = 0;
+    }
+  }
+
+  function scareWildlife(hold) {
+    if (hold > 0) scareUntil = Math.max(scareUntil, time + hold);
+    wildlifeScared = true;
+    for (let i = 0; i < crabs.length; i++) {
+      const c = crabs[i];
+      if (c.state === "hidden") {
+        c.bury = 1;
+        c.mound = 1;
+        c.hop = 0;
+        c.t = Math.max(c.t, 0.35);
+        continue;
+      }
+      crabBeginBury(c);
+    }
+  }
+
+  function setLoudNoise(on) {
+    const next = !!on;
+    if (next === loudNoiseActive) return;
+    loudNoiseActive = next;
+    if (loudNoiseActive) scareWildlife();
+  }
+
+  function lingerWildlifeScare() {
+    for (let i = 0; i < crabs.length; i++) {
+      const c = crabs[i];
+      const wait = rand(0.45, 1.7);
+      if (c.state === "hidden") c.t = wait;
+      else if (c.state === "bury") c.scareLinger = wait;
+    }
+  }
+
+  function updateWildlifeScare() {
+    const on = loudNoiseOn();
+    if (on && !wildlifeScared) scareWildlife();
+    if (!on && wildlifeScared) {
+      wildlifeScared = false;
+      lingerWildlifeScare();
+    }
+  }
+
+  function sandColor() {
+    const r = Math.random();
+    if (r > 0.72) return "#edd6a8";
+    if (r > 0.42) return "#e2c792";
+    if (r > 0.18) return "#d8bc86";
+    return "#c9a56a";
+  }
+
+  function emitSandBurst(c, n, mode) {
+    let k = 0;
+    for (let i = 0; i < MAX_SAND && k < n; i++) {
+      const p = sandBits[i];
+      if (p.life > 0) continue;
+      p.x = c.x + rand(-3.4, 3.4);
+      p.y = c.y - rand(0, 2);
+      if (mode === "split") {
+        p.vx = rand(-56, 56);
+        p.vy = rand(-46, -6);
+        p.life = rand(0.22, 0.42);
+      } else {
+        p.vx = rand(-46, 46);
+        p.vy = rand(-118, -52);
+        p.life = rand(0.32, 0.58);
+      }
+      p.max = p.life;
+      p.col = sandColor();
+      p.crab = c;
+      k++;
+    }
+  }
+
+  function crabFinishHide(c, scared) {
+    c.bury = 1;
+    c.hop = 0;
+    c.mound = 1;
+    c.state = "hidden";
+    if (scared) c.t = 1;
+    else if (c.scareLinger != null) {
+      c.t = c.scareLinger;
+      c.scareLinger = null;
+    } else c.t = rand(5.5, 16);
+  }
+
+  function updateSandBits(dt) {
+    for (let i = 0; i < MAX_SAND; i++) {
+      const p = sandBits[i];
+      if (p.life <= 0) continue;
+      p.vy += 260 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      const c = p.crab;
+      if (c && p.vy > 12 && p.y >= c.y - 1) {
+        p.life = 0;
+        if (c.state !== "bury" && c.state !== "hidden" && c.state !== "unbury") continue;
+        if (!c.cover) c.cover = [];
+        const ox = Math.max(-3, Math.min(3, ((p.x - c.x) | 0)));
+        const oy = Math.max(-3, Math.min(1, ((p.y - c.y) | 0) - 1));
+        c.cover.push({ ox, oy, c: p.col });
+        if (c.cover.length > 12) c.cover.shift();
+        c.mound = Math.min(1, (c.mound || 0) + 0.1);
+      }
+    }
+  }
+
+  function updateCrabs(dt) {
+    updateWildlifeScare();
+    const scared = loudNoiseOn();
+    for (let i = 0; i < crabs.length; i++) {
+      const c = crabs[i];
+      c.t -= dt;
+      c.anim += dt * (c.state === "scuttle" ? 14 : 5);
+      if (c.state !== "bury" && c.state !== "unbury") {
+        c.squash += (1 - c.squash) * Math.min(1, dt * 10);
+      }
+      if (c.state === "scuttle") {
+        const nx = c.x + c.dir * (22 + c.w) * dt;
+        if (
+          isDryBeachSand(nx, c.y) &&
+          isDryBeachSand(nx + c.dir * 4, c.y) &&
+          !isSolidPoint(nx, c.y)
+        ) {
+          c.x = nx;
+        } else {
+          c.dir *= -1;
+          crabSetState(c, "pause");
+        }
+      }
+      if (c.state === "bury") {
+        const dur = 0.82;
+        const u = 1 - Math.max(0, c.t) / dur;
+        if (u < 0.34) {
+          const h = u / 0.34;
+          c.hop = Math.sin(h * Math.PI) * (6.2 + c.w * 0.12);
+          c.squash = h < 0.42 ? 1.18 - h * 0.7 : 0.58 + (h - 0.42) * 1.05;
+          c.bury = 0;
+        } else {
+          c.hop = 0;
+          const sink = (u - 0.34) / 0.22;
+          c.bury = Math.min(1, sink * sink);
+          c.squash = 0.82;
+        }
+        if (u >= 0.3 && !c.sandBurst) {
+          c.sandBurst = true;
+          emitSandBurst(c, 13 + (c.w | 0), "up");
+        }
+        if (u > 0.46) c.mound = Math.max(c.mound || 0, (u - 0.46) / 0.42);
+        if (c.t <= 0) crabFinishHide(c, scared);
+      } else if (c.state === "unbury") {
+        if (scared) {
+          crabBeginBury(c);
+          continue;
+        }
+        const dur = 0.56;
+        const u = 1 - Math.max(0, c.t) / dur;
+        if (!c.splitBurst && u > 0.04) {
+          c.splitBurst = true;
+          emitSandBurst(c, 9, "split");
+          c.cover.length = 0;
+        }
+        c.mound = Math.max(0, 1 - u * 2.4);
+        c.hop = Math.sin(Math.min(1, u * 1.15) * Math.PI) * 5.2;
+        c.bury = Math.max(0, 1 - u * 1.4);
+        c.squash = 0.62 + u * 0.55;
+        if (c.t <= 0) {
+          c.bury = 0;
+          c.hop = 0;
+          c.mound = 0;
+          c.squash = 1.22;
+          c.seen = 0;
+          c.splitBurst = false;
+          crabSetState(c, Math.random() < 0.55 ? "idle" : "scuttle");
+        }
+      } else if (c.state === "hidden") {
+        c.bury = 1;
+        c.hop = 0;
+        c.mound = 1;
+        if (scared) {
+          c.t = Math.max(c.t, 0.25);
+        } else if (c.t <= 0) {
+          c.splitBurst = false;
+          crabSetState(c, "unbury");
+        }
+      } else {
+        c.mound = 0;
+        c.hop = 0;
+        if (c.cover && c.cover.length) c.cover.length = 0;
+        if (scared) {
+          crabBeginBury(c);
+          continue;
+        }
+        c.seen += dt;
+        if (c.t > 0) continue;
+        if (c.seen > rand(2.2, 6.5) && Math.random() < 0.55) {
+          c.sandBurst = false;
+          c.cover.length = 0;
+          crabSetState(c, "bury");
+        } else if (c.state === "scuttle") crabSetState(c, Math.random() < 0.4 ? "pause" : "idle");
+        else if (c.state === "pause") crabSetState(c, Math.random() < 0.7 ? "scuttle" : "idle");
+        else crabSetState(c, Math.random() < 0.62 ? "scuttle" : "pause");
+      }
+    }
+    updateSandBits(dt);
+  }
+
+  function emitSplash(wx, wy, n) {
+    let k = 0;
+    for (let i = 0; i < MAX_SPLASH && k < n; i++) {
+      const p = splashes[i];
+      if (p.life > 0) continue;
+      p.x = wx + rand(-2.2, 2.2);
+      p.y = wy + rand(-1.2, 1.4);
+      p.vx = rand(-28, 28);
+      p.vy = rand(-46, -10);
+      p.life = rand(0.16, 0.4);
+      p.max = p.life;
+      p.col = Math.random() > 0.4 ? "#ffffff" : "#e8f6ff";
+      k++;
+    }
+  }
+
+  function bez(a, b, c, u) {
+    const o = 1 - u;
+    return o * o * a + 2 * o * u * b + u * u * c;
+  }
+
+  function spawnFishJump() {
+    let f = null;
+    for (let i = 0; i < fishJumps.length; i++) {
+      if (!fishJumps[i].alive) {
+        f = fishJumps[i];
+        break;
+      }
+    }
+    if (!f) {
+      if (fishJumps.length >= MAX_FISH) return;
+      f = { alive: false };
+      fishJumps.push(f);
+    }
+    const x0 = Math.max(8, camera.x - 30);
+    const x1 = Math.min(WORLD_W - 8, camera.x + viewW + 30);
+    if (x1 - x0 < 20) return;
+    const x = rand(x0, x1);
+    const rest = restShoreY(x);
+    if (rest < camera.y - 36 || rest > camera.y + viewH + 70) return;
+    const startY = rest + rand(3, 16);
+    if (startY > WORLD_H - 10) return;
+    const dx = rand(-40, 40);
+    if (
+      inKeepout(x, rest + 6) ||
+      inKeepout(x, rest - 8) ||
+      inKeepout(x + dx, rest + 6) ||
+      inKeepout(x + dx * 0.5, rest - 16)
+    ) {
+      return;
+    }
+    const endY = rest + rand(3, 18);
+    f.alive = true;
+    f.u = 0;
+    f.dur = rand(0.85, 1.25);
+    f.x0 = x;
+    f.x1 = x + dx * 0.35;
+    f.x2 = x + dx;
+    f.y0 = startY;
+    f.y1 = rest - rand(26, 48);
+    f.y2 = endY;
+    f.x = x;
+    f.y = startY;
+    f.len = 6 + ((hash(x | 0, startY | 0) * 4) | 0);
+    f.ang = 0;
+    f.squash = 0.7;
+    f.tumble = rand(-0.55, 0.55);
+    f.splashedUp = false;
+    f.splashedDown = false;
+    const roll = hash((x | 0) + 3, startY | 0);
+    if (roll > 0.96) f.kind = "shark";
+    else if (roll > 0.9) f.kind = "mini_shark";
+    else f.kind = JUMP_KINDS[(hash(x | 0, (startY | 0) + 9) * 6) | 0];
+    if (f.kind === "shark") {
+      f.len = 16;
+      f.dur = rand(1.05, 1.45);
+      f.y1 = rest - rand(36, 58);
+      f.tumble *= 0.35;
+    } else if (f.kind === "mini_shark") {
+      f.len = 11;
+      f.y1 = rest - rand(28, 46);
+      f.tumble *= 0.45;
+    }
+  }
+
+  function sharkFinSet(f, state) {
+    f.state = state;
+    f.splashed = false;
+    if (state === "swim") {
+      f.t = rand(2.0, 4.8);
+      f.sub = 0;
+    } else if (state === "dive") {
+      f.t = 0.82;
+      f.sub = 0;
+    } else if (state === "under") {
+      f.t = rand(2.4, 5.5);
+      f.sub = 1;
+    } else {
+      f.t = 0.56;
+      f.sub = 1;
+    }
+  }
+
+  function emitFinFoam(f) {
+    const foam = f.foam;
+    for (let i = 0; i < 8; i++) {
+      const ang = rand(0, 6.2832);
+      const life = rand(0.22, 0.48);
+      foam.push({
+        x: f.x + Math.cos(ang) * rand(1, 4),
+        y: f.y + Math.sin(ang) * rand(0.4, 2.2),
+        vx: Math.cos(ang) * rand(8, 26),
+        vy: rand(-34, -8),
+        life,
+        col: i & 1 ? "#ffffff" : "#f4fcff",
+      });
+    }
+    if (foam.length > 20) foam.splice(0, foam.length - 20);
+  }
+
+  function spawnSharkFin() {
+    for (let n = 0; n < 14; n++) {
+      const x = rand(40, WORLD_W - 40);
+      const shore = restShoreY(x);
+      const depth = rand(120, 230);
+      const y = shore + depth;
+      if (y > WORLD_H - 18 || y < shore + 100) continue;
+      if (onIslandLand(x, y) || fishOverDock(x, y)) continue;
+      const f = {
+        x,
+        y,
+        depth,
+        dir: Math.random() < 0.5 ? -1 : 1,
+        speed: rand(18, 32),
+        big: Math.random() > 0.45,
+        phase: rand(0, 6.2),
+        foam: [],
+      };
+      sharkFins.push(f);
+      sharkFinSet(f, Math.random() < 0.4 ? "under" : "swim");
+      return;
+    }
+  }
+
+  function updateSharkFins(dt) {
+    if (sharkFins.length < 5) spawnSharkFin();
+    for (let i = 0; i < sharkFins.length; i++) {
+      const f = sharkFins[i];
+      f.phase += dt * 1.6;
+      f.x += f.dir * (f.speed / 5) * dt;
+      const shore = restShoreY(f.x);
+      f.y = shore + f.depth + Math.sin(f.phase) * 4;
+      const tooClose = f.y < shore + 96;
+      if (
+        f.x < 28 ||
+        f.x > WORLD_W - 28 ||
+        f.y > WORLD_H - 12 ||
+        tooClose ||
+        onIslandLand(f.x, f.y) ||
+        fishOverDock(f.x, f.y)
+      ) {
+        f.dir *= -1;
+        f.x += f.dir * 8;
+        f.depth = Math.max(120, Math.min(230, f.depth + rand(-12, 12)));
+      }
+      f.t -= dt;
+      if (f.state === "dive" || f.state === "rise") {
+        if (!f.splashed) {
+          f.splashed = true;
+          emitFinFoam(f);
+        }
+        const dur = f.state === "dive" ? 0.82 : 0.56;
+        const u = 1 - Math.max(0, f.t) / dur;
+        if (f.state === "dive") f.sub = Math.min(1, u * u);
+        else f.sub = Math.max(0, 1 - u * 1.35);
+        if (f.t <= 0) sharkFinSet(f, f.state === "dive" ? "under" : "swim");
+      } else if (f.state === "under") {
+        f.sub = 1;
+        if (f.t <= 0) sharkFinSet(f, "rise");
+      } else {
+        f.sub = 0;
+        if (f.t <= 0) sharkFinSet(f, "dive");
+      }
+      const foam = f.foam;
+      for (let s = foam.length - 1; s >= 0; s--) {
+        const p = foam[s];
+        p.life -= dt;
+        if (p.life <= 0) {
+          foam.splice(s, 1);
+          continue;
+        }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 70 * dt;
+      }
+    }
+  }
+
+  function updateFish(dt) {
+    updateSharkFins(dt);
+    fishSpawnT -= dt;
+    if (fishSpawnT <= 0) {
+      fishSpawnT = rand(1.7, 5.2);
+      let live = 0;
+      for (let i = 0; i < fishJumps.length; i++) if (fishJumps[i].alive) live++;
+      if (live < MAX_FISH && Math.random() < 0.78) spawnFishJump();
+    }
+    for (let i = 0; i < fishJumps.length; i++) {
+      const f = fishJumps[i];
+      if (!f.alive) continue;
+      const prevY = f.y;
+      f.u += dt / f.dur;
+      const u = f.u > 1 ? 1 : f.u;
+      f.x = bez(f.x0, f.x1, f.x2, u);
+      f.y = bez(f.y0, f.y1, f.y2, u);
+      const vx = bez(f.x0, f.x1, f.x2, Math.min(1, u + 0.04)) - f.x;
+      const vy = bez(f.y0, f.y1, f.y2, Math.min(1, u + 0.04)) - f.y;
+      f.ang = Math.atan2(vy, vx);
+      const rest = restShoreY(f.x);
+      if (!f.splashedUp && prevY >= rest && f.y < rest) {
+        emitSplash(f.x, rest, 8 + (f.len > 7 ? 4 : 0));
+        f.splashedUp = true;
+        f.squash = 0.58;
+      }
+      if (!f.splashedDown && f.splashedUp && prevY < rest && f.y >= rest) {
+        emitSplash(f.x, rest, 9 + (f.len > 7 ? 5 : 0));
+        f.splashedDown = true;
+        f.squash = 0.5;
+      }
+      const air = f.y < rest;
+      f.squash += ((air ? 1.12 : 0.85) - f.squash) * Math.min(1, dt * 7);
+      if (f.u >= 1) f.alive = false;
+    }
+    for (let i = 0; i < MAX_SPLASH; i++) {
+      const p = splashes[i];
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 92 * dt;
+    }
+  }
+
+  function canMove(nx, ny) {
+    const pad = 2;
+    const points = [
+      [nx + pad, ny + player.h * 0.55],
+      [nx + player.w - pad, ny + player.h * 0.55],
+      [nx + pad, ny + player.h - pad],
+      [nx + player.w - pad, ny + player.h - pad],
+    ];
+    return points.every(([x, y]) => canStand(x, y));
+  }
+
+  function playerCenter() {
+    return { x: player.x + player.w / 2, y: player.y + player.h / 2 };
+  }
+
+  function updatePlayer(dt) {
+    let dx = 0;
+    let dy = 0;
+    if (keys.a || keys.arrowleft) dx -= 1;
+    if (keys.d || keys.arrowright) dx += 1;
+    if (keys.w || keys.arrowup) dy -= 1;
+    if (keys.s || keys.arrowdown) dy += 1;
+
+    player.moving = dx !== 0 || dy !== 0;
+    if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
+
+    const mid = playerCenter();
+    const feetY = player.y + player.h - 2;
+    const onDock = scene === "island" && !!hitPad(player.x + 4, feetY, walkPads);
+    if (player.aboard) {
+      player.inWater = false;
+    } else {
+      player.inWater =
+        scene === "island" &&
+        !onDock &&
+        (inRiverWater(player.x + 4, feetY) ||
+          feetY > restShoreY(player.x + 3) ||
+          feetY > restShoreY(player.x + player.w - 3));
+    }
+
+    if (guideOpen) {
+      dx = 0;
+      dy = 0;
+      player.moving = false;
+    }
+
+    if (player.dead <= 0 && !fadeMode && !guideOpen) {
+      if (player.aboard && ownedBoat && scene === "island") {
+        steerOwnedBoat(dt, dx, dy);
+      } else {
+        const speed = (player.inWater ? 70 : 165) * dt;
+        if (player.moving) {
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = player.x + (dx / len) * speed;
+          const ny = player.y + (dy / len) * speed;
+          if (canMove(nx, player.y)) player.x = nx;
+          if (canMove(player.x, ny)) player.y = ny;
+        }
+      }
+    } else {
+      player.moving = false;
+    }
+
+    if (isIndoor()) {
+      player.x = Math.max(8, Math.min(indoorW() - player.w - 8, player.x));
+      player.y = Math.max(10, Math.min(indoorH() - player.h - 4, player.y));
+    } else {
+      player.x = Math.max(0, Math.min(COLS * TILE - player.w, player.x));
+      player.y = Math.max(0, Math.min(ROWS * TILE - player.h, player.y));
+    }
+
+    if (player.moving) player.anim += dt * 13;
+    else player.anim *= 0.7;
+    player.frame = Math.floor(player.anim) % 4;
+    player.bob += dt * 3;
+
+    updateDrowning(dt);
+
+    const targetX = mid.x - viewW / 2;
+    const targetY = mid.y - viewH * 0.36;
+    const follow = 1 - Math.exp(-dt * 3.1);
+    camera.x += (targetX - camera.x) * follow;
+    camera.y += (targetY - camera.y) * follow;
+    clampCamera();
+    shake = Math.max(0, shake - dt * 18);
+    if (
+      !guideOpen &&
+      !player.aboard &&
+      ownedBoat &&
+      ownedBoat.landed &&
+      !boatThrow &&
+      scene === "island" &&
+      player.dead <= 0
+    ) {
+      const bx = ownedBoat.x + ownedBoat.w / 2;
+      const by = ownedBoat.y + ownedBoat.h / 2;
+      const now = playerCenter();
+      if (Math.hypot(now.x - bx, now.y - by) < 14) {
+        player.aboard = true;
+        seatPlayerOnBoat();
+        player.inWater = false;
+        player.submerged = 0;
+      }
+    }
+  }
+
+  function hurtPlayer() {
+    if (player.hp <= 0 || player.dead > 0) return;
+    player.hp -= 1;
+    player.hurt = 0.45;
+    shake = 6;
+    if (player.hp <= 0) {
+      player.dead = 1.4;
+      player.aboard = false;
+    }
+  }
+
+  function updateDrowning(dt) {
+    if (player.dead > 0) {
+      player.dead -= dt;
+      if (player.dead <= 0) {
+        player.x = spawnX;
+        player.y = spawnY;
+        player.hp = MAX_HP;
+        player.submerged = 0;
+        player.drownTick = 0;
+        player.hurt = 0;
+        player.aboard = false;
+      }
+      return;
+    }
+    if (player.aboard) {
+      player.submerged = 0;
+      player.drownTick = 0;
+    } else if (player.inWater) {
+      player.submerged += dt;
+      if (player.submerged > 1.6) {
+        player.drownTick += dt;
+        if (player.drownTick >= 0.85) {
+          player.drownTick = 0;
+          hurtPlayer();
+        }
+      }
+    } else {
+      player.submerged = Math.max(0, player.submerged - dt * 1.4);
+      player.drownTick = 0;
+    }
+    if (player.hurt > 0) player.hurt -= dt;
+  }
+
+  function pickupRadius() {
+    return Math.max(player.w, player.h);
+  }
+
+  function findNearestLoot() {
+    const mid = playerCenter();
+    let best = null;
+    let bestDist = pickupRadius();
+    for (const item of loot) {
+      if (item.taken) continue;
+      if ((item.scene || "island") !== scene) continue;
+      if (item.drift) continue;
+      if (item.ignoreUntil && time < item.ignoreUntil) continue;
+      const d = Math.hypot(item.x + 4 - mid.x, item.y + 4 - mid.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = item;
+      }
+    }
+    return best;
+  }
+
+  function addToInventory(id) {
+    const def = ITEM_DEFS[id];
+    const existing = inventory.findIndex((s) => s && s.id === id);
+    if (existing >= 0) {
+      if (inventory[existing].count >= def.max) return false;
+      inventory[existing].count += 1;
+      return true;
+    }
+    const empty = inventory.findIndex((s) => !s);
+    if (empty < 0) return false;
+    inventory[empty] = { id, count: 1 };
+    return true;
+  }
+
+  function xpNeeded(level) {
+    return 24 + (level - 1) * 16;
+  }
+
+  function gainXp(amount) {
+    if (amount <= 0) return;
+    const fromXp = player.xp;
+    const fromLevel = player.level;
+    player.xp += amount;
+    let leveled = 0;
+    while (player.xp >= xpNeeded(player.level)) {
+      player.xp -= xpNeeded(player.level);
+      player.level += 1;
+      leveled += 1;
+    }
+    xpFx = {
+      t: 0,
+      amount,
+      leveled,
+      fromXp,
+      fromLevel,
+    };
+  }
+
+  function updateXpFx(dt) {
+    if (!xpFx) return;
+    xpFx.t += dt;
+    if (xpFx.t > (xpFx.leveled ? 1.55 : 0.95)) xpFx = null;
+  }
+
+  function inflightCount(id) {
+    let n = 0;
+    for (let i = 0; i < pickupAnims.length; i++) {
+      if (pickupAnims[i].dest === "slot" && pickupAnims[i].id === id) n++;
+    }
+    return n;
+  }
+
+  function inflightFreshSlots() {
+    let n = 0;
+    const seen = Object.create(null);
+    for (let i = 0; i < pickupAnims.length; i++) {
+      const a = pickupAnims[i];
+      if (a.dest !== "slot" || seen[a.id]) continue;
+      seen[a.id] = 1;
+      if (!inventory.some((s) => s && s.id === a.id)) n++;
+    }
+    return n;
+  }
+
+  function canTake(id) {
+    if (id === "coin") return true;
+    const def = ITEM_DEFS[id];
+    if (!def) return false;
+    const stack = inventory.find((s) => s && s.id === id);
+    const pending = inflightCount(id);
+    if (stack) return stack.count + pending < def.max;
+    if (pending > 0) return pending < def.max;
+    let empty = 0;
+    for (let i = 0; i < inventory.length; i++) if (!inventory[i]) empty++;
+    return empty > inflightFreshSlots();
+  }
+
+  function slotIndexFor(id) {
+    const i = inventory.findIndex((s) => s && s.id === id);
+    if (i >= 0) return i;
+    for (let a = 0; a < pickupAnims.length; a++) {
+      if (pickupAnims[a].dest === "slot" && pickupAnims[a].id === id) return pickupAnims[a].slot;
+    }
+    const used = Object.create(null);
+    for (let a = 0; a < pickupAnims.length; a++) {
+      const p = pickupAnims[a];
+      if (p.dest === "slot") used[p.slot] = 1;
+    }
+    for (let s = 0; s < inventory.length; s++) {
+      if (!inventory[s] && !used[s]) return s;
+    }
+    return 0;
+  }
+
+  function hudBarOrigin() {
+    const slot = 24;
+    const gap = 2;
+    const rowGap = 2;
+    const barW = HUD_COLS * slot + (HUD_COLS - 1) * gap;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const heartsY = uiH - 11;
+    const barY = heartsY - 9;
+    const y0 = barY - 4 - (slot * 2 + rowGap);
+    const x0 = uiW - barW - 6;
+    return { x0, y0, slot, gap, rowGap, barW, barY, heartsY, uiW, uiH };
+  }
+
+  function hudSlotPos(i) {
+    const h = hudBarOrigin();
+    const col = i % HUD_COLS;
+    const row = (i / HUD_COLS) | 0;
+    return {
+      x: h.x0 + col * (h.slot + h.gap) + h.slot / 2,
+      y: h.y0 + row * (h.slot + h.rowGap) + h.slot / 2,
+    };
+  }
+
+  function hudCoinPos() {
+    const h = hudBarOrigin();
+    return { x: h.x0 + MAX_HP * 8 + 14, y: h.heartsY + 3 };
+  }
+
+  function worldToUi(wx, wy) {
+    return {
+      x: ((wx - camera.x) * zoom) / SCALE_UI,
+      y: ((wy - camera.y) * zoom) / SCALE_UI,
+    };
+  }
+
+  function smoothstep(u) {
+    u = Math.max(0, Math.min(1, u));
+    return u * u * (3 - 2 * u);
+  }
+
+  function pickup(item) {
+    if (!item || item.taken || player.dead > 0) return;
+    const isCoin = item.id === "coin";
+    if (!isCoin && !canTake(item.id)) return;
+    const id = item.id;
+    const from = worldToUi(item.x + 6, item.y + 6);
+    pickupAnims.push({
+      id,
+      t: 0,
+      fromX: from.x,
+      fromY: from.y,
+      slot: isCoin ? 0 : slotIndexFor(id),
+      dest: isCoin ? "coins" : "slot",
+      value: item.value | 0,
+    });
+    item.taken = true;
+  }
+
+  function tryAutoPickup() {
+    if (player.dead > 0) return;
+    const mid = playerCenter();
+    const rad = pickupRadius();
+    for (let i = 0; i < loot.length; i++) {
+      const item = loot[i];
+      if (item.taken) continue;
+      if ((item.scene || "island") !== scene) continue;
+      if (item.drift) continue;
+      if (item.ignoreUntil && time < item.ignoreUntil) continue;
+      if (Math.hypot(item.x + 4 - mid.x, item.y + 4 - mid.y) >= rad) continue;
+      if (item.id !== "coin" && !canTake(item.id)) continue;
+      pickup(item);
+    }
+  }
+
+  function updatePickup(dt) {
+    let coinBatch = 0;
+    let xpBatch = 0;
+    let slotBatch = -1;
+    for (let i = pickupAnims.length - 1; i >= 0; i--) {
+      const a = pickupAnims[i];
+      a.t += dt;
+      if (a.t < 1.7) continue;
+      if (a.dest === "coins") coinBatch += a.value | 0;
+      else {
+        addToInventory(a.id);
+        xpBatch += ITEM_DEFS[a.id].xp | 0;
+        slotBatch = a.slot;
+      }
+      pickupAnims.splice(i, 1);
+    }
+    if (coinBatch > 0) {
+      player.coins += coinBatch;
+      playCoinClink();
+    }
+    if (xpBatch > 0) {
+      gainXp(xpBatch);
+      playXpChime();
+      if (slotBatch >= 0) heldSlot = slotBatch;
+    }
+  }
+
+  function promptText() {
+    if (chestTalk > 0) return "FIND A TREASURE MASTER TO OPEN";
+    if (harborTalk > 0) return "CAN'T AFFORD";
+    if (!nearestLoot || nearestLoot.id === "coin") return "";
+    const def = ITEM_DEFS[nearestLoot.id];
+    if (!def || canTake(nearestLoot.id)) return "";
+    return `CAN'T HOLD MORE ${def.name}`;
+  }
+
+  function updatePrompt() {}
+
+  function ensureAudio() {
+    if (audioCtx) {
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+    setupOcean(audioCtx);
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
+
+  function makeNoiseBuffer(ctx, seconds, kind) {
+    const n = Math.floor(ctx.sampleRate * seconds);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < n; i++) {
+      const white = Math.random() * 2 - 1;
+      if (kind === "brown") {
+        last = (last + 0.02 * white) / 1.02;
+        data[i] = last * 3.2;
+      } else {
+        last = last * 0.96 + white * 0.04;
+        data[i] = last * 2.4;
+      }
+    }
+    const fade = Math.floor(ctx.sampleRate * 0.02);
+    for (let i = 0; i < fade; i++) {
+      const a = i / fade;
+      data[i] *= a;
+      data[n - 1 - i] *= a;
+    }
+    return buf;
+  }
+
+  function setupOcean(ctx) {
+    if (oceanReady) return;
+    const master = ctx.createGain();
+    master.gain.value = 0;
+    oceanGain = master;
+    master.connect(ctx.destination);
+
+    function layer(kind, lpHz, lfoHz, mix, lfoDepth) {
+      const src = ctx.createBufferSource();
+      src.buffer = makeNoiseBuffer(ctx, 3.2, kind);
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = lpHz;
+      lp.Q.value = 0.65;
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 80;
+      const amp = ctx.createGain();
+      amp.gain.value = mix;
+      const lfo = ctx.createOscillator();
+      lfo.type = "sine";
+      lfo.frequency.value = lfoHz;
+      const lfoG = ctx.createGain();
+      lfoG.gain.value = lfoDepth;
+      lfo.connect(lfoG);
+      lfoG.connect(amp.gain);
+      src.connect(hp);
+      hp.connect(lp);
+      lp.connect(amp);
+      amp.connect(master);
+      src.start();
+      lfo.start();
+    }
+
+    layer("brown", 520, 0.09, 0.42, 0.22);
+    layer("pink", 1400, 0.16, 0.28, 0.18);
+    oceanReady = true;
+  }
+
+  function oceanVolumeFromShore() {
+    const feetY = player.y + player.h - 2;
+    const shore = restShoreY(player.x + player.w / 2);
+    const inland = shore - feetY;
+    const wet = 22;
+    const fade = 170;
+    if (inland <= wet) return 1;
+    if (inland >= wet + fade) return 0;
+    return smoothstep(1 - (inland - wet) / fade);
+  }
+
+  function updateOcean() {
+    if (!oceanGain || !audioCtx) return;
+    const target = isIndoor() ? 0 : oceanVolumeFromShore() * 0.068;
+    oceanGain.gain.setTargetAtTime(target, audioCtx.currentTime, 0.09);
+  }
+
+  function holdingShell() {
+    const stack = inventory[heldSlot];
+    return !!(stack && stack.id === "shell");
+  }
+
+  function killHorn() {
+    if (!hornVoice) return;
+    const v = hornVoice;
+    hornVoice = null;
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    try {
+      v.master.gain.cancelScheduledValues(t);
+      v.master.gain.setValueAtTime(0.0001, t);
+      v.oscs.forEach((o) => o.stop(t));
+      v.vibrato.stop(t);
+    } catch (err) {
+      /* already stopped */
+    }
+  }
+
+  function startHorn() {
+    setLoudNoise(true);
+    ensureAudio();
+    if (!audioCtx) return;
+    if (hornVoice && !hornVoice.released) return;
+    if (hornVoice) killHorn();
+    const t = audioCtx.currentTime;
+    const master = audioCtx.createGain();
+    master.gain.setValueAtTime(0.0001, t);
+    master.gain.exponentialRampToValueAtTime(0.24, t + 0.18);
+    const lp = audioCtx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(420, t);
+    lp.frequency.exponentialRampToValueAtTime(820, t + 0.32);
+    lp.Q.value = 0.85;
+    lp.connect(master);
+    master.connect(audioCtx.destination);
+    const vibrato = audioCtx.createOscillator();
+    vibrato.type = "sine";
+    vibrato.frequency.value = 4.4;
+    const vibG = audioCtx.createGain();
+    vibG.gain.value = 2.1;
+    vibrato.connect(vibG);
+    const parts = [
+      { f: 98, type: "sawtooth", mix: 0.58 },
+      { f: 146.83, type: "sawtooth", mix: 0.3 },
+      { f: 196, type: "triangle", mix: 0.22 },
+      { f: 123.47, type: "sine", mix: 0.2 },
+    ];
+    const oscs = [];
+    for (let i = 0; i < parts.length; i++) {
+      const osc = audioCtx.createOscillator();
+      osc.type = parts[i].type;
+      osc.frequency.setValueAtTime(parts[i].f, t);
+      vibG.connect(osc.frequency);
+      const g = audioCtx.createGain();
+      g.gain.value = parts[i].mix;
+      osc.connect(g);
+      g.connect(lp);
+      osc.start(t);
+      oscs.push(osc);
+    }
+    vibrato.start(t);
+    hornVoice = { master, oscs, vibrato, startedAt: t, released: false };
+  }
+
+  function releaseHorn() {
+    setLoudNoise(false);
+    if (!hornVoice || hornVoice.released) return;
+    hornVoice.released = true;
+    if (!audioCtx) {
+      hornVoice = null;
+      return;
+    }
+    const t = audioCtx.currentTime;
+    const fadeEnd = t + 0.05;
+    const v = hornVoice;
+    v.master.gain.cancelScheduledValues(t);
+    const cur = Math.max(0.0001, v.master.gain.value);
+    v.master.gain.setValueAtTime(cur, t);
+    v.master.gain.exponentialRampToValueAtTime(0.0001, fadeEnd);
+    v.oscs.forEach((o) => o.stop(fadeEnd + 0.02));
+    v.vibrato.stop(fadeEnd + 0.02);
+    v.oscs[0].onended = () => {
+      if (hornVoice === v) hornVoice = null;
+    };
+  }
+
+  function updateHorn() {
+    if (guideOpen) {
+      if (hornVoice || loudNoiseActive) releaseHorn();
+      return;
+    }
+    if (keys[" "] && holdingShell() && player.dead <= 0) {
+      startHorn();
+      return;
+    }
+    if (loudNoiseActive) setLoudNoise(false);
+    if (hornVoice && !hornVoice.released) releaseHorn();
+  }
+
+  function playCoinClink() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const notes = [1568, 2093];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.03;
+      const osc = audioCtx.createOscillator();
+      osc.type = i ? "triangle" : "sine";
+      osc.frequency.setValueAtTime(notes[i], st);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(0.07, st + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.14);
+      osc.connect(g);
+      g.connect(audioCtx.destination);
+      osc.start(st);
+      osc.stop(st + 0.16);
+    }
+  }
+
+  function playXpChime() {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const notes = [988, 1318, 1760];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.04;
+      const osc = audioCtx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(notes[i], st);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(0.055, st + 0.018);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.2);
+      osc.connect(g);
+      g.connect(audioCtx.destination);
+      osc.start(st);
+      osc.stop(st + 0.22);
+    }
+  }
+
+  function tileAtWorld(px, py) {
+    const c = Math.floor(px / TILE);
+    const r = Math.floor(py / TILE);
+    return tileType(c, r);
+  }
+
+  function findDropPos(id) {
+    const beach = id === "shell" || id === "gem" || id === "crystal" || id === "jelly";
+    const facing = player.facing;
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h - 6;
+    const spots = [];
+    for (let d = 18; d <= 34; d += 4) {
+      spots.push([cx + facing * d, cy]);
+      spots.push([cx + facing * d, cy - 8]);
+      spots.push([cx + facing * d, cy + 6]);
+    }
+    for (let n = 10; n <= 44; n += 6) {
+      spots.push([cx + facing * 14, cy - n]);
+      spots.push([cx, cy - n]);
+    }
+    function ok(x, y) {
+      if (isIndoor()) {
+        return canStand(x, y) && canStand(x + 4, y + 4);
+      }
+      if (x < 4 || y < 4 || x > WORLD_W - 10 || y > WORLD_H - 10) return false;
+      if (hitPad(x, y, walkPads)) return true;
+      if (y >= restShoreY(x) - 3 || inRiverWater(x, y) || y < northCliffY(x) + 4) return false;
+      if (beach) return isSandAt(x, y);
+      const t = tileAtWorld(x, y);
+      return t === TILES.SAND || t === TILES.DIRT || t === TILES.GRASS;
+    }
+    for (const [x, y] of spots) {
+      if (ok(x, y)) return { x: x - 4, y: y - 4 };
+    }
+    if (isIndoor()) return { x: cx + facing * 12 - 4, y: cy - 4 };
+    return { x: cx + facing * 20 - 4, y: Math.min(cy, restShoreY(cx) - 12) - 4 };
+  }
+
+  function keeperNpc() {
+    for (let i = 0; i < npcs.length; i++) {
+      if (npcs[i].kind === "keeper") return npcs[i];
+    }
+    return null;
+  }
+
+  function fisherNpc() {
+    for (let i = 0; i < npcs.length; i++) {
+      if (npcs[i].kind === "fisher") return npcs[i];
+    }
+    return null;
+  }
+
+  function traderNpc() {
+    if (scene === "fish") return fisherNpc();
+    if (scene === "shop") return keeperNpc();
+    return null;
+  }
+
+  function tradeValueFor(id) {
+    if (scene === "fish") return FISH_TRADE[id] || 0;
+    if (scene === "shop") return GEM_TRADE[id] || 0;
+    return 0;
+  }
+
+  function nearShopkeeper(px, py) {
+    const k = traderNpc();
+    if (!k || !isIndoor()) return false;
+    const kx = k.x + 3;
+    const ky = k.y + 2;
+    if (Math.hypot(px - kx, py - ky) < 34) return true;
+    const mid = playerCenter();
+    return Math.hypot(mid.x - kx, mid.y - ky) < 36 && py < k.y + 30;
+  }
+
+  function spawnTradeCoins(amount) {
+    const k = traderNpc();
+    const hx = k ? k.x + 8 : indoorW() / 2;
+    const hy = k ? k.y - 10 : 36;
+    const n = amount >= 20 ? 3 : amount >= 5 ? 2 : 1;
+    const pack = tradePackSeq++;
+    const share = Math.floor(amount / n);
+    let left = amount;
+    for (let i = 0; i < n; i++) {
+      const value = i === n - 1 ? left : share;
+      left -= value;
+      const ox = hx + i * 2 - 1;
+      const oy = hy + (i % 2);
+      loot.push({
+        id: "coin",
+        value,
+        x: ox,
+        y: oy,
+        taken: false,
+        born: waveCycle,
+        life: Infinity,
+        ignoreUntil: Infinity,
+        scene,
+        drift: true,
+        flight: 0,
+        flightDur: 0.78 + i * 0.12 + Math.random() * 0.14,
+        ox,
+        oy,
+        arc: 7 + i * 3 + Math.random() * 4,
+        side: i === 1 ? -1 : 1,
+        pack,
+      });
+    }
+  }
+
+  function settleTradeCoinPack(pack) {
+    let pending = false;
+    let total = 0;
+    let lead = null;
+    for (const other of loot) {
+      if (other.taken || other.pack !== pack) continue;
+      if (other.drift) pending = true;
+      total += other.value | 0;
+      if (!lead) lead = other;
+    }
+    if (pending || !lead) return;
+    for (const other of loot) {
+      if (other.taken || other.pack !== pack) continue;
+      if (other !== lead) other.taken = true;
+    }
+    lead.value = total;
+    lead.x = player.x + player.w / 2 - 3;
+    lead.y = player.y + 2;
+    lead.ignoreUntil = 0;
+  }
+
+  function updateTradeCoinDrift(dt) {
+    if (!isIndoor()) return;
+    const mid = playerCenter();
+    const tx = mid.x - 3;
+    const ty = player.y + 2;
+    for (const item of loot) {
+      if (item.taken || item.id !== "coin" || item.pack == null) continue;
+      if (!item.drift) {
+        if (item.ignoreUntil === Infinity) {
+          item.x = tx;
+          item.y = ty;
+        }
+        continue;
+      }
+      item.flight += dt;
+      const u = Math.min(1, item.flight / item.flightDur);
+      const ease = u * u * (3 - 2 * u);
+      const lift = Math.sin(u * Math.PI) * item.arc;
+      const sway = Math.sin(u * Math.PI) * 5 * (item.side || 0);
+      item.x = item.ox + (tx - item.ox) * ease + sway;
+      item.y = item.oy + (ty - item.oy) * ease - lift;
+      const near =
+        u > 0.62 && Math.hypot(item.x + 3 - mid.x, item.y + 3 - mid.y) < pickupRadius();
+      if (u >= 1 || near) {
+        item.drift = false;
+        item.x = tx;
+        item.y = ty;
+        settleTradeCoinPack(item.pack);
+      }
+    }
+  }
+
+  function beginShopTrade(id) {
+    const value = tradeValueFor(id) | 0;
+    if (value <= 0) return;
+    const dur = 1 + Math.random();
+    shopSales.push({ value, t: 0, dur });
+    shopTrade.phase = "think";
+    shopTrade.id = id;
+    shopTrade.value = value;
+    shopTrade.refuse = 0;
+    if (shopTrade.t <= 0) shopTrade.dur = dur;
+  }
+
+  function updateShopTrade(dt) {
+    if (shopTrade.refuse > 0) shopTrade.refuse = Math.max(0, shopTrade.refuse - dt);
+    if (!shopSales.length) {
+      if (shopTrade.phase === "think") {
+        shopTrade.phase = "idle";
+        shopTrade.t = 0;
+      }
+      return;
+    }
+    shopTrade.phase = "think";
+    shopTrade.t += dt;
+    for (let i = shopSales.length - 1; i >= 0; i--) {
+      const sale = shopSales[i];
+      sale.t += dt;
+      if (sale.t < sale.dur) continue;
+      spawnTradeCoins(sale.value);
+      shopSales.splice(i, 1);
+    }
+    if (!shopSales.length) {
+      shopTrade.phase = "idle";
+      shopTrade.t = 0;
+    }
+  }
+
+  function harborNpc() {
+    for (let i = 0; i < npcs.length; i++) {
+      if (npcs[i].kind === "harbor") return npcs[i];
+    }
+    return null;
+  }
+
+  function nearHarbor(px, py) {
+    if (scene !== "island") return false;
+    for (let i = 0; i < npcs.length; i++) {
+      const n = npcs[i];
+      if (n.kind !== "harbor" && n.kind !== "sailor") continue;
+      if (Math.hypot(px - (n.x + 3), py - (n.y + 2)) < 32) return true;
+    }
+    return false;
+  }
+
+  function canBoatAt(px, py) {
+    if (px < 2 || py < 2 || px >= WORLD_W - 2 || py >= WORLD_H - 2) return false;
+    if (isSolidPoint(px, py)) return false;
+    if (landPresent(px) && py < northCliffY(px)) return false;
+    if (hitPad(px, py, walkPads)) return false;
+    if (inRiverWater(px, py)) return true;
+    return !onIslandLand(px, py);
+  }
+
+  function boatHullOk(x, y, w, h) {
+    const pts = [
+      [x + 2, y + 3],
+      [x + w - 2, y + 3],
+      [x + 2, y + h - 1],
+      [x + w - 2, y + h - 1],
+      [x + w / 2, y + h - 1],
+    ];
+    return pts.every(([px, py]) => canBoatAt(px, py));
+  }
+
+  function emitBoatWake(b, dt) {
+    const spd = Math.hypot(b.vx || 0, b.vy || 0);
+    if (spd < 12) return;
+    b.wakeT = (b.wakeT || 0) + dt;
+    if (b.wakeT < 0.045) return;
+    b.wakeT = 0;
+    const ang = Math.atan2(b.vy || 0, b.vx || 1);
+    const bx = b.x + b.w / 2 - Math.cos(ang) * (b.w * 0.45);
+    const by = b.y + b.h - 1 - Math.sin(ang) * 2;
+    let k = 0;
+    const n = spd > 70 ? 3 : 2;
+    for (let i = 0; i < MAX_SPLASH && k < n; i++) {
+      const p = splashes[i];
+      if (p.life > 0) continue;
+      p.x = bx + rand(-2.5, 2.5);
+      p.y = by + rand(-1, 1);
+      p.vx = -Math.cos(ang) * rand(8, 18) + rand(-10, 10);
+      p.vy = -Math.sin(ang) * rand(6, 14) + rand(-6, 6);
+      p.life = rand(0.18, 0.38);
+      p.max = p.life;
+      p.col = Math.random() > 0.5 ? "#e8f6ff" : "#ffffff";
+      k++;
+    }
+  }
+
+  function skiffBob(b, t) {
+    return b.landed && !boatThrow ? Math.sin((t == null ? time : t) * 1.8 + (b.phase || 0)) * 1.15 : 0;
+  }
+
+  function seatPlayerOnBoat() {
+    if (!ownedBoat) return;
+    const bob = skiffBob(ownedBoat, time);
+    player.x = ownedBoat.x + ownedBoat.w / 2 - player.w / 2;
+    player.y = ownedBoat.y + bob - 2;
+  }
+
+  function tryStepOffBoat(ox, oy) {
+    if (!player.aboard || !ownedBoat) return false;
+    const x = player.x + ox;
+    const y = player.y + oy;
+    if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
+      player.aboard = false;
+      player.x = x;
+      player.y = y;
+      player.inWater = false;
+      player.submerged = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function steerOwnedBoat(dt, dx, dy) {
+    const b = ownedBoat;
+    if (!b || boatThrow) return;
+    const moving = dx !== 0 || dy !== 0;
+    player.moving = moving;
+    const len = Math.hypot(dx, dy) || 1;
+    const acc = 140;
+    if (moving) {
+      b.vx = (b.vx || 0) + (dx / len) * acc * dt;
+      b.vy = (b.vy || 0) + (dy / len) * acc * dt;
+      if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
+      b.face = player.facing;
+    }
+    b.vx = (b.vx || 0) * (1 - Math.min(1, dt * 2.4));
+    b.vy = (b.vy || 0) * (1 - Math.min(1, dt * 2.4));
+    const spd = Math.hypot(b.vx, b.vy);
+    const max = 110;
+    if (spd > max) {
+      b.vx *= max / spd;
+      b.vy *= max / spd;
+    }
+    const nx = b.x + b.vx * dt;
+    const ny = b.y + b.vy * dt;
+    if (boatHullOk(nx, b.y, b.w, b.h)) b.x = nx;
+    else {
+      b.vx *= 0.2;
+      if (moving) tryStepOffBoat(Math.sign(dx) * 12, 0);
+    }
+    if (boatHullOk(b.x, ny, b.w, b.h)) b.y = ny;
+    else {
+      b.vy *= 0.2;
+      if (moving) tryStepOffBoat(0, Math.sign(dy) * 10);
+    }
+    b.tilt += (((b.vx || 0) / max) * 0.22 - b.tilt) * Math.min(1, dt * 8);
+    emitBoatWake(b, dt);
+    if (player.aboard) seatPlayerOnBoat();
+  }
+
+  function startBoatThrow() {
+    const n = harborNpc();
+    const landX = harborDrop ? harborDrop.x : (n ? n.x : 400) + 18;
+    const landY = harborDrop ? harborDrop.y : restShoreY(n ? n.x : RIVER_X0) + 34;
+    ownedBoat = {
+      x: (n ? n.x : landX) - 4,
+      y: (n ? n.y : landY) - 24,
+      w: 22,
+      h: 10,
+      vx: 0,
+      vy: 0,
+      tilt: 0,
+      phase: rand(0, 6),
+      face: 1,
+      kind: "skiff",
+      landed: false,
+    };
+    boatThrow = {
+      t: 0,
+      dur: 0.95,
+      x0: ownedBoat.x,
+      y0: ownedBoat.y - 28,
+      x1: landX,
+      y1: landY,
+    };
+    player.aboard = false;
+  }
+
+  function updateBoatThrow(dt) {
+    if (harborTalk > 0) harborTalk = Math.max(0, harborTalk - dt);
+    if (!boatThrow || !ownedBoat) return;
+    boatThrow.t += dt;
+    const u = Math.min(1, boatThrow.t / boatThrow.dur);
+    const ease = u * u * (3 - 2 * u);
+    const lift = Math.sin(u * Math.PI) * 36;
+    ownedBoat.x = boatThrow.x0 + (boatThrow.x1 - boatThrow.x0) * ease;
+    ownedBoat.y = boatThrow.y0 + (boatThrow.y1 - boatThrow.y0) * ease - lift;
+    ownedBoat.tilt = Math.sin(u * Math.PI * 2) * 0.18;
+    if (u >= 1) {
+      ownedBoat.x = boatThrow.x1;
+      ownedBoat.y = boatThrow.y1;
+      ownedBoat.landed = true;
+      ownedBoat.tilt = 0;
+      boatThrow = null;
+      emitSplash(ownedBoat.x + ownedBoat.w / 2, ownedBoat.y + ownedBoat.h, 8);
+    }
+  }
+
+  function tryHarborDeal() {
+    if (scene !== "island" || player.aboard) return false;
+    const mid = playerCenter();
+    if (!nearHarbor(mid.x, mid.y)) return false;
+    if (ownedBoat || boatThrow) return false;
+    if (player.coins < BOAT_PRICE) {
+      harborTalk = 1.35;
+      return true;
+    }
+    player.coins -= BOAT_PRICE;
+    startBoatThrow();
+    return true;
+  }
+
+  function tryBoatToggle() {
+    if (scene !== "island" || !ownedBoat || boatThrow) return false;
+    const mid = playerCenter();
+    if (player.aboard) {
+      const spots = [
+        [ownedBoat.x - 10, ownedBoat.y - 2],
+        [ownedBoat.x + ownedBoat.w + 2, ownedBoat.y - 2],
+        [ownedBoat.x + 4, ownedBoat.y - 12],
+        [ownedBoat.x + 4, ownedBoat.y + ownedBoat.h + 2],
+      ];
+      for (let i = 0; i < spots.length; i++) {
+        const x = spots[i][0];
+        const y = spots[i][1];
+        if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
+          player.aboard = false;
+          player.x = x;
+          player.y = y;
+          player.inWater = false;
+          player.submerged = 0;
+          return true;
+        }
+      }
+      return true;
+    }
+    const bx = ownedBoat.x + ownedBoat.w / 2;
+    const by = ownedBoat.y + ownedBoat.h / 2;
+    if (Math.hypot(mid.x - bx, mid.y - by) < 22) {
+      player.aboard = true;
+      seatPlayerOnBoat();
+      player.inWater = false;
+      player.submerged = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function onEnter() {
+    if (player.dead > 0) return;
+    if (isIndoor()) {
+      dropHeld();
+      return;
+    }
+    if (tryHarborDeal()) return;
+    if (tryBoatToggle()) return;
+    dropHeld();
+  }
+
+  function tryTradeKey() {
+    if (player.dead > 0 || fadeMode) return;
+    const mid = playerCenter();
+    if (tryHarborDeal()) return;
+    const k = traderNpc();
+    if (!k) return;
+    if (Math.hypot(mid.x - (k.x + 3), mid.y - (k.y + 2)) > 40 && !nearShopkeeper(mid.x, mid.y)) return;
+    const stack = inventory[heldSlot];
+    if (!stack) return;
+    if (!tradeValueFor(stack.id)) {
+      shopTrade.refuse = 0.7;
+      return;
+    }
+    const id = stack.id;
+    stack.count -= 1;
+    if (stack.count <= 0) inventory[heldSlot] = null;
+    beginShopTrade(id);
+  }
+
+  function boatIsStill() {
+    if (!ownedBoat || !player.aboard || boatThrow) return false;
+    if (player.moving) return false;
+    return Math.hypot(ownedBoat.vx || 0, ownedBoat.vy || 0) < 10;
+  }
+
+  function fishLuckZone() {
+    const b = ownedBoat;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const dockX = DOCK_C * TILE + 88;
+    const dockY = restShoreY(dockX) + 36;
+    if (Math.hypot(cx - dockX, cy - dockY) < 96) return "dock";
+    const mouthY = restShoreY(RIVER_X0);
+    if (Math.hypot(cx - RIVER_X0, cy - mouthY) < 88) return "mouth";
+    return "ocean";
+  }
+
+  function rollBoatCatch() {
+    const zone = fishLuckZone();
+    const r = Math.random();
+    const rare = zone === "ocean" ? 0.09 : 0.24;
+    const legend = zone === "ocean" ? 0.01 : 0.055;
+    let pool = CATCH_COMMON;
+    if (r < legend) pool = CATCH_LEGEND;
+    else if (r < legend + rare) pool = CATCH_RARE;
+    else if (zone === "ocean" && Math.random() < 0.35) pool = ["cod", "trout"];
+    return pool[irand(0, pool.length - 1)];
+  }
+
+  function tryCastRod() {
+    if (scene !== "island" || !player.aboard || !ownedBoat || boatThrow) return;
+    if (rod.phase !== "idle" || pickupAnims.length || player.dead > 0) return;
+    if (!boatIsStill()) return;
+    rod.phase = "wait";
+    rod.t = 0;
+    rod.wait = rand(0.65, 1.55);
+    rod.face = player.facing;
+    fishCastT = rod.wait + 0.5;
+  }
+
+  function landRodCatch() {
+    const id = rollBoatCatch();
+    const b = ownedBoat;
+    const fx = b.x + b.w / 2 + rod.face * 16;
+    const fy = b.y + b.h + 6;
+    emitSplash(fx, fy, 7);
+    if (!ITEM_DEFS[id] || !canTake(id)) {
+      chestTalk = 0;
+      harborTalk = 0;
+      shopTrade.refuse = 0.01;
+      return;
+    }
+    const from = worldToUi(fx, fy);
+    pickupAnims.push({
+      id,
+      t: 0,
+      fromX: from.x,
+      fromY: from.y,
+      slot: slotIndexFor(id),
+      dest: "slot",
+      value: 0,
+    });
+  }
+
+  function updateRod(dt) {
+    if (chestTalk > 0) chestTalk = Math.max(0, chestTalk - dt);
+    if (rod.phase === "idle") return;
+    if (!player.aboard || !boatIsStill()) {
+      rod.phase = "idle";
+      return;
+    }
+    rod.t += dt;
+    if (rod.phase === "wait" && rod.t >= rod.wait) {
+      rod.phase = "reel";
+      rod.t = 0;
+      landRodCatch();
+    } else if (rod.phase === "reel" && rod.t > 0.5) {
+      rod.phase = "idle";
+    }
+  }
+
+  function tryBoatFish() {
+    tryCastRod();
+  }
+
+  function dropHeld() {
+    if (player.dead > 0 || player.aboard) return;
+    const stack = inventory[heldSlot];
+    if (!stack) return;
+    const pos = findDropPos(stack.id);
+    const id = stack.id;
+    stack.count -= 1;
+    if (stack.count <= 0) inventory[heldSlot] = null;
+    if (isIndoor() && nearShopkeeper(pos.x + 4, pos.y + 4)) {
+      if (tradeValueFor(id)) {
+        beginShopTrade(id);
+        return;
+      }
+      shopTrade.refuse = 0.7;
+    }
+    loot.push({
+      id,
+      x: pos.x,
+      y: pos.y,
+      taken: false,
+      born: waveCycle,
+      life: Infinity,
+      ignoreUntil: time + 0.8,
+      scene,
+    });
+  }
+
+  function useHeld() {
+    if (player.dead > 0) return;
+    const stack = inventory[heldSlot];
+    if (!stack) return;
+    if (stack.id === "chest") {
+      chestTalk = 2.4;
+      return;
+    }
+    if (stack.id === "shell") {
+      startHorn();
+      return;
+    }
+    useFx = { t: 0, id: stack.id };
+  }
+
+  function updateUseFx(dt) {
+    if (!useFx) return;
+    useFx.t += dt;
+    if (useFx.t > 0.35) useFx = null;
+  }
+
+  function cam() {
+    return { x: Math.round(camera.x), y: Math.round(camera.y) };
+  }
+
+  function px(x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x | 0, y | 0, w, h);
+  }
+
+  const FONT = {
+    A: [14, 17, 17, 31, 17, 17, 17],
+    B: [30, 17, 17, 30, 17, 17, 30],
+    C: [14, 17, 16, 16, 16, 17, 14],
+    D: [30, 17, 17, 17, 17, 17, 30],
+    E: [31, 16, 16, 30, 16, 16, 31],
+    F: [31, 16, 16, 30, 16, 16, 16],
+    G: [14, 17, 16, 23, 17, 17, 14],
+    H: [17, 17, 17, 31, 17, 17, 17],
+    I: [14, 4, 4, 4, 4, 4, 14],
+    J: [7, 2, 2, 2, 2, 18, 12],
+    K: [17, 18, 20, 24, 20, 18, 17],
+    L: [16, 16, 16, 16, 16, 16, 31],
+    M: [17, 27, 21, 21, 17, 17, 17],
+    N: [17, 25, 21, 19, 17, 17, 17],
+    O: [14, 17, 17, 17, 17, 17, 14],
+    P: [30, 17, 17, 30, 16, 16, 16],
+    Q: [14, 17, 17, 17, 21, 18, 13],
+    R: [30, 17, 17, 30, 20, 18, 17],
+    S: [14, 17, 16, 14, 1, 17, 14],
+    T: [31, 4, 4, 4, 4, 4, 4],
+    U: [17, 17, 17, 17, 17, 17, 14],
+    V: [17, 17, 17, 17, 17, 10, 4],
+    W: [17, 17, 17, 21, 21, 21, 10],
+    X: [17, 17, 10, 4, 10, 17, 17],
+    Y: [17, 17, 10, 4, 4, 4, 4],
+    Z: [31, 1, 2, 4, 8, 16, 31],
+    "0": [14, 17, 19, 21, 25, 17, 14],
+    "1": [4, 12, 4, 4, 4, 4, 14],
+    "2": [14, 17, 1, 6, 8, 16, 31],
+    "3": [14, 17, 1, 6, 1, 17, 14],
+    "4": [2, 6, 10, 18, 31, 2, 2],
+    "5": [31, 16, 30, 1, 1, 17, 14],
+    "6": [14, 16, 16, 30, 17, 17, 14],
+    "7": [31, 1, 2, 4, 8, 8, 8],
+    "8": [14, 17, 17, 14, 17, 17, 14],
+    "9": [14, 17, 17, 15, 1, 1, 14],
+    " ": [0, 0, 0, 0, 0, 0, 0],
+    "=": [0, 0, 31, 0, 31, 0, 0],
+    "'": [12, 12, 8, 0, 0, 0, 0],
+    ".": [0, 0, 0, 0, 0, 12, 12],
+    "!": [4, 4, 4, 4, 4, 0, 4],
+    "?": [14, 17, 1, 2, 4, 0, 4],
+    "+": [0, 4, 4, 31, 4, 4, 0],
+  };
+
+  function drawPixChar(ch, x, y, color) {
+    const g = FONT[ch] || FONT["?"];
+    for (let row = 0; row < 7; row++) {
+      for (let col = 0; col < 5; col++) {
+        if (g[row] & (16 >> col)) px(x + col, y + row, 1, 1, color);
+      }
+    }
+  }
+
+  function pixTextWidth(text) {
+    return text.length * 6 - 1;
+  }
+
+  function drawPixText(text, x, y, color, align) {
+    const s = String(text).toUpperCase();
+    let ox = x;
+    if (align === "center") ox = (x - pixTextWidth(s) / 2) | 0;
+    else if (align === "right") ox = (x - pixTextWidth(s)) | 0;
+    for (let i = 0; i < s.length; i++) drawPixChar(s[i], ox + i * 6, y, color);
+  }
+
+  function tileType(c, r) {
+    if (!inBounds(c, r)) return TILES.DEEP;
+    return world[r][c];
+  }
+
+  function makeTile(paint) {
+    const c = document.createElement("canvas");
+    c.width = TEX;
+    c.height = TEX;
+    const g = c.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    paint(g);
+    return c;
+  }
+
+  function scatter(g, n, salt, pal) {
+    for (let i = 0; i < n; i++) {
+      const x = (hash(i * 13 + salt, salt * 7) * TEX) | 0;
+      const y = (hash(i * 29 + salt * 3, i + salt) * TEX) | 0;
+      g.fillStyle = pal[(hash(i + 8, salt) * pal.length) | 0];
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+
+  function paintGround(g, pal, salt) {
+    g.fillStyle = pal[0];
+    g.fillRect(0, 0, TEX, TEX);
+    scatter(g, 1600, salt, pal.slice(1));
+    scatter(g, 280, salt + 40, pal);
+  }
+
+  const art = {
+    sand: makeTile((g) =>
+      paintGround(g, ["#e2c792", "#d8bc86", "#edd6a8", "#c9a56a", "#f3e2bc", "#d4b87a", "#b89464", "#c4b08a"], 1)
+    ),
+    dirt: makeTile((g) =>
+      paintGround(g, ["#8a6a42", "#7a5c38", "#6b4e30", "#9a784c", "#5a4028", "#a88858", "#4a3420"], 7)
+    ),
+    grass: makeTile((g) => paintGround(g, ["#3f7a30", "#2f6a24", "#4d8a3a", "#356e28", "#5a9a44", "#2a5c1e"], 4)),
+  };
+
+  const WATER_BLUE = "#1786b4";
+  const WATER_DEEP = "#1278a4";
+
+  function wrapBlit(img, dx, dy, wx, wy) {
+    const s = img.width;
+    const sx = (((wx % s) + s) % s) | 0;
+    const sy = (((wy % s) + s) % s) | 0;
+    const w1 = Math.min(TILE, s - sx);
+    const h1 = Math.min(TILE, s - sy);
+    ctx.drawImage(img, sx, sy, w1, h1, dx | 0, dy | 0, w1, h1);
+    if (w1 < TILE) ctx.drawImage(img, 0, sy, TILE - w1, h1, (dx + w1) | 0, dy | 0, TILE - w1, h1);
+    if (h1 < TILE) ctx.drawImage(img, sx, 0, w1, TILE - h1, dx | 0, (dy + h1) | 0, w1, TILE - h1);
+    if (w1 < TILE && h1 < TILE) {
+      ctx.drawImage(img, 0, 0, TILE - w1, TILE - h1, (dx + w1) | 0, (dy + h1) | 0, TILE - w1, TILE - h1);
+    }
+  }
+
+  function shoreYAt(wx) {
+    return baseShoreRow(wx / TILE) * TILE;
+  }
+
+  function mix3(a, b, t) {
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return [(a[0] + (b[0] - a[0]) * t) | 0, (a[1] + (b[1] - a[1]) * t) | 0, (a[2] + (b[2] - a[2]) * t) | 0];
+  }
+
+  function rgb3(c) {
+    return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+  }
+
+  const COL_WET_SH = [154, 110, 64];
+  const COL_WET = [186, 138, 82];
+  const COL_GOLD = [226, 199, 146];
+  const COL_GOLD_HI = [243, 226, 188];
+  const COL_COOL = [176, 156, 118];
+  const COL_SAND_DIRT = [196, 160, 112];
+  const COL_DIRT = [138, 106, 66];
+  const COL_EARTH = [90, 64, 40];
+  const COL_GRASS_A = [63, 122, 48];
+  const COL_GRASS_B = [47, 106, 36];
+  const COL_GRASS_C = [42, 92, 30];
+  const COL_ROCK_A = [116, 112, 104];
+  const COL_ROCK_B = [78, 76, 70];
+  const COL_BARREN = [146, 124, 86];
+  const COL_SCRUB = [86, 96, 58];
+
+  function landColor(wx, wy) {
+    const rcx = riverXAt(wy);
+    const shore = shoreYAt(wx);
+    const cliff = northCliffY(wx);
+    const cap = islandCap(wx / TILE);
+    if (rcx != null) {
+      const rd = Math.abs(wx - rcx);
+      const rh = riverHalfAt(wy);
+      if (rd < rh) {
+        if (wy >= shore) return wy - shore < 36 ? WATER_BLUE : WATER_DEEP;
+        return WATER_BLUE;
+      }
+    }
+    if (cap <= 0) return wy - SHORE_BASE * TILE < 36 ? WATER_BLUE : WATER_DEEP;
+    if (wy < cliff) {
+      const u = (cliff - wy) / 8;
+      if (u < 0.42) return ((wx + wy) & 1) === 0 ? "#5a4a38" : "#4a3c2c";
+      return WATER_BLUE;
+    }
+    if (wy >= shore) return wy - shore < 36 ? WATER_BLUE : WATER_DEEP;
+    let e = eastness(wx / TILE) + (n2(wx * 0.013, wy * 0.011) - 0.5) * 0.34;
+    if (e < 0) e = 0;
+    else if (e > 1) e = 1;
+    const fromSouth = shore - wy;
+    const beach = (8 + n2(wx * 0.022, 1.6) * 7) * TILE;
+    if (fromSouth < beach) {
+      const t = fromSouth / Math.max(12, beach);
+      const wet = mix3(COL_WET_SH, COL_WET, Math.min(1, t * 2.4));
+      const dry = mix3(COL_GOLD, COL_GOLD_HI, t);
+      let sand = mix3(wet, dry, t);
+      sand = mix3(sand, mix3(COL_BARREN, COL_ROCK_B, 0.45), e * 0.78);
+      if (hash(wx, wy) > 0.972) sand = mix3(sand, COL_COOL, 0.35);
+      return rgb3(sand);
+    }
+    const jungle = n2(wx * 0.046, wy * 0.041) > 0.58 ? COL_GRASS_A : COL_GRASS_B;
+    const rock = n2(wx * 0.062, wy * 0.05) > 0.48 ? COL_ROCK_A : COL_ROCK_B;
+    let body = mix3(jungle, rock, e);
+    const mid = 1 - Math.min(1, Math.abs(e - 0.5) / 0.32);
+    body = mix3(body, COL_SCRUB, mid * 0.5);
+    if (wy - cliff < 12) body = mix3(body, e > 0.55 ? COL_ROCK_B : COL_EARTH, 0.4);
+    if (hash(wx, wy) > 0.988) body = mix3(body, e > 0.5 ? COL_ROCK_B : COL_EARTH, 0.65);
+    return rgb3(body);
+  }
+
+  function bakeSpeck(g, bx, by, wx0, wy0, pal, n) {
+    for (let i = 0; i < n; i++) {
+      const lx = (hash(wx0 + i * 13, wy0 + i * 7) * TILE) | 0;
+      const ly = (hash(wy0 + i * 19, wx0 + i * 3) * TILE) | 0;
+      g.fillStyle = pal[(hash(i + wx0, wy0) * pal.length) | 0];
+      g.fillRect(bx + lx, by + ly, 1, 1);
+    }
+  }
+
+  function wrapBlitTo(g, img, dx, dy, wx, wy) {
+    const s = img.width;
+    const sx = (((wx % s) + s) % s) | 0;
+    const sy = (((wy % s) + s) % s) | 0;
+    const w1 = Math.min(TILE, s - sx);
+    const h1 = Math.min(TILE, s - sy);
+    g.drawImage(img, sx, sy, w1, h1, dx, dy, w1, h1);
+    if (w1 < TILE) g.drawImage(img, 0, sy, TILE - w1, h1, dx + w1, dy, TILE - w1, h1);
+    if (h1 < TILE) g.drawImage(img, sx, 0, w1, TILE - h1, dx, dy + h1, w1, TILE - h1);
+    if (w1 < TILE && h1 < TILE) {
+      g.drawImage(img, 0, 0, TILE - w1, TILE - h1, dx + w1, dy + h1, TILE - w1, TILE - h1);
+    }
+  }
+
+  function bakeStaticWorld() {
+    shoreLut = new Int16Array(WORLD_W);
+    for (let wx = 0; wx < WORLD_W; wx++) shoreLut[wx] = shoreYAt(wx) | 0;
+
+    foamMask = new Uint8Array(FOAM_MASK_W * FOAM_MASK_H);
+    for (let y = 0; y < FOAM_MASK_H; y++) {
+      for (let x = 0; x < FOAM_MASK_W; x++) {
+        const h0 = hash(x, y * 17);
+        foamMask[y * FOAM_MASK_W + x] = h0 > 0.42 ? (h0 > 0.72 ? 2 : 1) : 0;
+      }
+    }
+
+    landCanvas = document.createElement("canvas");
+    landCanvas.width = WORLD_W;
+    landCanvas.height = WORLD_H;
+    const g = landCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = WATER_BLUE;
+    g.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const wx0 = c * TILE;
+        const wy0 = r * TILE;
+        const s0 = shoreLut[wx0];
+        const s1 = shoreLut[wx0 + TILE - 1];
+        const sMax = Math.max(s0, s1);
+        const cliff0 = northCliffY(wx0);
+        const cliff1 = northCliffY(wx0 + TILE - 1);
+        const capL = islandCap(c);
+        const capR = islandCap(c + 0.99);
+        const fullyWater = wy0 >= sMax;
+        const fullyOcean =
+          (capL <= 0 && capR <= 0) || wy0 + TILE <= Math.min(cliff0, cliff1) - 10;
+        const riverish =
+          riverXAt(wy0 + 8) != null &&
+          Math.abs(wx0 + 8 - riverXAt(wy0 + 8)) < riverHalfAt(wy0 + 8) + TILE;
+
+        if (fullyOcean && !riverish) {
+          g.fillStyle = WATER_BLUE;
+          g.fillRect(wx0, wy0, TILE, TILE);
+          continue;
+        }
+
+        if (fullyWater && !riverish && wy0 >= sMax + 40) {
+          g.fillStyle = WATER_DEEP;
+          g.fillRect(wx0, wy0, TILE, TILE);
+          continue;
+        }
+
+        for (let ly = 0; ly < TILE; ly++) {
+          for (let lx = 0; lx < TILE; lx++) {
+            g.fillStyle = landColor(wx0 + lx, wy0 + ly);
+            g.fillRect(wx0 + lx, wy0 + ly, 1, 1);
+          }
+        }
+      }
+    }
+  }
+
+  function pxi(g, x, y, w, h, col) {
+    g.fillStyle = col;
+    g.fillRect(x | 0, y | 0, w, h);
+  }
+
+  function paintPlanks(g, x, y, w, h, vertical) {
+    const cols = ["#8a5a32", "#7a4a28", "#9a6840", "#6b3f1f", "#a07448"];
+    for (let iy = 0; iy < h; iy++) {
+      for (let ix = 0; ix < w; ix++) {
+        const board = vertical ? (ix / 3) | 0 : (iy / 3) | 0;
+        const n = hash(x + ix, y + iy + board * 9);
+        let col = cols[(board + ((n * 3) | 0)) % cols.length];
+        if (n > 0.93) col = "#c4a070";
+        else if (n < 0.07) col = "#5a3420";
+        pxi(g, x + ix, y + iy, 1, 1, col);
+      }
+    }
+    if (vertical) {
+      for (let ix = 2; ix < w; ix += 3) pxi(g, x + ix, y, 1, h, "#4a2e16");
+    } else {
+      for (let iy = 2; iy < h; iy += 3) pxi(g, x, y + iy, w, 1, "#4a2e16");
+    }
+  }
+
+  function paintPost(g, x, y, h) {
+    pxi(g, x, y, 2, h, "#5a3420");
+    pxi(g, x, y, 1, h, "#8a5a32");
+    pxi(g, x, y + h - 1, 2, 1, "#3a2414");
+  }
+
+  function paintCrate(g, x, y) {
+    pxi(g, x, y, 7, 6, "#7a4a28");
+    pxi(g, x + 1, y + 1, 5, 1, "#c4a070");
+    pxi(g, x, y + 5, 7, 1, "#4a2e16");
+    pxi(g, x + 3, y, 1, 6, "#5a3420");
+  }
+
+  function paintBarrel(g, x, y) {
+    pxi(g, x + 1, y, 4, 7, "#6b3f1f");
+    pxi(g, x, y + 1, 6, 5, "#8a5a32");
+    pxi(g, x + 1, y + 2, 4, 1, "#c4a070");
+    pxi(g, x + 1, y + 5, 4, 1, "#4a2e16");
+  }
+
+  function paintFishSmall(g, x, y, flip) {
+    const s = flip ? -1 : 1;
+    const b = "#3a9ad4";
+    pxi(g, x, y, 5, 2, b);
+    pxi(g, x + (flip ? 0 : 4), y, 1, 2, "#1a6a9a");
+    pxi(g, x + (flip ? 4 : 0), y, 1, 1, "#7fd4f0");
+    pxi(g, x + 2 * s, y - 1, 2, 1, "#2a7ab0");
+  }
+
+  function paintCrystalPile(g, x, y) {
+    pxi(g, x + 2, y, 2, 1, "#f4fbff");
+    pxi(g, x + 1, y + 1, 4, 3, "#9ae0ff");
+    pxi(g, x + 2, y + 2, 2, 3, "#5ec8e8");
+    pxi(g, x + 3, y + 1, 1, 1, "#ffffff");
+    pxi(g, x, y + 4, 6, 1, "#2a6a88");
+  }
+
+  function paintShark(g, x, y) {
+    pxi(g, x + 2, y + 2, 22, 4, "#3a7aaa");
+    pxi(g, x + 4, y + 1, 16, 2, "#5aa0c4");
+    pxi(g, x + 6, y, 6, 1, "#2a5a7a");
+    pxi(g, x + 22, y + 2, 4, 3, "#2a5a7a");
+    pxi(g, x, y + 3, 3, 2, "#2a5a7a");
+    pxi(g, x + 24, y + 1, 1, 1, "#1a3048");
+    pxi(g, x + 8, y + 5, 8, 1, "#2a4a62");
+    pxi(g, x + 18, y + 3, 1, 1, "#e8f6ff");
+  }
+
+  function paintNet(g, x, y, w, h) {
+    for (let i = 0; i < w; i += 2) {
+      for (let j = 0; j < h; j += 2) {
+        if (((i + j) & 2) === 0) pxi(g, x + i, y + j, 1, 1, "#6a7a6a");
+      }
+    }
+  }
+
+  function paintGoldBag(g, x, y, open) {
+    pxi(g, x + 1, y + 3, 8, 6, "#6b3f1f");
+    pxi(g, x + 2, y + 2, 6, 2, "#8a5a32");
+    pxi(g, x, y + 4, 10, 5, "#5a3420");
+    pxi(g, x + 2, y + 8, 6, 1, "#3a2414");
+    if (open) {
+      pxi(g, x + 2, y, 6, 3, "#c9a227");
+      pxi(g, x + 3, y + 1, 4, 3, "#e8c44a");
+      pxi(g, x + 4, y, 2, 1, "#fff3c0");
+      pxi(g, x + 1, y + 3, 1, 1, "#f3d56a");
+      pxi(g, x + 7, y + 3, 1, 1, "#fff1a8");
+      pxi(g, x + 4, y + 4, 2, 1, "#c9a227");
+    } else {
+      pxi(g, x + 3, y + 1, 4, 2, "#c9a227");
+      pxi(g, x + 4, y, 2, 1, "#e8c44a");
+    }
+  }
+
+  function paintRamp(g, x, y, w, h) {
+    for (let iy = 0; iy < h; iy++) {
+      const t = iy / Math.max(1, h - 1);
+      const inset = ((1 - t) * 10) | 0;
+      paintPlanks(g, x + inset, y + iy, Math.max(8, w - inset), 1, false);
+    }
+    pxi(g, x, y + h - 1, w, 1, "#4a2e16");
+    pxi(g, x + 10, y, 1, h, "#5a3420");
+    pxi(g, x + w - 2, y + (h / 3) | 0, 1, h - ((h / 3) | 0), "#5a3420");
+  }
+
+  function paintWindow(g, x, y) {
+    pxi(g, x, y, 11, 11, "#2a2018");
+    pxi(g, x + 1, y + 1, 9, 9, "#e09030");
+    pxi(g, x + 2, y + 2, 3, 3, "#fff1c0");
+    pxi(g, x + 6, y + 2, 3, 3, "#ffb04a");
+    pxi(g, x + 2, y + 6, 3, 3, "#c46a28");
+    pxi(g, x + 6, y + 6, 3, 3, "#e88830");
+    pxi(g, x + 5, y, 1, 11, "#3a2414");
+    pxi(g, x, y + 5, 11, 1, "#3a2414");
+    pxi(g, x + 2, y + 2, 2, 1, "#fff6d0");
+    pxi(g, x + 1, y, 9, 1, "#6b3f1f");
+  }
+
+  function paintMiniWindow(g, x, y) {
+    pxi(g, x, y, 7, 7, "#2a2018");
+    pxi(g, x + 1, y + 1, 5, 5, "#e8a040");
+    pxi(g, x + 2, y + 2, 2, 2, "#fff1c0");
+    pxi(g, x + 3, y, 1, 7, "#3a2414");
+    pxi(g, x, y + 3, 7, 1, "#3a2414");
+  }
+
+  function paintCabinRoof(g, x, y, w, roofH, eave) {
+    const half = (w / 2) | 0;
+    const cx = x + half;
+    const front = eave + 4;
+    const rows = roofH + front;
+    for (let row = 0; row < rows; row++) {
+      const t = row / Math.max(1, rows - 1);
+      const spread = 3 + ((t * (half + eave)) | 0);
+      const x0 = cx - spread;
+      const x1 = cx + spread;
+      const groove = (row & 1) === 1;
+      for (let ix = x0; ix <= x1; ix++) {
+        let col = groove ? "#4a2e16" : (row & 2) === 0 ? "#a07448" : "#8a5a32";
+        if (!groove && hash(ix, y + row) > 0.9) col = "#c4a070";
+        if (!groove && hash(ix, y + row) < 0.07) col = "#6b3f1f";
+        if (row < 2) col = "#3a2414";
+        if (ix === x0 || ix === x1 || row >= rows - 2) col = "#2a1810";
+        pxi(g, ix, y + row, 1, 1, col);
+      }
+    }
+  }
+
+  function paintShopBuilding(g, x, y, w, h, door) {
+    const roofH = 15;
+    for (let iy = roofH; iy < h; iy++) {
+      const board = ((iy - roofH) / 2) | 0;
+      const groove = ((iy - roofH) & 1) === 1;
+      for (let ix = 0; ix < w; ix++) {
+        const n = hash(x + ix, y + iy + board * 5);
+        let col = board % 2 === 0 ? "#8a5a32" : "#7a4a28";
+        if (groove) col = "#5a3420";
+        else if (n > 0.9) col = "#a07448";
+        else if (n < 0.07) col = "#4a2e16";
+        pxi(g, x + ix, y + iy, 1, 1, col);
+      }
+    }
+    pxi(g, x, y + roofH, 2, h - roofH, "#4a2e16");
+    pxi(g, x + 1, y + roofH, 1, h - roofH, "#6b3f1f");
+    pxi(g, x + w - 2, y + roofH, 2, h - roofH, "#3a2414");
+    pxi(g, x + w - 2, y + roofH, 1, h - roofH, "#6b3f1f");
+    for (let ix = 11; ix < w - 8; ix += 10) pxi(g, x + ix, y + roofH, 1, h - roofH, "#6b3f1f");
+    pxi(g, x, y + h - 2, w, 2, "#3a2414");
+    pxi(g, x + 1, y + h - 2, w - 2, 1, "#5a3420");
+    paintWindow(g, x + 7, y + roofH + 9);
+    paintWindow(g, x + w - 19, y + roofH + 9);
+    const dx = door.x - x;
+    const dy = door.y - y;
+    pxi(g, x + dx - 1, y + dy - 1, door.w + 2, door.h + 1, "#3a2414");
+    pxi(g, x + dx, y + dy, door.w, door.h, "#1a1410");
+    pxi(g, x + dx + 1, y + dy + 1, door.w - 2, door.h - 2, "#2a2018");
+    pxi(g, x + dx + 2, y + dy + 2, 1, door.h - 4, "#3a2a20");
+    pxi(g, x + dx + door.w - 3, y + dy + (door.h / 2) | 0, 1, 1, "#c4a070");
+    pxi(g, x + dx - 1, y + dy + door.h - 1, door.w + 2, 2, "#4a2e16");
+    paintCabinRoof(g, x, y, w, 15, 5);
+  }
+
+  function paintFishSign(g, x, y) {
+    pxi(g, x, y, 16, 11, "#3a2414");
+    pxi(g, x + 1, y + 1, 14, 9, "#c9a227");
+    pxi(g, x + 2, y + 2, 12, 7, "#e8c44a");
+    pxi(g, x + 4, y + 4, 8, 3, "#3a9ad4");
+    pxi(g, x + 3, y + 5, 2, 2, "#1a6a9a");
+    pxi(g, x + 11, y + 4, 2, 2, "#7fd4f0");
+    pxi(g, x + 7, y, 2, 2, "#5a3420");
+  }
+
+  function paintFishHut(g, x, y, w, h, door) {
+    const roofH = 11;
+    for (let iy = roofH; iy < h; iy++) {
+      for (let ix = 0; ix < w; ix++) {
+        const n = hash(x + ix, y + iy);
+        let col = ((iy / 2) | 0) % 2 === 0 ? "#6b3f1f" : "#5a3420";
+        if (n > 0.9) col = "#8a5a32";
+        else if (n < 0.08) col = "#3a2414";
+        pxi(g, x + ix, y + iy, 1, 1, col);
+      }
+    }
+    pxi(g, x, y + roofH, 1, h - roofH, "#3a2414");
+    pxi(g, x + w - 1, y + roofH, 1, h - roofH, "#2a1810");
+    const dx = door.x - x;
+    const dy = door.y - y;
+    pxi(g, x + dx - 1, y + dy - 1, door.w + 2, door.h + 1, "#2a1810");
+    pxi(g, x + dx, y + dy, door.w, door.h, "#14100c");
+    pxi(g, x + dx + 1, y + dy + 1, door.w - 2, door.h - 2, "#2a2018");
+    pxi(g, x + dx + door.w - 2, y + dy + ((door.h / 2) | 0), 1, 1, "#c4a070");
+    paintMiniWindow(g, x + 2, y + roofH + 9);
+    paintCabinRoof(g, x, y, w, 11, 4);
+    paintFishSign(g, x + ((w / 2) | 0) - 8, y + roofH + 6);
+  }
+
+  function bakeFishInterior() {
+    fishCanvas = document.createElement("canvas");
+    fishCanvas.width = FISH_W;
+    fishCanvas.height = FISH_H;
+    const g = fishCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, FISH_W, FISH_H, "#241810");
+    for (let y = 10; y < FISH_H - 6; y++) {
+      for (let x = 8; x < FISH_W - 8; x++) {
+        const n = hash(x + 9, y + 3);
+        const board = (y / 3) | 0;
+        let col = board % 2 === 0 ? "#7a4a28" : "#6b3f1f";
+        if (n > 0.92) col = "#9a6840";
+        if (n < 0.06) col = "#4a2e16";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    pxi(g, 0, 0, FISH_W, 10, "#4a2e16");
+    pxi(g, 0, 0, 8, FISH_H, "#4a2e16");
+    pxi(g, FISH_W - 8, 0, 8, FISH_H, "#4a2e16");
+    pxi(g, 0, FISH_H - 6, FISH_W, 6, "#3a2414");
+    const doorX = (FISH_W / 2 - 6) | 0;
+    pxi(g, doorX, FISH_H - 8, 12, 8, "#14100c");
+    const fishLamp = (FISH_W / 2 - 2) | 0;
+    pxi(g, fishLamp + 1, 8, 2, 3, "#3a2414");
+    pxi(g, fishLamp, 11, 4, 3, "#e8c44a");
+    pxi(g, fishLamp + 1, 12, 2, 1, "#fff6d0");
+    paintNet(g, 12, 14, 28, 16);
+    paintNet(g, FISH_W - 40, 14, 28, 16);
+    for (let i = 0; i < 4; i++) paintFishSmall(g, 16 + i * 10, 18, i & 1);
+    paintBarrel(g, 14, 70);
+    paintCrate(g, FISH_W - 24, 72);
+    const cx = (FISH_W / 2 - 18) | 0;
+    const cy = 42;
+    pxi(g, cx, cy, 36, 9, "#6b3f1f");
+    pxi(g, cx, cy, 36, 1, "#c4a070");
+    paintFishSmall(g, cx + 6, cy + 3, false);
+    paintFishSmall(g, cx + 16, cy + 4, true);
+    fishSolids.length = 0;
+    fishSolids.push({ x: 0, y: 0, w: FISH_W, h: 12 });
+    fishSolids.push({ x: 0, y: 0, w: 8, h: FISH_H });
+    fishSolids.push({ x: FISH_W - 8, y: 0, w: 8, h: FISH_H });
+    fishSolids.push({ x: 0, y: FISH_H - 6, w: doorX, h: 6 });
+    fishSolids.push({ x: doorX + 12, y: FISH_H - 6, w: FISH_W - (doorX + 12), h: 6 });
+    fishSolids.push({ x: cx, y: cy - 2, w: 36, h: 12 });
+    fishSolids.push({ x: 12, y: 14, w: 32, h: 16 });
+    fishSolids.push({ x: FISH_W - 44, y: 14, w: 32, h: 16 });
+  }
+
+  function bakeShopInterior() {
+    shopCanvas = document.createElement("canvas");
+    shopCanvas.width = SHOP_W;
+    shopCanvas.height = SHOP_H;
+    const g = shopCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, SHOP_W, SHOP_H, "#2a1c12");
+    for (let y = 10; y < SHOP_H - 6; y++) {
+      for (let x = 8; x < SHOP_W - 8; x++) {
+        const n = hash(x, y);
+        const board = (y / 3) | 0;
+        let col = board % 2 === 0 ? "#8a5a32" : "#7a4a28";
+        if (n > 0.9) col = "#a07448";
+        if (n < 0.06) col = "#5a3420";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    pxi(g, 0, 0, SHOP_W, 10, "#5a3420");
+    pxi(g, 0, 0, 8, SHOP_H, "#5a3420");
+    pxi(g, SHOP_W - 8, 0, 8, SHOP_H, "#5a3420");
+    pxi(g, 0, SHOP_H - 6, SHOP_W, 6, "#4a2e16");
+    for (let y = 0; y < 10; y++) {
+      for (let x = 0; x < SHOP_W; x++) {
+        const sh = ((x + y) & 1) === 0 ? "#6b3f1f" : "#4a2e16";
+        pxi(g, x, y, 1, 1, sh);
+      }
+    }
+    pxi(g, 8, 10, SHOP_W - 16, 1, "#3a2414");
+    const lampX = (SHOP_W / 2 - 2) | 0;
+    pxi(g, lampX + 1, 8, 2, 3, "#3a2414");
+    pxi(g, lampX, 11, 4, 3, "#e8c44a");
+    pxi(g, lampX + 1, 12, 2, 1, "#fff6d0");
+    const doorX = (SHOP_W / 2 - 7) | 0;
+    pxi(g, doorX, SHOP_H - 8, 14, 8, "#1a1410");
+    pxi(g, doorX + 1, SHOP_H - 7, 12, 6, "#2a2018");
+    for (let i = 0; i < 5; i++) {
+      const sx = 12 + i * 12;
+      pxi(g, sx, 14, 10, 18, "#6b3f1f");
+      pxi(g, sx + 1, 15, 8, 1, "#4a2e16");
+      pxi(g, sx + 1, 20, 8, 1, "#4a2e16");
+      paintFishSmall(g, sx + 2, 17, i & 1);
+      paintCrystalPile(g, sx + 2, 24);
+    }
+    for (let i = 0; i < 4; i++) {
+      const sx = SHOP_W - 24 - i * 12;
+      pxi(g, sx, 14, 10, 16, "#6b3f1f");
+      paintCrystalPile(g, sx + 2, 18);
+      paintFishSmall(g, sx + 2, 26, false);
+    }
+    const cx = (SHOP_W / 2 - 22) | 0;
+    const cy = 52;
+    pxi(g, cx, cy, 44, 10, "#7a4a28");
+    pxi(g, cx, cy, 44, 1, "#c4a070");
+    pxi(g, cx, cy + 9, 44, 1, "#4a2e16");
+    pxi(g, cx + 2, cy + 2, 8, 5, "#3a2414");
+    paintBarrel(g, 18, 78);
+    paintBarrel(g, 28, 80);
+    paintCrate(g, 40, 82);
+    paintCrate(g, SHOP_W - 28, 80);
+    paintGoldBag(g, 22, 96, true);
+    paintGoldBag(g, 36, 98, true);
+    paintGoldBag(g, 52, 94, true);
+    paintGoldBag(g, 68, 100, true);
+    paintGoldBag(g, 88, 96, true);
+    paintGoldBag(g, 108, 98, true);
+    paintGoldBag(g, 124, 94, true);
+    paintCrystalPile(g, 70, 86);
+    paintCrystalPile(g, 96, 84);
+    shopSolids.length = 0;
+    shopSolids.push({ x: 0, y: 0, w: SHOP_W, h: 12 });
+    shopSolids.push({ x: 0, y: 0, w: 8, h: SHOP_H });
+    shopSolids.push({ x: SHOP_W - 8, y: 0, w: 8, h: SHOP_H });
+    shopSolids.push({ x: 0, y: SHOP_H - 6, w: doorX, h: 6 });
+    shopSolids.push({ x: doorX + 14, y: SHOP_H - 6, w: SHOP_W - (doorX + 14), h: 6 });
+    shopSolids.push({ x: cx, y: cy - 2, w: 44, h: 12 });
+    shopSolids.push({ x: 12, y: 14, w: 60, h: 18 });
+    shopSolids.push({ x: SHOP_W - 72, y: 14, w: 52, h: 16 });
+  }
+
+  function buildDockAndShop() {
+    const cx = 48 * TILE;
+    const rest = restShoreY(cx + 64);
+    const pier = { x: cx, y: rest - 8, w: 176, h: 20 };
+    const shop = { x: pier.x + 10, y: pier.y - 48, w: 62, h: 52 };
+    const door = { x: shop.x + 24, y: shop.y + shop.h - 10, w: 13, h: 10 };
+    const hut = { x: shop.x + shop.w + 8, y: pier.y - 36, w: 32, h: 38 };
+    const hutDoor = { x: hut.x + 12, y: hut.y + hut.h - 9, w: 8, h: 9 };
+    const ramp = { x: pier.x - 2, y: pier.y - 16, w: 28, h: 26 };
+    const finger = { x: pier.x + 96, y: rest + 6, w: 18, h: 88 };
+    const boatA = { x: pier.x + 122, y: rest + 42, w: 64, h: 20 };
+    const rowA = { x: pier.x + 108, y: rest + 14, w: 30, h: 10 };
+    const rowB = { x: pier.x + 140, y: rest + 22, w: 26, h: 9 };
+    walkPads.length = 0;
+    islandSolids.length = 0;
+    keepouts.length = 0;
+    walkPads.push(pier, finger, boatA, rowA, rowB, ramp);
+    walkPads.push({ x: door.x - 4, y: door.y, w: door.w + 8, h: pier.y + pier.h - door.y });
+    walkPads.push({ x: hutDoor.x - 3, y: hutDoor.y, w: hutDoor.w + 6, h: pier.y + pier.h - hutDoor.y });
+    islandSolids.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h - 10 });
+    islandSolids.push({ x: shop.x, y: shop.y + shop.h - 10, w: door.x - shop.x, h: 6 });
+    islandSolids.push({
+      x: door.x + door.w,
+      y: shop.y + shop.h - 10,
+      w: shop.x + shop.w - (door.x + door.w),
+      h: 6,
+    });
+    islandSolids.push({ x: hut.x, y: hut.y, w: hut.w, h: hut.h - 9 });
+    islandSolids.push({ x: hut.x, y: hut.y + hut.h - 9, w: hutDoor.x - hut.x, h: 6 });
+    islandSolids.push({
+      x: hutDoor.x + hutDoor.w,
+      y: hut.y + hut.h - 9,
+      w: hut.x + hut.w - (hutDoor.x + hutDoor.w),
+      h: 6,
+    });
+    shopDoor = { x: door.x, y: door.y, w: door.w, h: door.h + 8 };
+    shopExit = { x: (SHOP_W / 2 - 7) | 0, y: SHOP_H - 10, w: 14, h: 10 };
+    dockExit = { x: door.x + door.w + 10, y: pier.y + 4 };
+    fishDoor = { x: hutDoor.x, y: hutDoor.y, w: hutDoor.w, h: hutDoor.h + 2 };
+    fishExit = { x: (FISH_W / 2 - 6) | 0, y: FISH_H - 10, w: 12, h: 10 };
+    fishDockExit = { x: hutDoor.x + hutDoor.w + 8, y: pier.y + 4 };
+    foamBlockers.length = 0;
+    dockBlit.length = 0;
+    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp);
+    foamBlockers.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h });
+    foamBlockers.push({ x: hut.x, y: hut.y, w: hut.w, h: hut.h });
+    foamBlockers.push({ x: pier.x - 2, y: pier.y + pier.h - 2, w: pier.w + 4, h: 26 });
+    foamBlockers.push({ x: finger.x - 2, y: finger.y, w: finger.w + 6, h: finger.h + 22 });
+    function padKeep(r, pad) {
+      keepouts.push({ x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 });
+    }
+    padKeep(shop, 24);
+    padKeep(hut, 18);
+    padKeep(pier, 18);
+    padKeep(ramp, 16);
+    padKeep(finger, 20);
+    padKeep(boatA, 18);
+    padKeep(rowA, 14);
+    padKeep(rowB, 14);
+    dockBlit.push({ x: ramp.x, y: ramp.y, w: ramp.w + 4, h: ramp.h + 4 });
+    dockBlit.push({ x: pier.x - 2, y: pier.y - 2, w: pier.w + 4, h: pier.h + 28 });
+    dockBlit.push({ x: finger.x - 2, y: finger.y - 2, w: finger.w + 6, h: finger.h + 24 });
+    const g = landCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    paintPlanks(g, pier.x, pier.y, pier.w, pier.h, false);
+    paintRamp(g, ramp.x, ramp.y, ramp.w, ramp.h);
+    paintPlanks(g, finger.x, finger.y, finger.w, finger.h, true);
+    for (let i = 0; i < 6; i++) {
+      const postX = pier.x + 8 + i * 28;
+      const postY = rest + 6;
+      paintPost(g, postX, postY, 16 + (i & 1) * 5);
+      dockLamps.push({ x: postX, y: postY - 3 });
+    }
+    paintPost(g, finger.x + 1, rest + 78, 20);
+    paintPost(g, finger.x + 15, rest + 84, 16);
+    dockLamps.push({ x: finger.x + 1, y: rest + 75 });
+    dockLamps.push({ x: finger.x + 15, y: rest + 81 });
+    windowLights.length = 0;
+    eaveShades.length = 0;
+    windowLights.push({ x: shop.x + 12, y: shop.y + 29 });
+    windowLights.push({ x: shop.x + shop.w - 14, y: shop.y + 29 });
+    windowLights.push({ x: hut.x + 5, y: hut.y + 23 });
+    eaveShades.push({ x: shop.x - 3, y: shop.y + 20, w: shop.w + 6, h: 4 });
+    eaveShades.push({ x: hut.x - 2, y: hut.y + 16, w: hut.w + 4, h: 3 });
+    const pad = 18;
+    bldgOX = Math.min(shop.x, hut.x) - pad;
+    bldgOY = Math.min(shop.y, hut.y) - 4;
+    const bx1 = Math.max(shop.x + shop.w, hut.x + hut.w) + pad;
+    const by1 = Math.max(shop.y + shop.h, hut.y + hut.h) + 14;
+    bldgCanvas = document.createElement("canvas");
+    bldgCanvas.width = bx1 - bldgOX;
+    bldgCanvas.height = by1 - bldgOY;
+    const bg = bldgCanvas.getContext("2d");
+    bg.imageSmoothingEnabled = false;
+    paintShopBuilding(bg, shop.x - bldgOX, shop.y - bldgOY, shop.w, shop.h, {
+      x: door.x - bldgOX,
+      y: door.y - bldgOY,
+      w: door.w,
+      h: door.h,
+    });
+    paintFishHut(bg, hut.x - bldgOX, hut.y - bldgOY, hut.w, hut.h, {
+      x: hutDoor.x - bldgOX,
+      y: hutDoor.y - bldgOY,
+      w: hutDoor.w,
+      h: hutDoor.h,
+    });
+    npcs.length = 0;
+    npcs.push({ kind: "sailor", scene: "island", x: boatA.x + 8, y: boatA.y + 6, phase: rand(0, 6) });
+    npcs.push({
+      kind: "harbor",
+      scene: "island",
+      x: finger.x - 1,
+      y: finger.y + finger.h - 8,
+      phase: 1.2,
+    });
+    harborDrop = { x: finger.x - 2, y: finger.y + finger.h + 8 };
+    npcs.push({ kind: "keeper", scene: "shop", x: (SHOP_W / 2 - 3) | 0, y: 46, phase: 0.5 });
+    npcs.push({ kind: "fisher", scene: "fish", x: (FISH_W / 2 - 3) | 0, y: 36, phase: 2.1 });
+    for (let c = 0; c < COLS; c++) {
+      if (islandCap(c) < 0.04) continue;
+      const y = northCliffRow(c) * TILE;
+      islandSolids.push({ x: c * TILE, y: y - 6, w: TILE, h: 12 });
+    }
+    boats.length = 0;
+    boats.push({ x: boatA.x, y: boatA.y, w: boatA.w, h: boatA.h, kind: "big", phase: 0.2 });
+    boats.push({ x: rowA.x, y: rowA.y, w: rowA.w, h: rowA.h, kind: "row", phase: 1.1 });
+    boats.push({ x: rowB.x, y: rowB.y, w: rowB.w, h: rowB.h, kind: "row", phase: 2.4 });
+    swimFish.length = 0;
+    bakeShopInterior();
+    bakeFishInterior();
+    for (let i = palms.length - 1; i >= 0; i--) {
+      const p = palms[i];
+      if (p.x > shop.x - 20 && p.x < hut.x + hut.w + 20 && p.y > hut.y - 10 && p.y < pier.y + 24) {
+        palms.splice(i, 1);
+      }
+    }
+    for (let i = loot.length - 1; i >= 0; i--) {
+      if (inKeepout(loot[i].x + 3, loot[i].y + 3)) loot.splice(i, 1);
+    }
+    for (let i = crabs.length - 1; i >= 0; i--) {
+      if (inKeepout(crabs[i].x, crabs[i].y)) crabs.splice(i, 1);
+    }
+    player.x = pier.x + 48;
+    player.y = pier.y + 4;
+    doorCool = 0.6;
+    spawnX = player.x;
+    spawnY = player.y;
+    placeStarterBeachLoot();
+  }
+
+  function beginFade(nextScene, spawn) {
+    if (fadeMode) return;
+    fadeMode = 1;
+    fade = 0;
+    fadeNext = { scene: nextScene, spawn };
+  }
+
+  function playerFootOk(nx, ny) {
+    return canMove(nx, ny);
+  }
+
+  function unstickPlayer(x, y) {
+    const ox = x | 0;
+    const oy = y | 0;
+    if (playerFootOk(ox, oy)) return { x: ox, y: oy };
+    const tries = [
+      [0, 6],
+      [0, 10],
+      [0, 14],
+      [8, 8],
+      [-8, 8],
+      [12, 6],
+      [-12, 6],
+      [16, 8],
+      [-16, 8],
+      [0, -6],
+      [0, -10],
+      [6, 0],
+      [-6, 0],
+      [10, 12],
+      [-10, 12],
+    ];
+    for (let i = 0; i < tries.length; i++) {
+      const nx = ox + tries[i][0];
+      const ny = oy + tries[i][1];
+      if (playerFootOk(nx, ny)) return { x: nx, y: ny };
+    }
+    for (let r = 4; r <= 36; r += 4) {
+      for (let a = 0; a < 12; a++) {
+        const nx = (ox + Math.cos((a / 12) * Math.PI * 2) * r) | 0;
+        const ny = (oy + Math.sin((a / 12) * Math.PI * 2) * r) | 0;
+        if (playerFootOk(nx, ny)) return { x: nx, y: ny };
+      }
+    }
+    return { x: ox, y: oy };
+  }
+
+  function enterScene(next) {
+    if (scene === "island") islandHold = { x: player.x, y: player.y };
+    scene = next.scene;
+    const placed = unstickPlayer(next.spawn.x, next.spawn.y);
+    player.x = placed.x;
+    player.y = placed.y;
+    player.inWater = false;
+    player.submerged = 0;
+    player.facing = next.scene === "shop" || next.scene === "fish" ? 1 : -1;
+    doorCool = 0.85;
+    camera.x = player.x + player.w / 2 - viewW / 2;
+    camera.y = player.y + player.h / 2 - viewH * 0.36;
+    clampCamera();
+  }
+
+  function updateFade(dt) {
+    if (!fadeMode) return;
+    if (fadeMode === 1) {
+      fade += dt / 0.34;
+      if (fade >= 1) {
+        fade = 1;
+        enterScene(fadeNext);
+        fadeMode = 2;
+      }
+    } else {
+      fade -= dt / 0.36;
+      if (fade <= 0) {
+        fade = 0;
+        fadeMode = 0;
+        fadeNext = null;
+      }
+    }
+  }
+
+  function playerHits(r) {
+    const x0 = player.x + 1;
+    const x1 = player.x + player.w - 1;
+    const y0 = player.y + 3;
+    const y1 = player.y + player.h - 1;
+    return x0 < r.x + r.w && x1 > r.x && y0 < r.y + r.h && y1 > r.y;
+  }
+
+  function updateDoors(dt) {
+    if (doorCool > 0) doorCool = Math.max(0, doorCool - dt);
+    if (fadeMode || player.dead > 0 || doorCool > 0 || player.aboard) return;
+    if (scene === "island" && shopDoor && playerHits(shopDoor)) {
+      beginFade("shop", { x: (SHOP_W / 2 - 4) | 0, y: SHOP_H - 48 });
+    }
+    if (scene === "island" && fishDoor && playerHits(fishDoor)) {
+      beginFade("fish", { x: (FISH_W / 2 - 4) | 0, y: FISH_H - 40 });
+    }
+    if (scene === "shop" && shopExit && playerHits(shopExit)) {
+      beginFade("island", { x: dockExit.x, y: dockExit.y });
+    }
+    if (scene === "fish" && fishExit && playerHits(fishExit)) {
+      beginFade("island", { x: fishDockExit.x, y: fishDockExit.y });
+    }
+  }
+
+  function boatScreen(cpos, b, t) {
+    const bob = Math.sin(t * 1.6 + b.phase) * 1.2;
+    return { x: (b.x - cpos.x) | 0, y: (b.y - cpos.y + bob) | 0 };
+  }
+
+  function drawBoatHull(cpos, b, t) {
+    const p = boatScreen(cpos, b, t);
+    const x = p.x;
+    const y = p.y;
+    if (x < -70 || y < -24 || x > viewW + 10 || y > viewH + 10) return;
+    if (b.kind === "big") {
+      px(x + 4, y + 8, b.w - 8, 8, "#5a3420");
+      px(x + 2, y + 6, b.w - 4, 4, "#8a5a32");
+      px(x + 8, y + 4, b.w - 16, 3, "#a07448");
+      px(x + 6, y + 10, b.w - 12, 1, "#3a2414");
+    } else {
+      px(x + 2, y + 4, b.w - 4, 4, "#6b3f1f");
+      px(x + 4, y + 3, b.w - 8, 2, "#9a6840");
+      px(x + 1, y + 6, b.w - 2, 2, "#4a2e16");
+    }
+  }
+
+  function drawBoatSail(cpos, b, t) {
+    if (b.kind !== "big") return;
+    const p = boatScreen(cpos, b, t);
+    const x = p.x;
+    const y = p.y;
+    if (x < -70 || y < -24 || x > viewW + 10 || y > viewH + 10) return;
+    px(x + 36, y - 16, 2, 22, "#4a2e16");
+    for (let row = 0; row < 12; row++) {
+      const span = 2 + ((row * 8) / 12) | 0;
+      const col = row & 1 ? "#d4c09a" : "#c4a070";
+      px(x + 38, y - 15 + row, span, 1, col);
+    }
+    px(x + 38, y - 4, 9, 1, "#8a5a32");
+  }
+
+  function withSkiffXform(cpos, b, t, fn) {
+    const bob = skiffBob(b, t);
+    const x = b.x - cpos.x + b.w / 2;
+    const y = b.y - cpos.y + b.h + bob;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(b.tilt || 0);
+    ctx.scale(b.face || 1, 1);
+    fn(-b.w / 2, -b.h, b);
+    ctx.restore();
+  }
+
+  function drawSkiffHull(cpos, b, t) {
+    withSkiffXform(cpos, b, t, (ox, oy, boat) => {
+      px(ox + 2, oy + 5, boat.w - 4, 4, "#c4a070");
+      px(ox + 1, oy + 6, boat.w - 2, 3, "#8a6a42");
+      px(ox, oy + 7, boat.w, 2, "#5a4028");
+      px(ox + 3, oy + 5, boat.w - 8, 2, "#6b4e30");
+    });
+  }
+
+  function drawSkiffRails(cpos, b, t) {
+    withSkiffXform(cpos, b, t, (ox, oy, boat) => {
+      px(ox + 1, oy + 4, boat.w - 2, 1, "#3a2414");
+      px(ox + 2, oy + 3, boat.w - 6, 1, "#6b3f1f");
+      px(ox + boat.w - 5, oy + 4, 5, 3, "#e8d5a8");
+      px(ox + 4, oy + 8, 3, 1, "#4a3420");
+      px(ox + boat.w - 8, oy + 8, 3, 1, "#4a3420");
+      px(ox + 5, oy + 7, 1, 3, "#5a4028");
+      px(ox + boat.w - 7, oy + 7, 1, 3, "#5a4028");
+    });
+  }
+
+  function drawSkiff(cpos, b, t) {
+    drawSkiffHull(cpos, b, t);
+    drawSkiffRails(cpos, b, t);
+  }
+
+  function drawRod(cpos) {
+    if (rod.phase === "idle" || !ownedBoat || !player.aboard) return;
+    const face = rod.face || player.facing;
+    const px0 = Math.round(player.x + player.w / 2 - cpos.x);
+    const py0 = Math.round(player.y + 4 - cpos.y);
+    const tipX = px0 + face * 14;
+    const tipY = py0 - 8;
+    px(px0 + face * 2, py0, 1, 1, "#6b3f1f");
+    for (let i = 0; i < 12; i++) {
+      px(px0 + face * (2 + ((i * 12) / 12) | 0), py0 - ((i * 8) / 12) | 0, 1, 1, "#8a5a32");
+    }
+    const bobX = tipX + face * 10;
+    const bobY = tipY + 16 + ((Math.sin(time * 9) * 1.4) | 0);
+    ctx.strokeStyle = "#d8e8f0";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(tipX + 0.5, tipY + 0.5);
+    ctx.lineTo(bobX + 0.5, bobY + 0.5);
+    ctx.stroke();
+    const bite = rod.phase === "reel";
+    px(bobX, bobY, 2, 2, bite ? "#e04a32" : "#e8c44a");
+    px(bobX, bobY + 1, 2, 1, "#8a2018");
+  }
+
+  function drawHarborBubble(cpos, t) {
+    if (scene !== "island") return;
+    const n = harborNpc();
+    if (!n) return;
+    const mid = playerCenter();
+    const near = Math.hypot(mid.x - (n.x + 3), mid.y - (n.y + 2)) < 72;
+    if (!near && harborTalk <= 0) return;
+    const bob = (Math.sin(t * 2.2 + n.phase) * 1.1) | 0;
+    const nx = (n.x - cpos.x) | 0;
+    const ny = (n.y - cpos.y + bob) | 0;
+    if (harborTalk > 0) {
+      const msg = "CAN'T AFFORD";
+      const w = pixTextWidth(msg) + 10;
+      const bx = nx - (w / 2 | 0) + 3;
+      const by = ny - 28;
+      drawBubbleFrame(bx, by, w, 14, nx + 1);
+      drawPixText(msg, nx + 3, by + 4, "#8a2018", "center");
+      return;
+    }
+    if (ownedBoat || boatThrow) return;
+    const w = 44;
+    const h = 16;
+    const bx = nx - 16;
+    const by = ny - 32;
+    drawBubbleFrame(bx, by, w, h, nx + 1);
+    px(bx + 4, by + 7, 10, 4, "#d4c08a");
+    px(bx + 3, by + 8, 12, 2, "#6b4e30");
+    px(bx + 12, by + 6, 3, 3, "#e8d5a8");
+    drawCoinIcon(bx + 18, by + 4);
+    drawPixText("10", bx + 28, by + 5, "#3a2414");
+  }
+
+  function drawNpc(cpos, n, t) {
+    if (n.scene && n.scene !== scene) return;
+    const bob = ((Math.sin(t * 2.2 + n.phase) * 1.1) | 0);
+    const x = (n.x - cpos.x) | 0;
+    const y = (n.y - cpos.y + bob) | 0;
+    if (x < -8 || y < -16 || x > viewW + 8 || y > viewH + 8) return;
+    if (n.kind === "goblin") {
+      px(x + 1, y - 11, 5, 2, "#246024");
+      px(x + 1, y - 9, 5, 4, "#3a8a3a");
+      px(x + 2, y - 8, 1, 1, "#201010");
+      px(x + 4, y - 8, 1, 1, "#201010");
+      px(x, y - 5, 7, 5, "#2a6a2a");
+      px(x + 1, y, 2, 3, "#1a4018");
+      px(x + 4, y, 2, 3, "#1a4018");
+    } else if (n.kind === "sailor") {
+      px(x + 1, y - 13, 5, 2, "#3a2414");
+      px(x, y - 12, 7, 1, "#2a1810");
+      px(x + 1, y - 11, 5, 4, "#e8c39a");
+      px(x + 2, y - 10, 1, 1, "#201010");
+      px(x + 4, y - 9, 1, 1, "#d4a07a");
+      px(x, y - 7, 7, 6, "#2a4a78");
+      px(x + 1, y - 6, 5, 3, "#3a6a9a");
+      px(x + 2, y - 5, 3, 1, "#c9a227");
+      px(x + 1, y, 2, 3, "#3a2414");
+      px(x + 4, y, 2, 3, "#3a2414");
+    } else if (n.kind === "harbor") {
+      px(x + 1, y - 13, 5, 2, "#2a4a28");
+      px(x, y - 12, 7, 1, "#1a3018");
+      px(x + 1, y - 11, 5, 4, "#e8c39a");
+      px(x + 2, y - 10, 1, 1, "#201010");
+      px(x + 4, y - 9, 1, 1, "#d4a07a");
+      px(x, y - 7, 7, 6, "#6b4e30");
+      px(x + 1, y - 6, 5, 3, "#8a6a42");
+      px(x + 2, y - 5, 3, 1, "#c9a227");
+      px(x - 1, y - 4, 2, 2, "#c4a070");
+      px(x + 1, y, 2, 3, "#3a2414");
+      px(x + 4, y, 2, 3, "#3a2414");
+    } else if (n.kind === "fisher") {
+      px(x + 1, y - 13, 5, 2, "#1a4864");
+      px(x, y - 12, 7, 1, "#0e3048");
+      px(x + 1, y - 11, 5, 4, "#e8c39a");
+      px(x + 2, y - 10, 1, 1, "#201010");
+      px(x + 4, y - 9, 1, 1, "#d4a07a");
+      px(x, y - 7, 7, 6, "#2a6a88");
+      px(x + 1, y - 6, 5, 3, "#3a9ad4");
+      px(x + 6, y - 5, 3, 2, "#e8c44a");
+      px(x + 1, y, 2, 3, "#3a2414");
+      px(x + 4, y, 2, 3, "#3a2414");
+    } else {
+      px(x + 1, y - 13, 5, 2, "#3a2414");
+      px(x, y - 12, 7, 1, "#2a1810");
+      px(x + 1, y - 11, 5, 4, "#e8c39a");
+      px(x + 2, y - 10, 1, 1, "#201010");
+      px(x, y - 7, 7, 6, "#5a3420");
+      px(x + 1, y - 6, 5, 3, "#8a5a32");
+      px(x + 6, y - 8, 4, 2, "#6b3f1f");
+      px(x + 8, y - 10, 2, 3, "#8a5a32");
+      px(x - 2, y - 4, 4, 3, "#c4a070");
+      px(x + 1, y, 2, 3, "#2a4a78");
+      px(x + 4, y, 2, 3, "#2a4a78");
+    }
+  }
+
+  function drawTinyGem(x, y) {
+    px(x + 2, y, 2, 1, "#7ff0ea");
+    px(x + 1, y + 1, 4, 2, "#2ec9c0");
+    px(x + 2, y + 3, 2, 1, "#1a8a86");
+    px(x + 2, y + 2, 1, 1, "#e8ffff");
+  }
+
+  function drawTinyCrystal(x, y) {
+    px(x + 2, y, 2, 1, "#7fd4f0");
+    px(x + 1, y + 1, 4, 4, "#3aa0c8");
+    px(x + 2, y + 2, 2, 3, "#9ae0ff");
+    px(x + 3, y + 1, 1, 1, "#dff6ff");
+  }
+
+  function drawBubbleFrame(x, y, w, h, tailX) {
+    px(x + 1, y, w - 2, h, "#f4ead4");
+    px(x, y + 1, w, h - 2, "#f4ead4");
+    px(x + 1, y, w - 2, 1, "#3a2414");
+    px(x + 1, y + h - 1, w - 2, 1, "#3a2414");
+    px(x, y + 1, 1, h - 2, "#3a2414");
+    px(x + w - 1, y + 1, 1, h - 2, "#3a2414");
+    px(x + 1, y + 1, 1, 1, "#3a2414");
+    px(x + w - 2, y + 1, 1, 1, "#3a2414");
+    px(x + 1, y + h - 2, 1, 1, "#3a2414");
+    px(x + w - 2, y + h - 2, 1, 1, "#3a2414");
+    px(tailX, y + h, 3, 2, "#f4ead4");
+    px(tailX, y + h, 1, 2, "#3a2414");
+    px(tailX + 2, y + h, 1, 2, "#3a2414");
+    px(tailX, y + h + 2, 2, 1, "#3a2414");
+  }
+
+  function drawTinyJelly(x, y) {
+    px(x + 1, y, 4, 2, "#e8b8f0");
+    px(x, y + 1, 6, 2, "#c878d8");
+    px(x + 1, y + 3, 1, 3, "#d898e8");
+    px(x + 3, y + 3, 1, 4, "#f0d0f8");
+    px(x + 5, y + 3, 1, 2, "#c878d8");
+  }
+
+  function drawTinyCatch(id, x, y) {
+    if (id === "jelly" || id === "jelly_green" || id === "jelly_white") {
+      const a = id === "jelly_green" ? "#8fdc78" : id === "jelly_white" ? "#f7fbff" : "#e8b8f0";
+      const b = id === "jelly_green" ? "#3c8a34" : id === "jelly_white" ? "#c5d0de" : "#c878d8";
+      px(x + 1, y, 4, 2, a);
+      px(x, y + 1, 6, 2, b);
+      px(x + 1, y + 3, 1, 3, a);
+      px(x + 3, y + 3, 1, 4, a);
+      px(x + 5, y + 3, 1, 2, b);
+      return true;
+    }
+    if (id === "catch_crab") {
+      px(x, y + 2, 2, 2, "#e07040");
+      px(x + 4, y + 2, 2, 2, "#e07040");
+      px(x + 1, y + 3, 4, 3, "#c44828");
+      px(x + 2, y + 4, 1, 1, "#f4a090");
+      px(x, y + 1, 1, 2, "#8a3018");
+      px(x + 5, y + 1, 1, 2, "#8a3018");
+      return true;
+    }
+    if (id === "chest") {
+      px(x, y + 2, 8, 5, "#8a5a32");
+      px(x + 1, y + 1, 6, 2, "#c9a227");
+      px(x + 3, y + 3, 2, 2, "#e8c44a");
+      px(x, y + 6, 8, 1, "#4a2e16");
+      return true;
+    }
+    if (
+      id === "cod" ||
+      id === "trout" ||
+      id === "salmon" ||
+      id === "shark" ||
+      id === "mini_shark" ||
+      id === "fish_blue" ||
+      id === "fish_gold" ||
+      id === "fish_reef"
+    ) {
+      const pal = fishPalette(id);
+      const w = id === "shark" ? 10 : id === "mini_shark" ? 8 : 7;
+      px(x, y + 2, w, 3, pal.body);
+      px(x + w - 2, y + 1, 3, 2, pal.tail);
+      px(x + 2, y + 1, 3, 1, pal.hi);
+      px(x + w - 4, y + 3, 1, 1, "#1a1814");
+      if (id === "shark" || id === "mini_shark") px(x + 3, y, 1, 2, pal.hi);
+      return true;
+    }
+    return false;
+  }
+
+  function drawShopkeeperBubble(cpos, t) {
+    if (!isIndoor()) return;
+    const k = traderNpc();
+    if (!k) return;
+    const bob = (Math.sin(t * 2.2 + k.phase) * 1.1) | 0;
+    const nx = (k.x - cpos.x) | 0;
+    const ny = (k.y - cpos.y + bob) | 0;
+    const thinking = shopTrade.phase === "think";
+    const refuse = shopTrade.refuse > 0;
+    if (thinking) {
+      const w = 22;
+      const h = 12;
+      const bx = nx - 6;
+      const by = ny - 32;
+      drawBubbleFrame(bx, by, w, h, nx + 1);
+      const dots = 1 + ((shopTrade.t * 3.2) | 0) % 3;
+      for (let i = 0; i < dots; i++) {
+        px(bx + 5 + i * 5, by + 5, 2, 2, "#3a2414");
+      }
+      return;
+    }
+    if (refuse) {
+      const bx = nx - 4;
+      const by = ny - 28;
+      drawBubbleFrame(bx, by, 16, 12, nx + 1);
+      px(bx + 5, by + 3, 1, 1, "#8a2018");
+      px(bx + 9, by + 3, 1, 1, "#8a2018");
+      px(bx + 6, by + 4, 3, 1, "#8a2018");
+      px(bx + 5, by + 5, 1, 1, "#8a2018");
+      px(bx + 9, by + 5, 1, 1, "#8a2018");
+      px(bx + 6, by + 7, 4, 1, "#8a2018");
+      return;
+    }
+    if (scene === "fish") {
+      const page = ((t / 2.2) | 0) % 5;
+      const top = FISHER_MENU[page * 2];
+      const bot = FISHER_MENU[page * 2 + 1];
+      const w = 86;
+      const h = bot ? 26 : 16;
+      const bx = nx - 30;
+      const by = ny - (bot ? 46 : 34);
+      drawBubbleFrame(bx, by, w, h, nx + 1);
+      drawTinyCatch(top[0], bx + 3, by + 3);
+      drawPixText(top[1], bx + 14, by + 4, "#3a2414");
+      const topCoin = bx + 14 + pixTextWidth(top[1]) + 3;
+      drawCoinIcon(topCoin, by + 4);
+      drawPixText(String(FISH_TRADE[top[0]]), topCoin + 9, by + 4, "#3a2414");
+      if (bot) {
+        drawTinyCatch(bot[0], bx + 3, by + 14);
+        drawPixText(bot[1], bx + 14, by + 15, "#3a2414");
+        const botCoin = bx + 14 + pixTextWidth(bot[1]) + 3;
+        drawCoinIcon(botCoin, by + 15);
+        drawPixText(String(FISH_TRADE[bot[0]]), botCoin + 9, by + 15, "#3a2414");
+      }
+      return;
+    }
+    const w = 48;
+    const h = 26;
+    const bx = nx - 18;
+    const by = ny - 46;
+    drawBubbleFrame(bx, by, w, h, nx + 1);
+    drawTinyCrystal(bx + 4, by + 4);
+    drawCoinIcon(bx + 12, by + 4);
+    drawPixText("25", bx + 22, by + 4, "#3a2414");
+    drawTinyGem(bx + 4, by + 15);
+    drawCoinIcon(bx + 12, by + 14);
+    drawPixText("5", bx + 22, by + 15, "#3a2414");
+  }
+
+  function fishPalette(id) {
+    if (id === "fish_gold" || id === "salmon") return { body: "#e8c44a", tail: "#8a6a18", hi: "#fff3c0" };
+    if (id === "fish_reef" || id === "trout") return { body: "#e04a32", tail: "#8a2018", hi: "#f4a090" };
+    if (id === "cod") return { body: "#c5d4dc", tail: "#7a8a94", hi: "#e8f0f4" };
+    if (id === "shark" || id === "mini_shark") return { body: "#6a7a84", tail: "#3a4a52", hi: "#b8c4cc" };
+    return { body: "#3a9ad4", tail: "#1a6a9a", hi: "#7fd4f0" };
+  }
+
+  function drawSwimFish(cpos, t) {}
+
+  function drawShopGoldSpark(cpos, t) {
+    const spots = [
+      [26, 96],
+      [40, 98],
+      [56, 94],
+      [72, 100],
+      [92, 96],
+      [112, 98],
+      [128, 94],
+    ];
+    for (let i = 0; i < spots.length; i++) {
+      if (((t * 9 + i * 1.7) | 0) % 5 === 0) continue;
+      const x = (spots[i][0] - cpos.x + ((Math.sin(t * 6 + i) * 2) | 0)) | 0;
+      const y = (spots[i][1] - cpos.y - 1) | 0;
+      px(x, y, 1, 1, i & 1 ? "#fff3c0" : "#e8c44a");
+    }
+  }
+
+  function drawLand(cpos) {
+    px(-1, -1, (viewW | 0) + 3, (viewH | 0) + 3, WATER_BLUE);
+    if (!landCanvas) return;
+    const sx = Math.max(0, cpos.x | 0);
+    const sy = Math.max(0, cpos.y | 0);
+    const sw = Math.min(WORLD_W - sx, Math.ceil(viewW) + 1);
+    const sh = Math.min(WORLD_H - sy, Math.ceil(viewH) + 1);
+    if (sw <= 0 || sh <= 0) return;
+    ctx.drawImage(landCanvas, sx, sy, sw, sh, sx - cpos.x, sy - cpos.y, sw, sh);
+  }
+
+  function drawFoam(cpos, t) {
+    const x0 = Math.max(0, cpos.x | 0);
+    const x1 = Math.min(WORLD_W, Math.ceil(cpos.x + viewW));
+    const flicker = (t * 2.1) | 0;
+    for (let i = 0; i < FOAM_WAVES.length; i++) {
+      const w = FOAM_WAVES[i];
+      const flick = flicker + i * 3;
+      for (let wx = x0; wx < x1; wx++) {
+        let p = (t / w.period - wx * w.along + w.salt) % 1;
+        if (p < 0) p += 1;
+        const rest = shoreLut[wx];
+        const crash =
+          w.crash * (0.65 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.055 + w.salt * 8 + wx * 0.004)));
+        let fy;
+        let fa;
+        let crashing = false;
+        if (p < 0.46) {
+          const u = p / 0.46;
+          fy = rest + w.travel - u * u * w.travel;
+          fa = 0.3 + u * 0.7;
+        } else if (p < 0.66) {
+          const u = (p - 0.46) / 0.2;
+          const run = 1 - (1 - u) * (1 - u);
+          fy = rest - run * crash;
+          fa = 1;
+          crashing = true;
+        } else {
+          const u = (p - 0.66) / 0.34;
+          fy = rest - crash * (1 - u * u);
+          fa = 0.5 * (1 - u);
+          crashing = true;
+        }
+        if (fa < 0.08) continue;
+        if (islandCap(wx / TILE) < 0.04) continue;
+        const sx = wx - cpos.x;
+        const cy = fy | 0;
+        if (hitPad(wx, cy, foamBlockers)) continue;
+        if (inRiverWater(wx, cy)) continue;
+        const m = foamMask[(((cy + flick) & (FOAM_MASK_H - 1)) * FOAM_MASK_W + (wx & (FOAM_MASK_W - 1)))];
+        if (m) {
+          ctx.globalAlpha = fa;
+          px(sx, cy - cpos.y, 1, 1, m === 2 ? "#ffffff" : "#e8f6ff");
+        }
+        if (crashing && fy < rest) {
+          const mid = ((fy + rest) * 0.5) | 0;
+          if (hitPad(wx, mid, foamBlockers) || inRiverWater(wx, mid)) continue;
+          const m2 =
+            foamMask[
+              (((mid + flick + 11) & (FOAM_MASK_H - 1)) * FOAM_MASK_W + ((wx + 19) & (FOAM_MASK_W - 1)))
+            ];
+          if (m2) {
+            ctx.globalAlpha = fa * 0.45;
+            px(sx, mid - cpos.y, 1, 1, "#f4fbff");
+          }
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function blitWorldRects(list, cpos) {
+    if (!landCanvas) return;
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const sx = Math.max(r.x, cpos.x | 0) | 0;
+      const sy = Math.max(r.y, cpos.y | 0) | 0;
+      const sw = Math.min(r.x + r.w, (cpos.x + viewW) | 0) - sx;
+      const sh = Math.min(r.y + r.h, (cpos.y + viewH) | 0) - sy;
+      if (sw <= 0 || sh <= 0) continue;
+      ctx.drawImage(landCanvas, sx, sy, sw, sh, sx - cpos.x, sy - cpos.y, sw, sh);
+    }
+  }
+
+  function drawBuildingsOverDock(cpos) {
+    if (!bldgCanvas) return;
+    ctx.drawImage(
+      bldgCanvas,
+      0,
+      0,
+      bldgCanvas.width,
+      bldgCanvas.height,
+      bldgOX - cpos.x,
+      bldgOY - cpos.y,
+      bldgCanvas.width,
+      bldgCanvas.height
+    );
+  }
+
+  function drawDockOverFoam(cpos) {
+    blitWorldRects(dockBlit, cpos);
+    drawBuildingsOverDock(cpos);
+  }
+
+  function drawRocks(cpos) {
+    for (const rock of rocks) {
+      const x = rock.x - cpos.x;
+      const y = rock.y - cpos.y;
+      if (x < -12 || y < -12 || x > viewW || y > viewH) continue;
+      px(x + 1, y + 1, 6, 3, "#4a4741");
+      px(x, y + 2, 7, 3, "#3a3834");
+      px(x + 2, y + 2, 2, 1, "#6f6a62");
+      if (hash(rock.x | 0, rock.y | 0) > 0.5) px(x + 4, y + 1, 1, 1, "#5c5850");
+    }
+  }
+
+  function drawPalm(x, y, s) {
+    const h = (12 * s) | 0;
+    px(x + 7, y - h, 2, h, "#6b3f1f");
+    px(x + 8, y - h + 1, 1, Math.max(4, h - 3), "#8a5428");
+    px(x + 3, y - h - 2, 5, 2, "#2f7a32");
+    px(x + 8, y - h - 2, 5, 2, "#2f7a32");
+    px(x + 5, y - h - 5, 6, 3, "#3d9444");
+    px(x + 2, y - h + 1, 4, 2, "#2f7a32");
+    px(x + 10, y - h + 1, 4, 2, "#2f7a32");
+    px(x + 9, y - h + 3, 2, 2, "#c9a227");
+  }
+
+  function drawLeafTree(x, y, s) {
+    const h = (8 + 8 * s) | 0;
+    px(x + 3, y - h + 2, 2, h - 2, "#5a3a1c");
+    px(x + 4, y - h + 3, 1, Math.max(3, h - 5), "#7a5228");
+    const top = y - h;
+    const dots = [
+      [2, 0, "#2f7a32"],
+      [3, -1, "#3d9444"],
+      [4, -2, "#2f7a32"],
+      [5, -1, "#4aa04a"],
+      [6, 0, "#2a6a28"],
+      [1, 1, "#2f7a32"],
+      [7, 1, "#3d9444"],
+      [2, 2, "#246824"],
+      [6, 2, "#2f7a32"],
+      [4, 1, "#5a9a44"],
+      [3, 3, "#2f7a32"],
+      [5, 3, "#246824"],
+      [0, 2, "#3d9444"],
+      [8, 2, "#2f7a32"],
+    ];
+    for (const d of dots) {
+      if (s < 0.85 && (d[0] < 1 || d[0] > 7)) continue;
+      px(x + d[0], top + d[1], 1, 1, d[2]);
+    }
+  }
+
+  function drawPine(x, y, s) {
+    const h = (10 + 6 * s) | 0;
+    px(x + 3, y - 4, 2, 4, "#4a3420");
+    px(x + 2, y - h + 4, 4, 2, "#2a5c1e");
+    px(x + 1, y - h + 6, 6, 2, "#2f6a24");
+    px(x + 2, y - h + 2, 4, 2, "#356e28");
+    px(x + 3, y - h, 2, 2, "#3d9444");
+    px(x + 4, y - h + 3, 1, 1, "#5a9a44");
+  }
+
+  function drawTrees(cpos) {
+    for (const p of palms) {
+      const x = p.x - cpos.x;
+      const y = p.y - cpos.y;
+      if (x < -20 || y < -28 || x > viewW || y > viewH + 8) continue;
+      drawPalm(x, y, p.s || 1);
+    }
+    for (const tr of trees) {
+      const x = tr.x - cpos.x;
+      const y = tr.y - cpos.y;
+      if (x < -16 || y < -28 || x > viewW || y > viewH + 8) continue;
+      if (tr.kind === "pine") drawPine(x, y, tr.s);
+      else drawLeafTree(x, y, tr.s);
+    }
+  }
+
+  function drawInsects(cpos, t) {
+    for (let i = 0; i < insects.length; i++) {
+      const b = insects[i];
+      const x = (b.x + Math.sin(t * 1.7 + b.phase) * 7 - cpos.x) | 0;
+      const y = (b.y + Math.cos(t * 2.4 + b.phase) * 4 - cpos.y) | 0;
+      if (x < -4 || y < -4 || x > viewW + 4 || y > viewH + 4) continue;
+      px(x, y, 1, 1, i & 1 ? "#1a1814" : "#2a2418");
+      px(x + 1, y, 1, 1, "#f4ead0");
+      if (((t * 8 + b.phase) | 0) & 1) px(x - 1, y - 1, 1, 1, "#e8c44a");
+    }
+  }
+
+  function drawLoot(cpos) {
+    for (const item of loot) {
+      if (item.taken) continue;
+      if ((item.scene || "island") !== scene) continue;
+      const x = item.x - cpos.x;
+      const y = item.y - cpos.y;
+      if (x < -12 || y < -12 || x > viewW || y > viewH) continue;
+      const fading =
+        item.life !== Infinity && waveCycle - item.born >= item.life - 1;
+      if (fading && ((time * 8) | 0) % 2 === 0) continue;
+      px(x + 1, y + 5, 5, 1, "rgba(0,0,0,0.28)");
+      if (item.id === "shell") {
+        px(x + 1, y + 3, 5, 2, "#efe6d4");
+        px(x + 2, y + 2, 4, 2, "#e8d5b8");
+        px(x + 4, y + 3, 1, 1, "#c4a06c");
+      } else if (item.id === "gem") {
+        px(x + 2, y, 2, 1, "#7ff0ea");
+        px(x + 1, y + 1, 4, 2, "#2ec9c0");
+        px(x + 2, y + 3, 2, 1, "#1a8a86");
+        px(x + 2, y + 2, 1, 1, "#e8ffff");
+      } else if (item.id === "coin") {
+        drawCoinIcon(x, y);
+        if ((item.value | 0) >= 20) drawCoinIcon(x + 3, y - 2);
+        else if ((item.value | 0) >= 5) drawCoinIcon(x + 2, y - 1);
+      } else if (!drawTinyCatch(item.id, x, y)) {
+        px(x + 2, y, 2, 1, "#f4fbff");
+        px(x + 1, y + 1, 4, 4, "#9ae0ff");
+        px(x + 2, y + 2, 2, 3, "#dff6ff");
+        px(x + 3, y + 1, 1, 1, "#ffffff");
+      }
+    }
+  }
+
+  function drawPlayer(cpos) {
+    const x = Math.round(player.x - cpos.x);
+    const y = Math.round(player.y - cpos.y);
+    const f = player.frame;
+    const face = player.facing;
+
+    ctx.save();
+    ctx.translate(x + 4, y + player.h - 1);
+    ctx.scale(face, 1);
+
+    const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
+    const hurt = player.hurt > 0;
+    const shirt = hurt ? "#8a3a3a" : "#b8c4d4";
+    const vest = hurt ? "#6a3038" : "#3a6a9a";
+    px(-3, -13, 6, 2, "#c43a28");
+    px(-2, -14, 4, 1, "#e04a32");
+    px(-2, -12, 5, 1, "#8a2018");
+    px(-2, -11, 5, 5, "#e8c39a");
+    px(-1, -9, 1, 1, "#2a1810");
+    px(1, -8, 1, 1, "#d4a07a");
+    px(-3, -6, 6, 6, vest);
+    px(-3, -6, 6, 2, shirt);
+    px(-2, -4, 4, 3, vest);
+    px(-2, -1, 4, 1, "#2a4a78");
+    px(-5, -5, 2, 4, shirt);
+    px(3, -5, 2, 4, vest);
+    px(-5, -2, 2, 2, "#e8c39a");
+    px(3, -2, 2, 2, "#e8c39a");
+    if (player.aboard) {
+      px(-3, 1, 2, 1, "#2a4a78");
+      px(0, 1, 2, 1, "#2a4a78");
+    } else {
+      px(-3, 1, 2, 3 + step, "#2a4a78");
+      px(0, 1, 2, 3 - step, "#2a4a78");
+    }
+    if (player.inWater && !player.aboard) {
+      px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
+    }
+
+    ctx.restore();
+  }
+
+  function drawDigit(x, y, n, color) {
+    const glyphs = [
+      [1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1],
+      [0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1],
+      [1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1],
+      [1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1],
+      [1, 0, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 1],
+      [1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1],
+      [1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+      [1, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1],
+      [1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+      [1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1],
+    ];
+    const g = glyphs[n % 10];
+    for (let i = 0; i < 15; i++) {
+      if (g[i]) px(x + (i % 3) * 2, y + ((i / 3) | 0) * 2, 2, 2, color);
+    }
+  }
+
+  function drawHudIcon(id, sx, sy) {
+    if (id === "shell") {
+      px(sx + 6, sy + 10, 12, 6, "#efe6d4");
+      px(sx + 8, sy + 8, 8, 6, "#e8d5b8");
+      px(sx + 10, sy + 10, 4, 4, "#c4a06c");
+    } else if (id === "gem") {
+      px(sx + 10, sy + 6, 4, 2, "#7ff0ea");
+      px(sx + 6, sy + 8, 12, 6, "#2ec9c0");
+      px(sx + 10, sy + 14, 4, 2, "#1a8a86");
+      px(sx + 10, sy + 10, 4, 2, "#e8ffff");
+    } else if (!drawTinyCatch(id, sx + 4, sy + 6)) {
+      px(sx + 10, sy + 4, 4, 2, "#f4fbff");
+      px(sx + 8, sy + 6, 8, 12, "#9ae0ff");
+      px(sx + 10, sy + 8, 4, 8, "#dff6ff");
+    }
+  }
+
+  function drawCount(sx, sy, n) {
+    if (n > 9) drawDigit(sx + 2, sy + 16, Math.floor(n / 10), "#f3e2c4");
+    drawDigit(sx + 10, sy + 16, n % 10, "#f3e2c4");
+  }
+
+  function drawHeart(x, y, filled) {
+    if (filled) {
+      px(x + 1, y, 1, 1, "#f2d4d4");
+      px(x, y + 1, 3, 1, "#e23b3b");
+      px(x + 4, y + 1, 3, 1, "#e23b3b");
+      px(x, y + 2, 7, 2, "#c81e1e");
+      px(x + 1, y + 4, 5, 1, "#c81e1e");
+      px(x + 2, y + 5, 3, 1, "#9a1414");
+      px(x + 1, y + 2, 1, 1, "#f28b8b");
+    } else {
+      px(x, y + 1, 3, 1, "#3a2414");
+      px(x + 4, y + 1, 3, 1, "#3a2414");
+      px(x, y + 2, 7, 2, "#3a2414");
+      px(x + 1, y + 4, 5, 1, "#3a2414");
+      px(x + 2, y + 5, 3, 1, "#3a2414");
+    }
+  }
+
+  function drawHearts(x0, y0) {
+    for (let i = 0; i < MAX_HP; i++) {
+      const hx = x0 + i * 8;
+      const blink = player.hurt > 0 && player.hp === i && ((time * 12) | 0) % 2 === 0;
+      drawHeart(hx, y0, i < player.hp && !blink);
+    }
+  }
+
+  function drawCoinIcon(x, y) {
+    px(x + 2, y, 3, 1, "#f3d56a");
+    px(x + 1, y + 1, 5, 1, "#e8c44a");
+    px(x, y + 2, 7, 3, "#c9a227");
+    px(x + 1, y + 5, 5, 1, "#c9a227");
+    px(x + 2, y + 6, 3, 1, "#8a6a18");
+    px(x + 2, y + 1, 1, 1, "#fff3c0");
+    px(x + 3, y + 2, 1, 3, "#fff1a8");
+  }
+
+  function drawCoins(x, y) {
+    drawCoinIcon(x, y);
+    drawPixText(String(player.coins | 0), x + 9, y, "#f3e2c4");
+  }
+
+  function drawDamage(uiW, uiH) {
+    if (player.hurt <= 0 && player.dead <= 0 && !(player.inWater && player.submerged > 1.6)) return;
+    const pulse = player.dead > 0 ? 0.55 : player.hurt > 0 ? player.hurt * 1.1 : 0.12 + Math.sin(time * 8) * 0.06;
+    ctx.fillStyle = `rgba(140, 12, 18, ${Math.min(0.62, pulse)})`;
+    px(0, 0, uiW, 6);
+    px(0, uiH - 6, uiW, 6);
+    px(0, 0, 6, uiH);
+    px(uiW - 6, 0, 6, uiH);
+    ctx.fillStyle = `rgba(160, 20, 28, ${Math.min(0.35, pulse * 0.6)})`;
+    px(0, 0, uiW, uiH);
+  }
+
+  function drawWorldItem(id, x, y, s) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    if (id === "shell") {
+      px(-6, -2, 12, 6, "#efe6d4");
+      px(-4, -4, 10, 6, "#e8d5b8");
+      px(-1, -1, 4, 4, "#c4a06c");
+    } else if (id === "gem") {
+      px(-2, -8, 4, 3, "#7ff0ea");
+      px(-6, -5, 12, 8, "#2ec9c0");
+      px(-2, 3, 4, 3, "#1a8a86");
+      px(-2, -2, 4, 3, "#e8ffff");
+    } else if (id === "coin") {
+      px(-3, -6, 6, 2, "#f3d56a");
+      px(-5, -4, 10, 2, "#e8c44a");
+      px(-6, -2, 12, 5, "#c9a227");
+      px(-5, 3, 10, 2, "#c9a227");
+      px(-3, 5, 6, 2, "#8a6a18");
+      px(-2, -3, 2, 2, "#fff3c0");
+      px(0, -1, 2, 5, "#fff1a8");
+    } else if (!drawTinyCatch(id, -5, -5)) {
+      px(-2, -10, 4, 3, "#f4fbff");
+      px(-6, -7, 12, 14, "#9ae0ff");
+      px(-2, -4, 4, 10, "#dff6ff");
+      px(0, -8, 3, 3, "#ffffff");
+    }
+    ctx.restore();
+  }
+
+  function drawPickupFx() {
+    if (!pickupAnims.length) return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const cx = uiW / 2;
+    const cy = uiH / 2 - 12;
+    let titleName = "";
+    let titleA = 0;
+    for (let i = 0; i < pickupAnims.length; i++) {
+      const a = pickupAnims[i];
+      const slot = a.dest === "coins" ? hudCoinPos() : hudSlotPos(Math.min(MAX_SLOTS - 1, a.slot));
+      const tt = a.t;
+      let x;
+      let y;
+      let sc;
+      let rot;
+      let aTitle;
+      if (tt < 0.42) {
+        const u = smoothstep(tt / 0.42);
+        x = a.fromX + (cx - a.fromX) * u;
+        y = a.fromY + (cy - a.fromY) * u;
+        sc = 1 + u * 1.6;
+        rot = u * Math.PI * 4;
+        aTitle = 0;
+      } else if (tt < 1.12) {
+        const u = (tt - 0.42) / 0.7;
+        x = cx;
+        y = cy + Math.sin(u * Math.PI * 2) * 1.5;
+        sc = 2.6;
+        rot = Math.PI * 4 + u * 0.35;
+        aTitle = Math.min(1, u * 4);
+      } else {
+        const u = smoothstep((tt - 1.12) / 0.58);
+        x = cx + (slot.x - cx) * u;
+        y = cy + (slot.y - cy) * u;
+        sc = 2.6 * (1 - u) + 1.1 * u;
+        rot = (1 - u) * 0.35;
+        aTitle = 1 - u;
+      }
+      if (aTitle > titleA) {
+        titleA = aTitle;
+        titleName = a.dest === "coins" ? "+" + (a.value | 0) + " coins" : ITEM_DEFS[a.id].name;
+      }
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      drawWorldItem(a.id, 0, 0, sc);
+      ctx.restore();
+    }
+    if (titleA > 0.05 && titleName) {
+      const ty = uiH - 12;
+      ctx.globalAlpha = titleA * 0.45;
+      px((cx - pixTextWidth(titleName) / 2 - 4) | 0, ty - 3, pixTextWidth(titleName) + 8, 13, "#1a120c");
+      ctx.globalAlpha = titleA;
+      drawPixText(titleName, cx, ty, "#f3e2c4", "center");
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawHud() {
+    const h = hudBarOrigin();
+    const x0 = h.x0;
+    const y0 = h.y0;
+    const slot = h.slot;
+    const gap = h.gap;
+    const barW = h.barW;
+    const barY = h.barY;
+    const uiW = h.uiW;
+    const uiH = h.uiH;
+    for (let i = 0; i < MAX_SLOTS; i++) {
+      const col = i % HUD_COLS;
+      const row = (i / HUD_COLS) | 0;
+      const sx = x0 + col * (slot + gap);
+      const sy = y0 + row * (slot + h.rowGap);
+      const sel = i === heldSlot;
+      px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
+      px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
+      px(sx + 2, sy + 2, slot - 4, slot - 4, "#5c3a21");
+      px(sx + 4, sy + 4, slot - 8, slot - 8, "#1a120c");
+      const stack = inventory[i];
+      if (!stack) continue;
+      drawHudIcon(stack.id, sx, sy);
+      if (stack.count > 1) drawCount(sx, sy, stack.count);
+    }
+
+    const inner = barW - 4;
+    let fillLevel = player.level;
+    let fillXp = player.xp;
+    let flash = 0;
+    if (xpFx) {
+      const u = smoothstep(Math.min(1, xpFx.t / 0.55));
+      if (xpFx.leveled) {
+        const need0 = xpNeeded(xpFx.fromLevel);
+        if (u < 0.58) {
+          fillLevel = xpFx.fromLevel;
+          fillXp = xpFx.fromXp + (need0 - xpFx.fromXp) * (u / 0.58);
+        } else {
+          fillLevel = player.level;
+          fillXp = player.xp * ((u - 0.58) / 0.42);
+        }
+        flash = Math.max(0, 1 - xpFx.t * 1.4);
+      } else {
+        fillXp = xpFx.fromXp + (player.xp - xpFx.fromXp) * u;
+      }
+    }
+    const need = xpNeeded(fillLevel);
+    const fill = Math.floor(inner * Math.max(0, Math.min(1, fillXp / need)));
+    px(x0, barY, barW, 6, "#2b1c12");
+    px(x0 + 2, barY + 2, inner, 2, "#3a2414");
+    if (fill > 0) px(x0 + 2, barY + 2, fill, 2, flash > 0.15 ? "#ffe08a" : "#c9a227");
+    if (flash > 0.2) {
+      ctx.globalAlpha = flash * 0.55;
+      px(x0, barY - 1, barW, 8, "#fff3c0");
+      ctx.globalAlpha = 1;
+    }
+    if (xpFx) {
+      const rise = Math.floor(xpFx.t * 18);
+      const popA = Math.max(0, 1 - xpFx.t / 0.9);
+      if (popA > 0.04) {
+        ctx.globalAlpha = popA;
+        drawPixText("+" + xpFx.amount + " XP", x0 + barW, y0 - 10 - rise, "#e8c44a", "right");
+        ctx.globalAlpha = 1;
+      }
+      if (xpFx.leveled) {
+        const luA = Math.max(0, 1 - Math.abs(xpFx.t - 0.35) / 0.45);
+        if (luA > 0.05) {
+          ctx.globalAlpha = luA;
+          drawPixText("LEVEL UP", x0 + Math.floor(barW / 2), y0 - 18, "#fff1a8", "center");
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+    drawHearts(x0, h.heartsY);
+    drawCoins(x0 + MAX_HP * 8 + 11, h.heartsY);
+    const msg = promptText();
+    let naming = false;
+    for (let i = 0; i < pickupAnims.length; i++) {
+      const tt = pickupAnims[i].t;
+      if (tt > 0.42 && tt < 1.12) naming = true;
+    }
+    if (msg && !naming) {
+      drawPixText(msg, Math.floor(uiW * 0.42), uiH - 12, "#f3e2c4", "center");
+    }
+  }
+
+  function drawCrabMound(x, y, c) {
+    if (c.state !== "bury" && c.state !== "hidden" && c.state !== "unbury") return;
+    const mound = c.mound || 0;
+    if (mound < 0.08 && !(c.cover && c.cover.length)) return;
+    if (mound > 0.18) px(x - 2, y, 5, 1, "#c9a56a");
+    if (mound > 0.4) px(x - 1, y - 1, 3, 1, "#d8bc86");
+    if (mound > 0.72) px(x, y - 2, 1, 1, "#e2c792");
+    if (c.cover) {
+      for (let s = 0; s < c.cover.length; s++) {
+        const sp = c.cover[s];
+        px(x + sp.ox, y + sp.oy, 1, 1, sp.c);
+      }
+    }
+  }
+
+  function drawCrabs(cpos) {
+    if (scene !== "island") return;
+    for (let i = 0; i < crabs.length; i++) {
+      const c = crabs[i];
+      const x = Math.round(c.x - cpos.x);
+      const y = Math.round(c.y - cpos.y);
+      if (x < -12 || y < -16 || x > viewW + 12 || y > viewH + 12) continue;
+      drawCrabMound(x, y, c);
+      const bury = c.bury || 0;
+      const hop = (c.hop || 0) | 0;
+      if (bury >= 0.94 && hop < 1) continue;
+      const dy = y - hop + ((bury * (c.h + 2)) | 0);
+      const dir = c.dir < 0 ? -1 : 1;
+      const w = c.w;
+      const hw = (w / 2) | 0;
+      const leg = ((c.anim | 0) & 1) === 0 && c.state === "scuttle" ? 1 : 0;
+      const body = w > 6 ? "#d45a28" : "#c44e24";
+      const hi = "#e87840";
+      const sh = "#8a3018";
+      const p = (ox, oy, ww, hh, col) => {
+        px(x + ox * dir - (dir < 0 ? ww : 0), dy + oy, ww, hh, col);
+      };
+      p(-hw, -1, w, 2, body);
+      p(-hw + 1, -2, w - 2, 1, hi);
+      p(-hw + 1, 1, w - 2, 1, sh);
+      p(-1, -2, 1, 1, "#201010");
+      p(1, -2, 1, 1, "#201010");
+      p(-hw - 1, -2, 1, 1, hi);
+      p(hw, -1, 1, 1, hi);
+      p(-hw - 1, leg, 1, 1, sh);
+      p(hw, 1 - leg, 1, 1, sh);
+      p(-hw + 1, 2 - leg, 1, 1, sh);
+      p(hw - 2, 1 + leg, 1, 1, sh);
+    }
+  }
+
+  function drawSandBits(cpos) {
+    for (let i = 0; i < MAX_SAND; i++) {
+      const p = sandBits[i];
+      if (p.life <= 0) continue;
+      const x = Math.round(p.x - cpos.x);
+      const y = Math.round(p.y - cpos.y);
+      if (x < -2 || y < -2 || x > viewW + 2 || y > viewH + 2) continue;
+      px(x, y, 1, 1, p.col);
+    }
+  }
+
+  function fishOverDock(wx, wy) {
+    if (hitPad(wx, wy, walkPads) || hitPad(wx, wy, foamBlockers)) return true;
+    for (let i = 0; i < boats.length; i++) {
+      const b = boats[i];
+      if (wx >= b.x - 2 && wx <= b.x + b.w + 2 && wy >= b.y - 4 && wy <= b.y + b.h + 6) return true;
+    }
+    if (ownedBoat) {
+      const b = ownedBoat;
+      if (wx >= b.x - 2 && wx <= b.x + b.w + 2 && wy >= b.y - 4 && wy <= b.y + b.h + 6) return true;
+    }
+    return false;
+  }
+
+  function drawJumpSprite(kind, L, t, seed) {
+    const pal = fishPalette(kind || "cod");
+    const flap = Math.sin(t * 26 + seed) > 0 ? 1 : 0;
+    const half = (L / 2) | 0;
+    if (kind === "shark" || kind === "mini_shark") {
+      px(-half, -1, L, 3, pal.body);
+      px(-half + 2, -2, Math.max(3, L - 6), 1, pal.hi);
+      px(half - 5, -5, 2, 4, pal.tail);
+      px(half - 4, -6, 1, 2, pal.body);
+      px(-half - 3, -2 - flap, 3, 1, pal.tail);
+      px(-half - 4, flap, 4, 1, pal.tail);
+      px(-half - 2, 1, 2, 1, pal.body);
+      px(half - 2, -1, 1, 1, "#101418");
+      px(2, 1, 2, 1, pal.tail);
+      return;
+    }
+    const stripe = kind === "trout" || kind === "fish_reef";
+    const spots = kind === "salmon" || kind === "fish_gold";
+    px(-half, -1, Math.max(4, L - 1), 3, pal.body);
+    px(-half + 1, -2, Math.max(3, L - 4), 1, pal.hi);
+    if (stripe) {
+      px(-1, -1, 1, 2, pal.tail);
+      px(2, -1, 1, 2, pal.hi);
+    }
+    if (spots) {
+      px(-2, 0, 1, 1, pal.hi);
+      px(1, -1, 1, 1, "#fff3c0");
+    }
+    px(half - 2, -1, 1, 1, "#1a1814");
+    px(half - 3, -2, 1, 1, pal.hi);
+    px(-half - 2, -2 - flap, 3, 1, pal.tail);
+    px(-half - 3, flap, 3, 2, pal.tail);
+    px(0, -3, 1, 1, pal.tail);
+    px(-1, 2, 2, 1, pal.tail);
+  }
+
+  function drawSharkFins(cpos) {
+    for (let i = 0; i < sharkFins.length; i++) {
+      const f = sharkFins[i];
+      const foam = f.foam;
+      for (let s = 0; s < foam.length; s++) {
+        const p = foam[s];
+        const sx = (p.x - cpos.x) | 0;
+        const sy = (p.y - cpos.y) | 0;
+        if (sx < -2 || sy < -2 || sx > viewW + 2 || sy > viewH + 2) continue;
+        px(sx, sy, 1, 1, p.col);
+      }
+      if ((f.sub || 0) >= 0.92) continue;
+      if (fishOverDock(f.x, f.y) || onIslandLand(f.x, f.y)) continue;
+      const h = f.big ? 6 : 4;
+      const x = (f.x - cpos.x) | 0;
+      const y = ((f.y - cpos.y) | 0) + (((f.sub || 0) * (h + 2)) | 0);
+      if (x < -8 || y < -10 || x > viewW + 8 || y > viewH + 8) continue;
+      px(x, y - h, 1, 1, "#1e282e");
+      px(x - 1, y - h + 1, 2, 1, "#3a4a52");
+      px(x - 1, y - h + 2, 3, 1, "#6a7a84");
+      px(x - 2, y - h + 3, 4, 1, "#8a9aa4");
+      px(x - 1, y - 1, 3, 1, "#2a343c");
+      px(x + (f.dir > 0 ? 2 : -3), y - 2, 2, 1, "#b8c4cc");
+      px(x - f.dir, y, 1, 1, "#d8f4ff");
+    }
+  }
+
+  function drawFish(cpos, t) {
+    drawSharkFins(cpos);
+    for (let i = 0; i < fishJumps.length; i++) {
+      const f = fishJumps[i];
+      if (!f.alive) continue;
+      const rest = restShoreY(f.x);
+      if (f.y > rest + 2) continue;
+      if (onIslandLand(f.x, f.y) && f.y < rest - 2) continue;
+      if (fishOverDock(f.x, f.y)) continue;
+      for (let k = 4; k >= 1; k--) {
+        const u = f.u - k * 0.06;
+        if (u <= 0.02) continue;
+        const tx = bez(f.x0, f.x1, f.x2, u) - cpos.x;
+        const ty = bez(f.y0, f.y1, f.y2, u) - cpos.y;
+        if (ty > restShoreY(f.x) - cpos.y + 1) continue;
+        const drop = k === 1 ? "#f4fcff" : k === 2 ? "#d8f4ff" : "#7ec8e0";
+        px(tx | 0, ty | 0, 1, 1, drop);
+        if (k < 3) px((tx + (k & 1 ? 1 : -1)) | 0, (ty + 1) | 0, 1, 1, "#b7e4f4");
+      }
+      const x = f.x - cpos.x;
+      const y = f.y - cpos.y;
+      if (x < -20 || y < -20 || x > viewW + 20 || y > viewH + 20) continue;
+      ctx.save();
+      ctx.translate(x, y);
+      const lift = Math.sin(Math.min(1, f.u) * Math.PI);
+      ctx.rotate(f.ang + (f.tumble || 0) * lift);
+      ctx.scale(f.squash, 2 - f.squash);
+      drawJumpSprite(f.kind, f.len, t, f.x0);
+      ctx.restore();
+    }
+  }
+
+  function drawSplashes(cpos) {
+    for (let i = 0; i < MAX_SPLASH; i++) {
+      const p = splashes[i];
+      if (p.life <= 0) continue;
+      const x = (p.x - cpos.x) | 0;
+      const y = (p.y - cpos.y) | 0;
+      if (x < -2 || y < -2 || x > viewW + 2 || y > viewH + 2) continue;
+      ctx.globalAlpha = Math.max(0.15, p.life / (p.max || 0.3));
+      px(x, y, 1, 1, p.col);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  const WORM_W = 160;
+  const WORM_H = 90;
+  let wormBuf = null;
+  let wormPix = null;
+
+  function drawFade() {
+    if (fade <= 0.004) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    const u = fade < 0 ? 0 : fade > 1 ? 1 : fade;
+    if (u >= 0.985) {
+      ctx.fillStyle = "#080406";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    if (!wormBuf) {
+      wormBuf = document.createElement("canvas");
+      wormBuf.width = WORM_W;
+      wormBuf.height = WORM_H;
+      wormPix = wormBuf.getContext("2d");
+    }
+    const g = wormPix;
+    g.clearRect(0, 0, WORM_W, WORM_H);
+    const inward = fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish");
+    const cx = WORM_W * 0.5;
+    const cy = WORM_H * 0.5;
+    const maxR = Math.hypot(cx, cy);
+    const hole = (1 - u) * (maxR + 6);
+    const swirl = (inward ? 1 : -1) * (1.8 + u * 4.6);
+    const ring = 4.2 + u * 5;
+    for (let y = 0; y < WORM_H; y++) {
+      for (let x = 0; x < WORM_W; x++) {
+        const dx = x + 0.5 - cx;
+        const dy = y + 0.5 - cy;
+        const r = Math.hypot(dx, dy);
+        const ang = Math.atan2(dy, dx) + (r / maxR) * swirl + u * 5.2;
+        const twist = r + Math.sin(ang * 7) * (2.2 + u * 5);
+        if (twist <= hole) continue;
+        let col;
+        if (twist > hole + ring) {
+          const spec = hash(x + ((u * 18) | 0), y + ((u * 11) | 0));
+          col = spec > 0.97 ? "#3a2414" : spec > 0.9 ? "#1a1010" : "#080406";
+        } else {
+          const band = ((ang * 3.2 + r * 0.35 + u * 9) | 0) & 3;
+          if (band === 0) col = "#2a1814";
+          else if (band === 1) col = "#6b3f1f";
+          else if (band === 2) col = "#c4a070";
+          else col = "#3a6a9a";
+          if (((x + y + ((u * 12) | 0)) & 3) === 0) col = "#f4e0c0";
+        }
+        g.fillStyle = col;
+        g.fillRect(x, y, 1, 1);
+      }
+    }
+    ctx.drawImage(wormBuf, 0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "rgba(8, 4, 6, " + (u * 0.42).toFixed(3) + ")";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  const DAY_LEN = 60;
+  const SUN_KEYS = [
+    [0.0, 36, 48, 92],
+    [0.07, 58, 68, 118],
+    [0.13, 196, 112, 68],
+    [0.2, 248, 196, 132],
+    [0.28, 255, 238, 208],
+    [0.44, 255, 250, 236],
+    [0.52, 255, 214, 156],
+    [0.58, 232, 118, 52],
+    [0.64, 150, 64, 52],
+    [0.71, 64, 46, 82],
+    [0.8, 32, 42, 84],
+    [0.92, 34, 46, 88],
+    [1.0, 36, 48, 92],
+  ];
+
+  function clampByte(n) {
+    n = n | 0;
+    return n < 0 ? 0 : n > 255 ? 255 : n;
+  }
+
+  function sunSample(t) {
+    const u = ((((t + 22) % DAY_LEN) + DAY_LEN) % DAY_LEN) / DAY_LEN;
+    let i = 0;
+    while (i < SUN_KEYS.length - 2 && u > SUN_KEYS[i + 1][0]) i++;
+    const a = SUN_KEYS[i];
+    const b = SUN_KEYS[i + 1];
+    const span = b[0] - a[0] || 1;
+    const k = smoothstep((u - a[0]) / span);
+    return {
+      r: a[1] + (b[1] - a[1]) * k,
+      g: a[2] + (b[2] - a[2]) * k,
+      b: a[3] + (b[3] - a[3]) * k,
+    };
+  }
+
+  function lampAmount(sun) {
+    const lum = (sun.r * 0.3 + sun.g * 0.59 + sun.b * 0.11) / 255;
+    return smoothstep((0.62 - lum) / 0.28);
+  }
+
+  function ambientAt(worldX, sun) {
+    const e = eastness(worldX / TILE);
+    const warmR = Math.min(255, sun.r + 12);
+    const warmG = sun.g * 0.98;
+    const warmB = sun.b * 0.78;
+    const coolR = sun.r * 0.66;
+    const coolG = sun.g * 0.78;
+    const coolB = Math.min(255, sun.b * 0.92 + 22);
+    const dim = 1 - e * 0.22;
+    return [
+      (warmR * (1 - e) + coolR * e) * dim,
+      (warmG * (1 - e) + coolG * e) * dim,
+      (warmB * (1 - e) + coolB * e) * dim,
+    ];
+  }
+
+  function makeGlowSprite(diam, bands) {
+    const c = document.createElement("canvas");
+    c.width = diam;
+    c.height = diam;
+    const g = c.getContext("2d");
+    const img = g.createImageData(diam, diam);
+    const cx = (diam - 1) * 0.5;
+    const rad = diam * 0.5;
+    const data = img.data;
+    for (let y = 0; y < diam; y++) {
+      for (let x = 0; x < diam; x++) {
+        const dist = Math.hypot(x - cx, y - cx) / rad;
+        const i = (y * diam + x) * 4;
+        if (dist >= 1) continue;
+        let col = bands[bands.length - 1];
+        for (let b = 0; b < bands.length; b++) {
+          if (dist <= bands[b][0]) {
+            col = bands[b];
+            break;
+          }
+        }
+        data[i] = col[1];
+        data[i + 1] = col[2];
+        data[i + 2] = col[3];
+        data[i + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return c;
+  }
+
+  function ensureGlows() {
+    if (glowLamp) return;
+    glowLamp = makeGlowSprite(64, [
+      [0.16, 220, 150, 70],
+      [0.34, 120, 70, 28],
+      [0.54, 48, 26, 12],
+      [0.74, 16, 8, 4],
+      [0.99, 4, 2, 1],
+    ]);
+    glowWindow = makeGlowSprite(46, [
+      [0.18, 210, 150, 70],
+      [0.4, 110, 64, 24],
+      [0.64, 40, 22, 10],
+      [0.99, 6, 3, 1],
+    ]);
+    glowFeet = makeGlowSprite(30, [
+      [0.25, 90, 60, 28],
+      [0.55, 28, 16, 8],
+      [0.99, 4, 2, 1],
+    ]);
+  }
+
+  function ensureLightCanvas() {
+    const w = Math.max(1, Math.ceil(viewW));
+    const h = Math.max(1, Math.ceil(viewH));
+    if (!lightCanvas || lightCanvas.width !== w || lightCanvas.height !== h) {
+      lightCanvas = document.createElement("canvas");
+      lightCanvas.width = w;
+      lightCanvas.height = h;
+      lightCtx = lightCanvas.getContext("2d");
+      lightCtx.imageSmoothingEnabled = false;
+    }
+  }
+
+  function paintAmbient(cpos, sun) {
+    const w = lightCanvas.width;
+    const h = lightCanvas.height;
+    const g = lightCtx;
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    let x = 0;
+    while (x < w) {
+      const col = ambientAt(cpos.x + x + 4, sun);
+      const r0 = clampByte(col[0]);
+      const g0 = clampByte(col[1]);
+      const b0 = clampByte(col[2]);
+      let x1 = Math.min(w, x + 8);
+      while (x1 < w) {
+        const n = ambientAt(cpos.x + x1 + 4, sun);
+        if (
+          Math.abs(clampByte(n[0]) - r0) > 4 ||
+          Math.abs(clampByte(n[1]) - g0) > 4 ||
+          Math.abs(clampByte(n[2]) - b0) > 4
+        ) {
+          break;
+        }
+        x1 = Math.min(w, x1 + 8);
+      }
+      g.fillStyle = "rgb(" + r0 + "," + g0 + "," + b0 + ")";
+      g.fillRect(x, 0, x1 - x, h);
+      x = x1;
+    }
+  }
+
+  function stampGlow(sprite, wx, wy, cpos) {
+    const x = wx - cpos.x - sprite.width * 0.5;
+    const y = wy - cpos.y - sprite.height * 0.5;
+    if (x > viewW || y > viewH || x + sprite.width < 0 || y + sprite.height < 0) return;
+    lightCtx.drawImage(sprite, x | 0, y | 0);
+  }
+
+  function shadeEaves(cpos) {
+    if (!eaveShades.length) return;
+    lightCtx.save();
+    lightCtx.globalCompositeOperation = "multiply";
+    lightCtx.fillStyle = "rgb(150,142,132)";
+    for (let i = 0; i < eaveShades.length; i++) {
+      const r = eaveShades[i];
+      lightCtx.fillRect((r.x - cpos.x) | 0, (r.y - cpos.y) | 0, r.w, r.h);
+    }
+    lightCtx.restore();
+  }
+
+  function drawLightSources(cpos, t, lamps) {
+    for (let i = 0; i < windowLights.length; i++) {
+      const x = (windowLights[i].x - cpos.x - 2) | 0;
+      const y = (windowLights[i].y - cpos.y - 2) | 0;
+      px(x, y, 5, 4, "#ffd27a");
+      px(x + 1, y + 1, 2, 1, "#fff6d0");
+      px(x + 3, y + 2, 1, 1, "#e88830");
+    }
+    for (let i = 0; i < dockLamps.length; i++) {
+      const x = (dockLamps[i].x - cpos.x) | 0;
+      const y = (dockLamps[i].y - cpos.y) | 0;
+      if (lamps < 0.12) {
+        px(x, y, 3, 2, "#3a2414");
+        px(x, y + 2, 3, 2, "#5a4030");
+        continue;
+      }
+      const flick = ((t * 9 + i * 2.1) | 0) & 1;
+      px(x, y, 3, 1, "#2a1810");
+      px(x, y + 1, 3, 3, flick ? "#ffb04a" : "#ffe08a");
+      px(x + 1, y + 2, 1, 1, "#fff6d0");
+      px(x, y + 4, 3, 1, "#3a2414");
+    }
+  }
+
+  function drawWorldLight(cpos, t) {
+    ensureGlows();
+    ensureLightCanvas();
+    const sun = sunSample(t);
+    const lamps = lampAmount(sun);
+    paintAmbient(cpos, sun);
+    shadeEaves(cpos);
+    lightCtx.globalCompositeOperation = "lighter";
+    lightCtx.globalAlpha = 1;
+    for (let i = 0; i < windowLights.length; i++) {
+      stampGlow(glowWindow, windowLights[i].x, windowLights[i].y, cpos);
+    }
+    if (lamps > 0.04) {
+      lightCtx.globalAlpha = lamps;
+      for (let i = 0; i < dockLamps.length; i++) {
+        const bob = (Math.sin(t * 7 + i * 1.7) * 1.2) | 0;
+        stampGlow(glowLamp, dockLamps[i].x + 1, dockLamps[i].y + bob, cpos);
+      }
+      stampGlow(glowFeet, player.x + player.w / 2, player.y + player.h - 2, cpos);
+      lightCtx.globalAlpha = 1;
+    }
+    lightCtx.globalCompositeOperation = "source-over";
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.drawImage(lightCanvas, 0, 0);
+    ctx.restore();
+    const warmth = Math.max(0, (sun.r - Math.max(sun.g, sun.b)) / 220);
+    if (warmth > 0.05) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.28, warmth * 0.34);
+      ctx.fillStyle =
+        "rgb(" + clampByte(sun.r) + "," + clampByte(sun.g * 0.45) + "," + clampByte(sun.b * 0.2) + ")";
+      ctx.fillRect(0, 0, viewW, viewH);
+      ctx.restore();
+    }
+    drawLightSources(cpos, t, lamps);
+  }
+
+  function drawIndoorLight(cpos) {
+    ensureGlows();
+    ensureLightCanvas();
+    const sun = sunSample(time);
+    const g = lightCtx;
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    const r = Math.max(226, (248 * 0.82 + sun.r * 0.18) | 0);
+    const gg = Math.max(200, (220 * 0.82 + sun.g * 0.18) | 0);
+    const b = Math.max(150, (168 * 0.82 + sun.b * 0.18) | 0);
+    g.fillStyle = "rgb(" + r + "," + gg + "," + b + ")";
+    g.fillRect(0, 0, lightCanvas.width, lightCanvas.height);
+    g.globalCompositeOperation = "lighter";
+    const lx = (scene === "fish" ? FISH_W : SHOP_W) / 2;
+    stampGlow(glowWindow, lx, 22, cpos);
+    stampGlow(glowFeet, lx, scene === "fish" ? 50 : 64, cpos);
+    g.globalCompositeOperation = "source-over";
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.drawImage(lightCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  function drawGuide() {
+    if (!guideOpen) return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const lines = [
+      "WASD MOVES YOU",
+      "ON FOOT AND IN BOAT",
+      "HOLD Z TO LOOK FAR",
+      "1-4 TOP  5-8 BOTTOM",
+      "ENTER DROPS HELD ITEM",
+      "SPACE USES HELD ITEM",
+      "SHELL BLOWS THE HORN",
+      "CHEST SAYS FIND MASTER",
+      "T TRADES NEAR NPC",
+      "C CASTS WHEN BOAT STOPS",
+      "WALK TO LOOT TO PICK UP",
+      "WALK TO BOAT TO BOARD",
+      "SHORE OR DOCK TO GET OUT",
+      "H CLOSES THIS GUIDE",
+    ];
+    const title = "GUIDEBOOK";
+    let maxW = pixTextWidth(title);
+    for (let i = 0; i < lines.length; i++) maxW = Math.max(maxW, pixTextWidth(lines[i]));
+    const pad = 8;
+    const lineH = 8;
+    const w = Math.min(uiW - 8, maxW + pad * 2 + 6);
+    const h = 16 + lines.length * lineH + 8;
+    const x = ((uiW - w) / 2) | 0;
+    let y = ((uiH - h) / 2) | 0;
+    if (y < 2) y = 2;
+    px(x, y, w, h, "#3a2414");
+    px(x + 1, y + 1, w - 2, h - 2, "#8a5a32");
+    px(x + 3, y + 3, w - 6, h - 6, "#c4a574");
+    px(x + 3, y + 3, w - 6, 11, "#5c3a21");
+    px(x + 3, y + 13, w - 6, 1, "#c9a227");
+    drawPixText(title, (x + w / 2) | 0, y + 5, "#f3e2c4", "center");
+    for (let i = 0; i < lines.length; i++) {
+      drawPixText(lines[i], x + pad, y + 18 + i * lineH, "#3a2414");
+    }
+  }
+
+  function draw(t) {
+    const cpos = cam();
+    const jx = ((Math.random() * 2 - 1) * shake) | 0;
+    const jy = ((Math.random() * 2 - 1) * shake) | 0;
+    ctx.imageSmoothingEnabled = false;
+    ctx.setTransform(zoom, 0, 0, zoom, jx, jy);
+    if (isIndoor()) {
+      px(0, 0, viewW, viewH, "#2a1c12");
+      const room = scene === "fish" ? fishCanvas : shopCanvas;
+      const rw = indoorW();
+      const rh = indoorH();
+      if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
+      drawIndoorLight(cpos);
+      if (scene === "shop") drawShopGoldSpark(cpos, t);
+      for (let i = 0; i < npcs.length; i++) drawNpc(cpos, npcs[i], t);
+      drawShopkeeperBubble(cpos, t);
+      drawLoot(cpos);
+      drawPlayer(cpos);
+    } else {
+      px(0, 0, viewW, viewH, WATER_BLUE);
+      drawLand(cpos);
+      drawFoam(cpos, t);
+      drawSplashes(cpos);
+      drawDockOverFoam(cpos);
+      for (let i = 0; i < boats.length; i++) {
+        if (boats[i].kind !== "big") drawBoatHull(cpos, boats[i], t);
+      }
+      for (let i = 0; i < boats.length; i++) {
+        if (boats[i].kind === "big") drawBoatHull(cpos, boats[i], t);
+      }
+      for (let i = 0; i < boats.length; i++) drawBoatSail(cpos, boats[i], t);
+      if (ownedBoat) drawSkiffHull(cpos, ownedBoat, t);
+      if (!player.aboard && ownedBoat) drawSkiffRails(cpos, ownedBoat, t);
+      drawRocks(cpos);
+      drawTrees(cpos);
+      drawInsects(cpos, t);
+      drawCrabs(cpos);
+      drawSandBits(cpos);
+      for (let i = 0; i < npcs.length; i++) drawNpc(cpos, npcs[i], t);
+      drawHarborBubble(cpos, t);
+      drawWorldLight(cpos, t);
+      drawFish(cpos, t);
+      drawLoot(cpos);
+      if (player.aboard) {
+        drawPlayer(cpos);
+        if (ownedBoat) drawSkiffRails(cpos, ownedBoat, t);
+        drawRod(cpos);
+      } else {
+        drawPlayer(cpos);
+      }
+    }
+    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+    drawHud();
+    drawGuide();
+    drawPickupFx();
+    drawUseFx();
+    drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
+    drawFade();
+  }
+
+  function drawUseFx() {
+    if (!useFx) return;
+    const u = useFx.t / 0.35;
+    const cpos = cam();
+    const x = Math.round(player.x + player.w / 2 - cpos.x);
+    const y = Math.round(player.y + 3 - cpos.y);
+    ctx.setTransform(zoom, 0, 0, zoom, 0, 0);
+    ctx.globalAlpha = 1 - u;
+    const col = useFx.id === "gem" ? "#7ff0ea" : "#f4fbff";
+    for (let i = 0; i < 5; i++) {
+      const a = i * 1.256 + time * 6;
+      const r = 3 + u * 7;
+      px((x + Math.cos(a) * r) | 0, (y + Math.sin(a) * r) | 0, 1, 1, col);
+    }
+    ctx.globalAlpha = 1;
+    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    time = now / 1000;
+    const zoomTarget = zoomGoal();
+    const punch = Math.abs(zoomTarget - zoom) > 0.04 || isIndoor();
+    zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * (punch ? 14 : 5.2)));
+    if (Math.abs(zoom - zoomTarget) < 0.004) zoom = zoomTarget;
+    viewW = canvas.width / zoom;
+    viewH = canvas.height / zoom;
+    updateFade(dt);
+    updateDoors(dt);
+    updatePlayer(dt);
+    updatePickup(dt);
+    updateXpFx(dt);
+    updateHorn();
+    updateUseFx(dt);
+    updateLoot();
+    updateShopTrade(dt);
+    updateTradeCoinDrift(dt);
+    updateBoatThrow(dt);
+    updateCrabs(dt);
+    if (scene === "island") {
+      updateFish(dt);
+    }
+    updateRod(dt);
+    if (fishCastT > 0) fishCastT = Math.max(0, fishCastT - dt);
+    nearestLoot = findNearestLoot();
+    tryAutoPickup();
+    nearestLoot = findNearestLoot();
+    updatePrompt();
+    updateOcean();
+    draw(time);
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener("keydown", (e) => {
+    const k = e.key.toLowerCase();
+    keys[k] = true;
+    ensureAudio();
+    if (k === "z") e.preventDefault();
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "t", "f", "c", "h"].includes(k)) {
+      e.preventDefault();
+    }
+    if (k === "h") {
+      if (!e.repeat) guideOpen = !guideOpen;
+      return;
+    }
+    if (guideOpen) return;
+    if (e.repeat) {
+      if (k === "enter" && isIndoor()) dropHeld();
+      return;
+    }
+    if (k >= "1" && k <= "8") heldSlot = k.charCodeAt(0) - 49;
+    if (k === "enter") onEnter();
+    if (k === " ") useHeld();
+    if (k === "t") tryTradeKey();
+    if (k === "c" || k === "f") tryCastRod();
+  });
+  window.addEventListener("keyup", (e) => {
+    const k = e.key.toLowerCase();
+    keys[k] = false;
+    if (k === " ") releaseHorn();
+  });
+  window.addEventListener("pointerdown", () => ensureAudio());
+
+  function indoorZoom() {
+    const zx = canvas.width / indoorW();
+    const zy = canvas.height / indoorH();
+    return Math.max(2, Math.min(zx, zy) * 0.9);
+  }
+
+  function zoomGoal() {
+    const goingShop =
+      fadeMode && fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish");
+    const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
+    if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
+    return keys.z ? SCALE_FAR : SCALE_DEFAULT;
+  }
+
+  function clampCamera() {
+    if (isIndoor()) {
+      const rw = indoorW();
+      const rh = indoorH();
+      if (viewW >= rw) camera.x = -((viewW - rw) / 2);
+      else camera.x = Math.max(0, Math.min(rw - viewW, camera.x));
+      if (viewH >= rh) camera.y = -((viewH - rh) / 2);
+      else camera.y = Math.max(0, Math.min(rh - viewH, camera.y));
+      return;
+    }
+    camera.x = Math.max(0, Math.min(Math.max(0, COLS * TILE - viewW), camera.x));
+    camera.y = Math.max(0, Math.min(Math.max(0, ROWS * TILE - viewH), camera.y));
+  }
+
+  function resizeCanvas() {
+    const w = Math.max(1, window.innerWidth | 0);
+    const h = Math.max(1, window.innerHeight | 0);
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    viewW = canvas.width / zoom;
+    viewH = canvas.height / zoom;
+    clampCamera();
+  }
+
+  window.addEventListener("resize", resizeCanvas);
+
+  buildWorld();
+  resizeCanvas();
+  camera.x = player.x + player.w / 2 - viewW / 2;
+  camera.y = player.y + player.h / 2 - viewH * 0.36;
+  clampCamera();
+  requestAnimationFrame(loop);
+})();
