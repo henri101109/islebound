@@ -123,7 +123,7 @@
   let fishDockExit = null;
   let fishCastT = 0;
   let jellySpawnT = 18;
-  const rod = { phase: "idle", t: 0, wait: 0, face: 1 };
+  const rod = { phase: "idle", t: 0, wait: 0, face: 1, bit: false };
   let chestTalk = 0;
   const keepouts = [];
   const shopTrade = { phase: "idle", t: 0, dur: 0, id: null, value: 0, refuse: 0 };
@@ -137,6 +137,7 @@
   let doorCool = 0;
   const foamBlockers = [];
   const dockBlit = [];
+  const dockWood = [];
   let bldgCanvas = null;
   let bldgOX = 0;
   let bldgOY = 0;
@@ -2354,28 +2355,50 @@
     return Math.hypot(ownedBoat.vx || 0, ownedBoat.vy || 0) < 10;
   }
 
-  function fishLuckZone() {
+  function distToRect(px, py, r) {
+    const dx = Math.max(r.x - px, 0, px - (r.x + r.w));
+    const dy = Math.max(r.y - py, 0, py - (r.y + r.h));
+    return Math.hypot(dx, dy);
+  }
+
+  function dockDistTiles() {
     const b = ownedBoat;
+    if (!b || !dockWood.length) return 99;
     const cx = b.x + b.w / 2;
     const cy = b.y + b.h / 2;
-    const dockX = DOCK_C * TILE + 88;
-    const dockY = restShoreY(dockX) + 36;
-    if (Math.hypot(cx - dockX, cy - dockY) < 96) return "dock";
-    const mouthY = restShoreY(RIVER_X0);
-    if (Math.hypot(cx - RIVER_X0, cy - mouthY) < 88) return "mouth";
-    return "ocean";
+    let best = Infinity;
+    for (let i = 0; i < dockWood.length; i++) {
+      const d = distToRect(cx, cy, dockWood[i]);
+      if (d < best) best = d;
+    }
+    return best / TILE;
+  }
+
+  function fishBand() {
+    const tiles = dockDistTiles();
+    const good = { bite: 0.86, legend: 0, rare: 0.24, weak: 0 };
+    const ehhh = { bite: 0.36, legend: 0.012, rare: 0.07, weak: 1 };
+    const far = { bite: 0.62, legend: 0.58, rare: 0.18, weak: 0 };
+    if (tiles <= 2) return good;
+    if (tiles <= 4) return ehhh;
+    if (tiles >= 12) return far;
+    const u = (tiles - 4) / 8;
+    return {
+      bite: ehhh.bite + (far.bite - ehhh.bite) * u,
+      legend: ehhh.legend + (far.legend - ehhh.legend) * u,
+      rare: ehhh.rare + (far.rare - ehhh.rare) * u,
+      weak: ehhh.weak + (far.weak - ehhh.weak) * u,
+    };
   }
 
   function rollBoatCatch() {
-    const zone = fishLuckZone();
+    const band = fishBand();
+    if (Math.random() >= band.bite) return null;
     const r = Math.random();
-    const rare = zone === "ocean" ? 0.09 : 0.24;
-    const legend = zone === "ocean" ? 0.01 : 0.055;
-    let pool = CATCH_COMMON;
-    if (r < legend) pool = CATCH_LEGEND;
-    else if (r < legend + rare) pool = CATCH_RARE;
-    else if (zone === "ocean" && Math.random() < 0.35) pool = ["cod", "trout"];
-    return pool[irand(0, pool.length - 1)];
+    if (r < band.legend) return CATCH_LEGEND[irand(0, CATCH_LEGEND.length - 1)];
+    if (r < band.legend + band.rare) return CATCH_RARE[irand(0, CATCH_RARE.length - 1)];
+    if (Math.random() < band.weak) return Math.random() < 0.67 ? "cod" : "trout";
+    return CATCH_COMMON[irand(0, CATCH_COMMON.length - 1)];
   }
 
   function tryCastRod() {
@@ -2384,6 +2407,7 @@
     if (!boatIsStill()) return;
     rod.phase = "wait";
     rod.t = 0;
+    rod.bit = false;
     rod.wait = rand(0.65, 1.55);
     rod.face = player.facing;
     fishCastT = rod.wait + 0.5;
@@ -2394,6 +2418,11 @@
     const b = ownedBoat;
     const fx = b.x + b.w / 2 + rod.face * 16;
     const fy = b.y + b.h + 6;
+    rod.bit = false;
+    if (!id) {
+      emitSplash(fx, fy, 3);
+      return;
+    }
     emitSplash(fx, fy, 7);
     if (!ITEM_DEFS[id] || !canTake(id)) {
       chestTalk = 0;
@@ -2401,6 +2430,7 @@
       shopTrade.refuse = 0.01;
       return;
     }
+    rod.bit = true;
     const from = worldToUi(fx, fy);
     pickupAnims.push({
       id,
@@ -3133,6 +3163,8 @@
     const boatA = { x: pier.x + 122, y: rest + 42, w: 64, h: 20 };
     const rowA = { x: pier.x + 108, y: rest + 14, w: 30, h: 10 };
     const rowB = { x: pier.x + 140, y: rest + 22, w: 26, h: 9 };
+    dockWood.length = 0;
+    dockWood.push(pier, finger);
     walkPads.length = 0;
     islandSolids.length = 0;
     keepouts.length = 0;
@@ -3470,7 +3502,7 @@
     ctx.moveTo(tipX + 0.5, tipY + 0.5);
     ctx.lineTo(bobX + 0.5, bobY + 0.5);
     ctx.stroke();
-    const bite = rod.phase === "reel";
+    const bite = rod.phase === "reel" && rod.bit;
     px(bobX, bobY, 2, 2, bite ? "#e04a32" : "#e8c44a");
     px(bobX, bobY + 1, 2, 1, "#8a2018");
   }
@@ -4806,6 +4838,7 @@
       "CHEST SAYS FIND MASTER",
       "T TRADES NEAR NPC",
       "C CASTS WHEN BOAT STOPS",
+      "CLOSE DOCK GOOD FAR LEGEND",
       "WALK TO LOOT TO PICK UP",
       "WALK TO BOAT TO BOARD",
       "SHORE OR DOCK TO GET OUT",
@@ -4910,6 +4943,77 @@
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
   }
 
+  const SAVE_KEY = "survival-rpg-save";
+  let saveAcc = 0;
+
+  function saveGame() {
+    try {
+      const slots = [];
+      for (let i = 0; i < inventory.length; i++) {
+        const s = inventory[i];
+        slots.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
+      }
+      const data = {
+        slots,
+        heldSlot,
+        coins: player.coins | 0,
+        xp: player.xp | 0,
+        level: player.level | 0,
+        hp: player.hp | 0,
+        x: player.x,
+        y: player.y,
+        facing: player.facing,
+        aboard: !!player.aboard,
+        scene,
+        boat: ownedBoat
+          ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
+          : null,
+      };
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    } catch (err) {}
+  }
+
+  function loadGame() {
+    let data;
+    try {
+      data = JSON.parse(localStorage.getItem(SAVE_KEY) || "");
+    } catch (err) {
+      return;
+    }
+    if (!data || !Array.isArray(data.slots)) return;
+    for (let i = 0; i < inventory.length; i++) {
+      const s = data.slots[i];
+      inventory[i] = s && s.id && ITEM_DEFS[s.id] ? { id: s.id, count: Math.max(1, s.count | 0) } : null;
+    }
+    heldSlot = Math.max(0, Math.min(inventory.length - 1, data.heldSlot | 0));
+    player.coins = Math.max(0, data.coins | 0);
+    player.xp = Math.max(0, data.xp | 0);
+    player.level = Math.max(1, data.level | 0);
+    player.hp = Math.max(0, Math.min(MAX_HP, data.hp | 0));
+    if (typeof data.x === "number") player.x = data.x;
+    if (typeof data.y === "number") player.y = data.y;
+    if (data.facing === -1 || data.facing === 1) player.facing = data.facing;
+    player.aboard = !!data.aboard;
+    if (data.scene === "shop" || data.scene === "fish" || data.scene === "island") scene = data.scene;
+    if (data.boat && typeof data.boat.x === "number") {
+      ownedBoat = {
+        x: data.boat.x,
+        y: data.boat.y,
+        w: 22,
+        h: 10,
+        vx: 0,
+        vy: 0,
+        tilt: 0,
+        phase: 0,
+        face: data.boat.face === -1 ? -1 : 1,
+        kind: "skiff",
+        landed: data.boat.landed !== false,
+      };
+    } else if (player.aboard) {
+      player.aboard = false;
+    }
+  }
+
   let last = performance.now();
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
@@ -4944,6 +5048,11 @@
     updatePrompt();
     updateOcean();
     draw(time);
+    saveAcc += dt;
+    if (saveAcc >= 1.5) {
+      saveAcc = 0;
+      saveGame();
+    }
     requestAnimationFrame(loop);
   }
 
@@ -5016,8 +5125,10 @@
   }
 
   window.addEventListener("resize", resizeCanvas);
+  window.addEventListener("beforeunload", saveGame);
 
   buildWorld();
+  loadGame();
   resizeCanvas();
   camera.x = player.x + player.w / 2 - viewW / 2;
   camera.y = player.y + player.h / 2 - viewH * 0.36;
