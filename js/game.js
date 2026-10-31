@@ -1,6 +1,7 @@
 (() => {
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
+  let ink = ctx;
 
   const TILE = 16;
   const TEX = 96;
@@ -138,10 +139,15 @@
   const foamBlockers = [];
   const dockBlit = [];
   const dockWood = [];
+  const deckPads = [];
+  let dockOverlay = null;
+  let dockOX = 0;
+  let dockOY = 0;
   let bldgCanvas = null;
   let bldgOX = 0;
   let bldgOY = 0;
   let fishSpawnT = 0.85;
+  let fishCursor = Math.random();
   let landCanvas = null;
   let shoreLut = null;
   let foamMask = null;
@@ -156,6 +162,9 @@
   let glowLamp = null;
   let glowWindow = null;
   let glowFeet = null;
+  let sprCanvas = null;
+  let sprCtx = null;
+  let litFrame = null;
 
   const player = {
     x: 0,
@@ -531,9 +540,6 @@
       }
     }
 
-    for (let i = 0; i < 22; i++) {
-      placeBeachShell();
-    }
     spawnFauna();
     spawnInsects();
     bakeStaticWorld();
@@ -557,44 +563,43 @@
     return true;
   }
 
-  function placeBeachShell() {
-    for (let tries = 0; tries < 90; tries++) {
-      const c = irand(2, COLS - 3);
-      const rest = restShoreY(c * TILE);
-      const x = c * TILE + irand(2, 12);
-      const y = rest - irand(16, 170);
-      if (!isSandAt(x, y) || !beachOpen(x, y) || inRiverWater(x, y)) continue;
-      loot.push({
-        id: "shell",
-        x,
-        y,
-        taken: false,
-        born: 0,
-        life: Infinity,
-      });
-      return;
-    }
-  }
-
   function dockSandCol() {
     return Math.max(2, Math.min(COLS - 3, (spawnX / TILE) | 0));
   }
 
-  function placeWashLoot(id, life, nearC) {
-    const near = nearC != null;
-    const triesN = near ? 180 : 70;
-    for (let tries = 0; tries < triesN; tries++) {
+  function beachLootOk(x, y) {
+    if (x < 8 || y < 8 || x > WORLD_W - 12) return false;
+    if (!isSandAt(x, y) || inRiverWater(x, y)) return false;
+    const rest = restShoreY(x);
+    const inland = rest - y;
+    if (inland < 12 || inland > 52) return false;
+    if (y <= northCliffY(x) + 20) return false;
+    return beachSpotOpen(x, y, 14);
+  }
+
+  function placeWashLoot(id, life, nearStart) {
+    const spawnC = dockSandCol();
+    for (let k = 0; k < 64; k++) {
       let c;
-      if (!near) c = irand(2, COLS - 3);
-      else {
-        const spread = 2 + (tries % 24);
-        const dir = tries & 1 ? 1 : -1;
-        c = Math.max(2, Math.min(COLS - 3, (nearC + dir * spread) | 0));
+      if (nearStart) {
+        const spread = 3 + (k % 18);
+        const dir = k & 1 ? 1 : -1;
+        c = spawnC + dir * spread;
+      } else {
+        c = 4 + ((k * 97 + waveCycle * 19 + life * 3) % (COLS - 8));
       }
-      const rest = restShoreY(c * TILE + 8);
-      const x = c * TILE + irand(2, 12);
-      const y = rest - irand(8, near ? 52 : 28);
-      if (!isSandAt(x, y) || inRiverWater(x, y) || !beachOpen(x, y)) continue;
+      c = Math.max(3, Math.min(COLS - 4, c | 0));
+      if (islandCap(c) < 0.28) continue;
+      const x = c * TILE + irand(3, 11);
+      const y = (restShoreY(x) - irand(14, 46)) | 0;
+      if (!beachLootOk(x, y)) continue;
+      let crowded = false;
+      for (let i = 0; i < loot.length; i++) {
+        const o = loot[i];
+        if (o.taken || o.drift) continue;
+        if (Math.hypot(o.x - x, o.y - y) < 24) crowded = true;
+      }
+      if (crowded) continue;
       loot.push({
         id,
         x,
@@ -620,46 +625,95 @@
     return true;
   }
 
-  function placeStarterBeachLoot() {
-    const want = ["gem", "gem", "crystal", "gem", "gem", "gem", "crystal", "gem"];
-    const ax = spawnX + player.w / 2;
-    const ay = spawnY + 8;
-    const spots = [];
-    for (let pass = 0; pass < 2 && spots.length < 28; pass++) {
-      const margin = pass === 0 ? 12 : 4;
-      for (let dx = -220; dx <= 280; dx += 12) {
-        const x = (ax + dx) | 0;
-        const rest = restShoreY(x);
-        for (let inland = 12; inland <= 72; inland += 12) {
-          const y = rest - inland;
-          if (!beachSpotOpen(x, y, margin)) continue;
-          spots.push({ x, y, d: Math.abs(x - ax) + Math.abs(y - ay) * 0.7 });
-        }
-      }
-      if (spots.length >= want.length) break;
+  function spotOnCol(c, salt) {
+    for (let k = 0; k < 5; k++) {
+      const x = c * TILE + 3 + ((salt + k * 5) % 9);
+      const inland = 14 + ((salt + k * 7) % 5) * 8;
+      const y = (restShoreY(x) - inland) | 0;
+      if (beachLootOk(x, y)) return { x, y, c };
     }
-    spots.sort(function (a, b) {
-      return a.d - b.d;
-    });
-    const used = [];
-    let n = 0;
-    for (let i = 0; i < spots.length && n < want.length; i++) {
-      const s = spots[i];
+    return null;
+  }
+
+  function claimBeachSpot(cols, index, salt, used, minDist) {
+    const n = cols.length;
+    if (!n) return null;
+    for (let k = 0; k < 24; k++) {
+      const delta = k === 0 ? 0 : (k % 2 === 0 ? 1 : -1) * (((k + 1) / 2) | 0);
+      const c = cols[Math.max(0, Math.min(n - 1, index + delta))];
+      const s = spotOnCol(c, salt + k * 3);
+      if (!s) continue;
       let close = false;
       for (let u = 0; u < used.length; u++) {
-        if (Math.abs(used[u].x - s.x) < 16 && Math.abs(used[u].y - s.y) < 10) close = true;
+        if (Math.hypot(used[u].x - s.x, used[u].y - s.y) < minDist) close = true;
       }
       if (close) continue;
+      used.push(s);
+      return s;
+    }
+    return null;
+  }
+
+  function placeSouthBeachLoot() {
+    const cols = [];
+    for (let c = 3; c < COLS - 3; c++) {
+      if (islandCap(c) < 0.28) continue;
+      cols.push(c);
+    }
+    const spawnC = dockSandCol();
+    const near = [];
+    const far = [];
+    for (let i = 0; i < cols.length; i++) {
+      if (Math.abs(cols[i] - spawnC) <= 22) near.push(cols[i]);
+      else far.push(cols[i]);
+    }
+    const used = [];
+    function drop(id, s) {
+      if (!s) return;
       loot.push({
-        id: want[n],
+        id,
         x: s.x,
         y: s.y,
         taken: false,
         born: 0,
         life: Infinity,
       });
-      used.push(s);
-      n++;
+    }
+    const nearIds = ["gem", "shell", "shell", "crystal", "gem"];
+    for (let i = 0; i < nearIds.length; i++) {
+      let s = null;
+      if (near.length) {
+        const index = ((i * Math.max(1, near.length - 1)) / Math.max(1, nearIds.length - 1)) | 0;
+        s = claimBeachSpot(near, index, 11 + i * 9, used, 36);
+      }
+      if (!s && far.length) {
+        let best = 0;
+        let bestD = Infinity;
+        for (let f = 0; f < far.length; f++) {
+          const d = Math.abs(far[f] - spawnC);
+          if (d < bestD) {
+            bestD = d;
+            best = f;
+          }
+        }
+        s = claimBeachSpot(far, best, 21 + i * 9, used, 36);
+      }
+      drop(nearIds[i], s);
+    }
+    const farIds = [];
+    const gems = ["gem", "gem", "crystal", "gem", "gem"];
+    let g = 0;
+    for (let i = 0; i < 20; i++) {
+      farIds.push("shell");
+      if (g < gems.length && (i === 3 || i === 7 || i === 11 || i === 15 || i === 19)) {
+        farIds.push(gems[g]);
+        g++;
+      }
+    }
+    const stride = far.length / Math.max(1, farIds.length);
+    for (let i = 0; i < farIds.length; i++) {
+      const index = far.length ? Math.min(far.length - 1, (i * stride) | 0) : 0;
+      drop(farIds[i], claimBeachSpot(far, index, 40 + i * 5, used, 64));
     }
   }
 
@@ -672,11 +726,10 @@
     if (waveCycle === lastWaveCycle) return;
     lastWaveCycle = waveCycle;
     if (waveCycle <= 0) return;
-    const nearDock = dockSandCol();
-    if (Math.random() < 0.55) placeWashLoot("gem", irand(4, 5), nearDock);
-    if (Math.random() < 0.22) placeWashLoot("gem", irand(4, 5));
-    if (Math.random() < 0.035) placeWashLoot("crystal", irand(4, 5), Math.random() < 0.7 ? nearDock : null);
-    if (Math.random() < 0.05) placeWashLoot("jelly", irand(2, 4));
+    if (Math.random() < 0.55) placeWashLoot("gem", irand(4, 5), Math.random() < 0.22);
+    if (Math.random() < 0.18) placeWashLoot("gem", irand(4, 5), false);
+    if (Math.random() < 0.035) placeWashLoot("crystal", irand(4, 5), Math.random() < 0.2);
+    if (Math.random() < 0.05) placeWashLoot("jelly", irand(2, 4), Math.random() < 0.2);
   }
 
   function isDryBeachSand(px, py) {
@@ -1038,6 +1091,7 @@
   }
 
   function emitSplash(wx, wy, n) {
+    if (onIslandLand(wx, wy) || fishOverDock(wx, wy)) return;
     let k = 0;
     for (let i = 0; i < MAX_SPLASH && k < n; i++) {
       const p = splashes[i];
@@ -1046,11 +1100,39 @@
       p.y = wy + rand(-1.2, 1.4);
       p.vx = rand(-28, 28);
       p.vy = rand(-46, -10);
-      p.life = rand(0.16, 0.4);
+      p.life = rand(0.22, 0.48);
       p.max = p.life;
       p.col = Math.random() > 0.4 ? "#ffffff" : "#e8f6ff";
       k++;
     }
+    if (k > 0) return;
+    const reuse = Math.min(n, splashes.length);
+    for (let i = 0; i < reuse; i++) {
+      const p = splashes[(i * 5) % splashes.length];
+      p.x = wx + rand(-2.2, 2.2);
+      p.y = wy + rand(-1.2, 1.4);
+      p.vx = rand(-28, 28);
+      p.vy = rand(-46, -10);
+      p.life = rand(0.22, 0.48);
+      p.max = p.life;
+      p.col = i & 1 ? "#ffffff" : "#e8f6ff";
+    }
+  }
+
+  function fishWater(wx, wy) {
+    if (wx < 6 || wy < 6 || wx >= WORLD_W - 6 || wy >= WORLD_H - 6) return false;
+    if (wy < restShoreY(wx) - 0.5) return false;
+    if (onIslandLand(wx, wy)) return false;
+    if (fishOverDock(wx, wy)) return false;
+    if (hitPad(wx, wy, islandSolids)) return false;
+    return true;
+  }
+
+  function pickJumpKind() {
+    const roll = Math.random();
+    if (roll < 0.08) return "shark";
+    if (roll < 0.18) return "mini_shark";
+    return JUMP_KINDS[(Math.random() * 6) | 0];
   }
 
   function bez(a, b, c, u) {
@@ -1071,54 +1153,53 @@
       f = { alive: false };
       fishJumps.push(f);
     }
-    const x0 = Math.max(8, camera.x - 30);
-    const x1 = Math.min(WORLD_W - 8, camera.x + viewW + 30);
-    if (x1 - x0 < 20) return;
-    const x = rand(x0, x1);
-    const rest = restShoreY(x);
-    if (rest < camera.y - 36 || rest > camera.y + viewH + 70) return;
-    const startY = rest + rand(3, 16);
-    if (startY > WORLD_H - 10) return;
-    const dx = rand(-40, 40);
-    if (
-      inKeepout(x, rest + 6) ||
-      inKeepout(x, rest - 8) ||
-      inKeepout(x + dx, rest + 6) ||
-      inKeepout(x + dx * 0.5, rest - 16)
-    ) {
+    const left = camera.x + 12;
+    const right = camera.x + viewW - 12;
+    if (right - left < 28) return;
+    fishCursor = (fishCursor + 0.37) % 1;
+    for (let attempt = 0; attempt < 18; attempt++) {
+      const x = left + ((fishCursor + attempt * 0.19) % 1) * (right - left);
+      const rest = restShoreY(x);
+      if (rest < camera.y - 4 || rest > camera.y + viewH - 18) continue;
+      const kind = pickJumpKind();
+      const clearance = kind === "shark" ? 12 : kind === "mini_shark" ? 8 : 4;
+      const apexY = rest + clearance + rand(1, 4);
+      const startY = apexY + rand(16, 36);
+      const endY = apexY + rand(14, 34);
+      if (apexY > camera.y + viewH - 8) continue;
+      if (startY >= WORLD_H - 6 || endY >= WORLD_H - 6) continue;
+      const dx = rand(-58, 58);
+      const x1 = x + dx * 0.35;
+      const x2 = x + dx;
+      if (!fishWater(x, startY) || !fishWater(x2, endY) || !fishWater(x1, apexY)) continue;
+      let clear = true;
+      for (let s = 1; s <= 7; s++) {
+        const u = s / 8;
+        if (!fishWater(bez(x, x1, x2, u), bez(startY, apexY, endY, u))) {
+          clear = false;
+          break;
+        }
+      }
+      if (!clear) continue;
+      f.alive = true;
+      f.u = 0;
+      f.dur = kind === "shark" ? rand(1.05, 1.45) : rand(0.82, 1.22);
+      f.x0 = x;
+      f.x1 = x1;
+      f.x2 = x2;
+      f.y0 = startY;
+      f.y1 = apexY;
+      f.y2 = endY;
+      f.x = x;
+      f.y = startY;
+      f.kind = kind;
+      f.len = kind === "shark" ? 16 : kind === "mini_shark" ? 11 : 6 + ((hash(x | 0, startY | 0) * 4) | 0);
+      f.ang = -Math.PI / 2;
+      f.squash = 0.7;
+      f.tumble = rand(-0.55, 0.55) * (kind === "shark" ? 0.35 : kind === "mini_shark" ? 0.45 : 1);
+      f.splashedUp = false;
+      f.splashedDown = false;
       return;
-    }
-    const endY = rest + rand(3, 18);
-    f.alive = true;
-    f.u = 0;
-    f.dur = rand(0.85, 1.25);
-    f.x0 = x;
-    f.x1 = x + dx * 0.35;
-    f.x2 = x + dx;
-    f.y0 = startY;
-    f.y1 = rest - rand(26, 48);
-    f.y2 = endY;
-    f.x = x;
-    f.y = startY;
-    f.len = 6 + ((hash(x | 0, startY | 0) * 4) | 0);
-    f.ang = 0;
-    f.squash = 0.7;
-    f.tumble = rand(-0.55, 0.55);
-    f.splashedUp = false;
-    f.splashedDown = false;
-    const roll = hash((x | 0) + 3, startY | 0);
-    if (roll > 0.96) f.kind = "shark";
-    else if (roll > 0.9) f.kind = "mini_shark";
-    else f.kind = JUMP_KINDS[(hash(x | 0, (startY | 0) + 9) * 6) | 0];
-    if (f.kind === "shark") {
-      f.len = 16;
-      f.dur = rand(1.05, 1.45);
-      f.y1 = rest - rand(36, 58);
-      f.tumble *= 0.35;
-    } else if (f.kind === "mini_shark") {
-      f.len = 11;
-      f.y1 = rest - rand(28, 46);
-      f.tumble *= 0.45;
     }
   }
 
@@ -1247,28 +1328,37 @@
     for (let i = 0; i < fishJumps.length; i++) {
       const f = fishJumps[i];
       if (!f.alive) continue;
-      const prevY = f.y;
+      if (!(f.dur > 0.25)) f.dur = 1;
+      const prevU = f.u;
       f.u += dt / f.dur;
+      if (!(f.u >= 0)) f.u = 1;
       const u = f.u > 1 ? 1 : f.u;
       f.x = bez(f.x0, f.x1, f.x2, u);
       f.y = bez(f.y0, f.y1, f.y2, u);
       const vx = bez(f.x0, f.x1, f.x2, Math.min(1, u + 0.04)) - f.x;
       const vy = bez(f.y0, f.y1, f.y2, Math.min(1, u + 0.04)) - f.y;
-      f.ang = Math.atan2(vy, vx);
-      const rest = restShoreY(f.x);
-      if (!f.splashedUp && prevY >= rest && f.y < rest) {
-        emitSplash(f.x, rest, 8 + (f.len > 7 ? 4 : 0));
+      if (vx * vx + vy * vy > 0.0001) f.ang = Math.atan2(vy, vx);
+      if (!f.splashedUp) {
+        emitSplash(f.x0, f.y0, f.len > 10 ? 12 : 8);
         f.splashedUp = true;
-        f.squash = 0.58;
+        f.squash = 0.55;
       }
-      if (!f.splashedDown && f.splashedUp && prevY < rest && f.y >= rest) {
-        emitSplash(f.x, rest, 9 + (f.len > 7 ? 5 : 0));
+      if (!f.splashedDown && prevU < 0.9 && f.u >= 0.9) {
+        emitSplash(f.x2, f.y2, f.len > 10 ? 14 : 9);
         f.splashedDown = true;
         f.squash = 0.5;
       }
-      const air = f.y < rest;
-      f.squash += ((air ? 1.12 : 0.85) - f.squash) * Math.min(1, dt * 7);
-      if (f.u >= 1) f.alive = false;
+      const lift = Math.sin(Math.min(1, u) * Math.PI);
+      f.squash += (0.84 + lift * 0.32 - f.squash) * Math.min(1, dt * 7);
+      if (f.u > 0.06 && !fishWater(f.x, f.y)) {
+        if (!f.splashedDown) emitSplash(f.x, f.y, 6);
+        f.alive = false;
+        continue;
+      }
+      if (f.u >= 1) {
+        if (!f.splashedDown) emitSplash(f.x2, f.y2, f.len > 10 ? 12 : 8);
+        f.alive = false;
+      }
     }
     for (let i = 0; i < MAX_SPLASH; i++) {
       const p = splashes[i];
@@ -1280,6 +1370,16 @@
     }
   }
 
+  function standingOnDeck() {
+    if (scene !== "island" || player.aboard) return false;
+    const fy = player.y + player.h - 2;
+    const xs = [player.x + 2, player.x + player.w * 0.5, player.x + player.w - 2];
+    for (let i = 0; i < xs.length; i++) {
+      if (hitPad(xs[i], fy, deckPads)) return true;
+    }
+    return false;
+  }
+
   function canMove(nx, ny) {
     const pad = 2;
     const points = [
@@ -1288,7 +1388,16 @@
       [nx + pad, ny + player.h - pad],
       [nx + player.w - pad, ny + player.h - pad],
     ];
-    return points.every(([x, y]) => canStand(x, y));
+    if (!points.every(([x, y]) => canStand(x, y))) return false;
+    if (!standingOnDeck()) return true;
+    const fy = ny + player.h - pad;
+    const xs = [nx + pad, nx + player.w * 0.5, nx + player.w - pad];
+    for (let i = 0; i < xs.length; i++) {
+      const x = xs[i];
+      if (hitPad(x, fy, walkPads)) continue;
+      if (isWaterAt(x, fy)) return false;
+    }
+    return true;
   }
 
   function playerCenter() {
@@ -2116,9 +2225,31 @@
     if (px < 2 || py < 2 || px >= WORLD_W - 2 || py >= WORLD_H - 2) return false;
     if (isSolidPoint(px, py)) return false;
     if (landPresent(px) && py < northCliffY(px)) return false;
-    if (hitPad(px, py, walkPads)) return false;
+    for (let i = 0; i < boats.length; i++) {
+      const b = boats[i];
+      if (px >= b.x && px < b.x + b.w && py >= b.y && py < b.y + b.h) return false;
+    }
+    // Planks stay solid for feet. The hull sails in the water under them.
+    const underPlank = hitPad(px, py, dockWood);
+    if (!underPlank && hitPad(px, py, walkPads)) return false;
     if (inRiverWater(px, py)) return true;
     return !onIslandLand(px, py);
+  }
+
+  function skiffUnderDock(b) {
+    if (!b || boatThrow || !b.landed) return false;
+    for (let i = 0; i < dockWood.length; i++) {
+      const r = dockWood[i];
+      const x0 = Math.max(b.x, r.x);
+      const y0 = Math.max(b.y, r.y);
+      const x1 = Math.min(b.x + b.w, r.x + r.w);
+      const y1 = Math.min(b.y + b.h, r.y + r.h);
+      if (x1 - x0 < 2 || y1 - y0 < 2) continue;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      if (inRiverWater(cx, cy) || !onIslandLand(cx, cy)) return true;
+    }
+    return false;
   }
 
   function boatHullOk(x, y, w, h) {
@@ -2164,8 +2295,11 @@
   function seatPlayerOnBoat() {
     if (!ownedBoat) return;
     const bob = skiffBob(ownedBoat, time);
-    player.x = ownedBoat.x + ownedBoat.w / 2 - player.w / 2;
-    player.y = ownedBoat.y + bob - 2;
+    const b = ownedBoat;
+    player.x = b.x + (b.w - player.w) / 2;
+    // 8×14 sprite. Feet pivot is y+13; seated legs are one pixel lower.
+    // Lap sits in the cockpit; legs rest on the keel, not under the boat.
+    player.y = b.y + bob - 6;
   }
 
   function tryStepOffBoat(ox, oy) {
@@ -2517,8 +2651,8 @@
   }
 
   function px(x, y, w, h, color) {
-    ctx.fillStyle = color;
-    ctx.fillRect(x | 0, y | 0, w, h);
+    ink.fillStyle = color;
+    ink.fillRect(x | 0, y | 0, w, h);
   }
 
   const FONT = {
@@ -3165,6 +3299,8 @@
     const rowB = { x: pier.x + 140, y: rest + 22, w: 26, h: 9 };
     dockWood.length = 0;
     dockWood.push(pier, finger);
+    deckPads.length = 0;
+    deckPads.push(pier, finger, ramp);
     walkPads.length = 0;
     islandSolids.length = 0;
     keepouts.length = 0;
@@ -3214,21 +3350,40 @@
     dockBlit.push({ x: ramp.x, y: ramp.y, w: ramp.w + 4, h: ramp.h + 4 });
     dockBlit.push({ x: pier.x - 2, y: pier.y - 2, w: pier.w + 4, h: pier.h + 28 });
     dockBlit.push({ x: finger.x - 2, y: finger.y - 2, w: finger.w + 6, h: finger.h + 24 });
+    function paintDockBits(g) {
+      paintPlanks(g, pier.x, pier.y, pier.w, pier.h, false);
+      paintRamp(g, ramp.x, ramp.y, ramp.w, ramp.h);
+      paintPlanks(g, finger.x, finger.y, finger.w, finger.h, true);
+      for (let i = 0; i < 6; i++) {
+        paintPost(g, pier.x + 8 + i * 28, rest + 6, 16 + (i & 1) * 5);
+      }
+      paintPost(g, finger.x + 1, rest + 78, 20);
+      paintPost(g, finger.x + 15, rest + 84, 16);
+    }
     const g = landCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
-    paintPlanks(g, pier.x, pier.y, pier.w, pier.h, false);
-    paintRamp(g, ramp.x, ramp.y, ramp.w, ramp.h);
-    paintPlanks(g, finger.x, finger.y, finger.w, finger.h, true);
+    paintDockBits(g);
     for (let i = 0; i < 6; i++) {
       const postX = pier.x + 8 + i * 28;
       const postY = rest + 6;
-      paintPost(g, postX, postY, 16 + (i & 1) * 5);
       dockLamps.push({ x: postX, y: postY - 3 });
     }
-    paintPost(g, finger.x + 1, rest + 78, 20);
-    paintPost(g, finger.x + 15, rest + 84, 16);
     dockLamps.push({ x: finger.x + 1, y: rest + 75 });
     dockLamps.push({ x: finger.x + 15, y: rest + 81 });
+    const deckLeft = Math.min(ramp.x, pier.x, finger.x) - 2;
+    const deckTop = Math.min(ramp.y, pier.y, finger.y) - 2;
+    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w) + 4;
+    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102) + 2;
+    dockOX = deckLeft;
+    dockOY = deckTop;
+    dockOverlay = document.createElement("canvas");
+    dockOverlay.width = Math.max(1, deckRight - deckLeft);
+    dockOverlay.height = Math.max(1, deckBottom - deckTop);
+    const og = dockOverlay.getContext("2d");
+    og.imageSmoothingEnabled = false;
+    og.setTransform(1, 0, 0, 1, -dockOX, -dockOY);
+    paintDockBits(og);
+    og.setTransform(1, 0, 0, 1, 0, 0);
     windowLights.length = 0;
     eaveShades.length = 0;
     windowLights.push({ x: shop.x + 12, y: shop.y + 29 });
@@ -3263,8 +3418,8 @@
     npcs.push({
       kind: "harbor",
       scene: "island",
-      x: finger.x - 1,
-      y: finger.y + finger.h - 8,
+      x: finger.x + ((finger.w / 2) | 0) - 3,
+      y: finger.y + ((finger.h / 2) | 0) + 5,
       phase: 1.2,
     });
     harborDrop = { x: finger.x - 2, y: finger.y + finger.h + 8 };
@@ -3299,7 +3454,7 @@
     doorCool = 0.6;
     spawnX = player.x;
     spawnY = player.y;
-    placeStarterBeachLoot();
+    placeSouthBeachLoot();
   }
 
   function beginFade(nextScene, spawn) {
@@ -3449,12 +3604,12 @@
     const bob = skiffBob(b, t);
     const x = b.x - cpos.x + b.w / 2;
     const y = b.y - cpos.y + b.h + bob;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(b.tilt || 0);
-    ctx.scale(b.face || 1, 1);
+    ink.save();
+    ink.translate(x, y);
+    ink.rotate(b.tilt || 0);
+    ink.scale(b.face || 1, 1);
     fn(-b.w / 2, -b.h, b);
-    ctx.restore();
+    ink.restore();
   }
 
   function drawSkiffHull(cpos, b, t) {
@@ -3471,6 +3626,7 @@
       px(ox + 1, oy + 4, boat.w - 2, 1, "#3a2414");
       px(ox + 2, oy + 3, boat.w - 6, 1, "#6b3f1f");
       px(ox + boat.w - 5, oy + 4, 5, 3, "#e8d5a8");
+      px(ox, oy + 7, boat.w, 2, "#5a4028");
       px(ox + 4, oy + 8, 3, 1, "#4a3420");
       px(ox + boat.w - 8, oy + 8, 3, 1, "#4a3420");
       px(ox + 5, oy + 7, 1, 3, "#5a4028");
@@ -3496,12 +3652,12 @@
     }
     const bobX = tipX + face * 10;
     const bobY = tipY + 16 + ((Math.sin(time * 9) * 1.4) | 0);
-    ctx.strokeStyle = "#d8e8f0";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(tipX + 0.5, tipY + 0.5);
-    ctx.lineTo(bobX + 0.5, bobY + 0.5);
-    ctx.stroke();
+    ink.strokeStyle = "#d8e8f0";
+    ink.lineWidth = 1;
+    ink.beginPath();
+    ink.moveTo(tipX + 0.5, tipY + 0.5);
+    ink.lineTo(bobX + 0.5, bobY + 0.5);
+    ink.stroke();
     const bite = rod.phase === "reel" && rod.bit;
     px(bobX, bobY, 2, 2, bite ? "#e04a32" : "#e8c44a");
     px(bobX, bobY + 1, 2, 1, "#8a2018");
@@ -3891,6 +4047,11 @@
     drawBuildingsOverDock(cpos);
   }
 
+  function drawDockOverlay(cpos) {
+    if (!dockOverlay) return;
+    ctx.drawImage(dockOverlay, dockOX - cpos.x, dockOY - cpos.y);
+  }
+
   function drawRocks(cpos) {
     for (const rock of rocks) {
       const x = rock.x - cpos.x;
@@ -4014,14 +4175,24 @@
   }
 
   function drawPlayer(cpos) {
-    const x = Math.round(player.x - cpos.x);
-    const y = Math.round(player.y - cpos.y);
     const f = player.frame;
     const face = player.facing;
 
-    ctx.save();
-    ctx.translate(x + 4, y + player.h - 1);
-    ctx.scale(face, 1);
+    ink.save();
+    if (player.aboard && ownedBoat && scene === "island") {
+      const b = ownedBoat;
+      const bob = skiffBob(b, time);
+      ink.translate(b.x - cpos.x + b.w / 2, b.y - cpos.y + b.h + bob);
+      ink.rotate(b.tilt || 0);
+      ink.scale(b.face || 1, 1);
+      ink.translate(0, -b.h + 7);
+      if (face !== (b.face || 1)) ink.scale(-1, 1);
+    } else {
+      const x = Math.round(player.x - cpos.x);
+      const y = Math.round(player.y - cpos.y);
+      ink.translate(x + 4, y + player.h - 1);
+      ink.scale(face, 1);
+    }
 
     const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
     const hurt = player.hurt > 0;
@@ -4052,7 +4223,7 @@
       px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
     }
 
-    ctx.restore();
+    ink.restore();
   }
 
   function drawDigit(x, y, n, color) {
@@ -4441,6 +4612,7 @@
       const foam = f.foam;
       for (let s = 0; s < foam.length; s++) {
         const p = foam[s];
+        if (fishOverDock(p.x, p.y) || onIslandLand(p.x, p.y)) continue;
         const sx = (p.x - cpos.x) | 0;
         const sy = (p.y - cpos.y) | 0;
         if (sx < -2 || sy < -2 || sx > viewW + 2 || sy > viewH + 2) continue;
@@ -4467,29 +4639,29 @@
     for (let i = 0; i < fishJumps.length; i++) {
       const f = fishJumps[i];
       if (!f.alive) continue;
-      const rest = restShoreY(f.x);
-      if (f.y > rest + 2) continue;
-      if (onIslandLand(f.x, f.y) && f.y < rest - 2) continue;
-      if (fishOverDock(f.x, f.y)) continue;
+      if (!fishWater(f.x, f.y)) continue;
+      const kind = JUMP_KINDS.indexOf(f.kind) >= 0 ? f.kind : "cod";
       for (let k = 4; k >= 1; k--) {
         const u = f.u - k * 0.06;
         if (u <= 0.02) continue;
-        const tx = bez(f.x0, f.x1, f.x2, u) - cpos.x;
-        const ty = bez(f.y0, f.y1, f.y2, u) - cpos.y;
-        if (ty > restShoreY(f.x) - cpos.y + 1) continue;
+        const wx = bez(f.x0, f.x1, f.x2, u);
+        const wy = bez(f.y0, f.y1, f.y2, u);
+        if (!fishWater(wx, wy)) continue;
+        const tx = wx - cpos.x;
+        const ty = wy - cpos.y;
         const drop = k === 1 ? "#f4fcff" : k === 2 ? "#d8f4ff" : "#7ec8e0";
         px(tx | 0, ty | 0, 1, 1, drop);
         if (k < 3) px((tx + (k & 1 ? 1 : -1)) | 0, (ty + 1) | 0, 1, 1, "#b7e4f4");
       }
       const x = f.x - cpos.x;
       const y = f.y - cpos.y;
-      if (x < -20 || y < -20 || x > viewW + 20 || y > viewH + 20) continue;
+      if (x < -24 || y < -24 || x > viewW + 24 || y > viewH + 24) continue;
       ctx.save();
       ctx.translate(x, y);
       const lift = Math.sin(Math.min(1, f.u) * Math.PI);
       ctx.rotate(f.ang + (f.tumble || 0) * lift);
-      ctx.scale(f.squash, 2 - f.squash);
-      drawJumpSprite(f.kind, f.len, t, f.x0);
+      ctx.scale(f.squash || 1, 2 - (f.squash || 1));
+      drawJumpSprite(kind, f.len || 7, t, f.x0 || 0);
       ctx.restore();
     }
   }
@@ -4498,11 +4670,13 @@
     for (let i = 0; i < MAX_SPLASH; i++) {
       const p = splashes[i];
       if (p.life <= 0) continue;
+      if (fishOverDock(p.x, p.y) || onIslandLand(p.x, p.y)) continue;
       const x = (p.x - cpos.x) | 0;
       const y = (p.y - cpos.y) | 0;
       if (x < -2 || y < -2 || x > viewW + 2 || y > viewH + 2) continue;
-      ctx.globalAlpha = Math.max(0.15, p.life / (p.max || 0.3));
+      ctx.globalAlpha = Math.max(0.45, p.life / (p.max || 0.3));
       px(x, y, 1, 1, p.col);
+      if (p.life / (p.max || 0.3) > 0.55) px(x + (i & 1 ? 1 : -1), y, 1, 1, "#ffffff");
     }
     ctx.globalAlpha = 1;
   }
@@ -4624,6 +4798,26 @@
     ];
   }
 
+  const GLOW_LAMP = [
+    [0.16, 220, 150, 70],
+    [0.34, 120, 70, 28],
+    [0.54, 48, 26, 12],
+    [0.74, 16, 8, 4],
+    [0.99, 4, 2, 1],
+  ];
+  const GLOW_WINDOW = [
+    [0.18, 210, 150, 70],
+    [0.4, 110, 64, 24],
+    [0.64, 40, 22, 10],
+    [0.99, 6, 3, 1],
+  ];
+  const GLOW_FEET = [
+    [0.25, 90, 60, 28],
+    [0.55, 28, 16, 8],
+    [0.99, 4, 2, 1],
+  ];
+  const litRgb = [255, 255, 255];
+
   function makeGlowSprite(diam, bands) {
     const c = document.createElement("canvas");
     c.width = diam;
@@ -4657,24 +4851,256 @@
 
   function ensureGlows() {
     if (glowLamp) return;
-    glowLamp = makeGlowSprite(64, [
-      [0.16, 220, 150, 70],
-      [0.34, 120, 70, 28],
-      [0.54, 48, 26, 12],
-      [0.74, 16, 8, 4],
-      [0.99, 4, 2, 1],
-    ]);
-    glowWindow = makeGlowSprite(46, [
-      [0.18, 210, 150, 70],
-      [0.4, 110, 64, 24],
-      [0.64, 40, 22, 10],
-      [0.99, 6, 3, 1],
-    ]);
-    glowFeet = makeGlowSprite(30, [
-      [0.25, 90, 60, 28],
-      [0.55, 28, 16, 8],
-      [0.99, 4, 2, 1],
-    ]);
+    glowLamp = makeGlowSprite(64, GLOW_LAMP);
+    glowWindow = makeGlowSprite(46, GLOW_WINDOW);
+    glowFeet = makeGlowSprite(30, GLOW_FEET);
+  }
+
+  function beginLitFrame(cpos, t, indoor) {
+    ensureGlows();
+    const sun = sunSample(t);
+    const lamps = lampAmount(sun);
+    const glows = [];
+    if (indoor) {
+      const lx = (scene === "fish" ? FISH_W : SHOP_W) / 2;
+      glows.push({ x: lx, y: 22, diam: 46, bands: GLOW_WINDOW, a: 1 });
+      glows.push({ x: lx, y: scene === "fish" ? 50 : 64, diam: 30, bands: GLOW_FEET, a: 1 });
+      litFrame = {
+        cpos,
+        sun,
+        lamps,
+        indoor: true,
+        glows,
+        baseR: Math.max(226, (248 * 0.82 + sun.r * 0.18) | 0),
+        baseG: Math.max(200, (220 * 0.82 + sun.g * 0.18) | 0),
+        baseB: Math.max(150, (168 * 0.82 + sun.b * 0.18) | 0),
+      };
+      return;
+    }
+    for (let i = 0; i < windowLights.length; i++) {
+      glows.push({ x: windowLights[i].x, y: windowLights[i].y, diam: 46, bands: GLOW_WINDOW, a: 1 });
+    }
+    if (lamps > 0.04) {
+      for (let i = 0; i < dockLamps.length; i++) {
+        const bob = (Math.sin(t * 7 + i * 1.7) * 1.2) | 0;
+        glows.push({
+          x: dockLamps[i].x + 1,
+          y: dockLamps[i].y + bob,
+          diam: 64,
+          bands: GLOW_LAMP,
+          a: lamps,
+        });
+      }
+      glows.push({
+        x: player.x + player.w / 2,
+        y: player.y + player.h - 2,
+        diam: 30,
+        bands: GLOW_FEET,
+        a: lamps,
+      });
+    }
+    litFrame = { cpos, sun, lamps, indoor: false, glows };
+  }
+
+  function sampleSpriteLight(wx, wy, shade) {
+    const F = litFrame;
+    if (!F) {
+      litRgb[0] = 255;
+      litRgb[1] = 255;
+      litRgb[2] = 255;
+      return litRgb;
+    }
+    let r;
+    let g;
+    let b;
+    if (F.indoor) {
+      r = F.baseR;
+      g = F.baseG;
+      b = F.baseB;
+    } else {
+      const amb = ambientAt(wx, F.sun);
+      r = amb[0];
+      g = amb[1];
+      b = amb[2];
+      const sx = wx - F.cpos.x;
+      const sy = wy - F.cpos.y;
+      for (let i = 0; i < eaveShades.length; i++) {
+        const e = eaveShades[i];
+        const ex = (e.x - F.cpos.x) | 0;
+        const ey = (e.y - F.cpos.y) | 0;
+        if (sx >= ex && sx < ex + e.w && sy >= ey && sy < ey + e.h) {
+          r *= 150 / 255;
+          g *= 142 / 255;
+          b *= 132 / 255;
+          break;
+        }
+      }
+    }
+    const glows = F.glows;
+    for (let i = 0; i < glows.length; i++) {
+      const s = glows[i];
+      const dx = wx - s.x;
+      const dy = wy - s.y;
+      const reach = s.diam * 0.5 + 1;
+      if (dx > reach || dy > reach || dx < -reach || dy < -reach) continue;
+      const left = (s.x - F.cpos.x - s.diam * 0.5) | 0;
+      const top = (s.y - F.cpos.y - s.diam * 0.5) | 0;
+      const lx = wx - F.cpos.x - left;
+      const ly = wy - F.cpos.y - top;
+      const mid = (s.diam - 1) * 0.5;
+      const dist = Math.hypot(lx - mid, ly - mid) / (s.diam * 0.5);
+      if (dist >= 1) continue;
+      const bands = s.bands;
+      let col = bands[bands.length - 1];
+      for (let k = 0; k < bands.length; k++) {
+        if (dist <= bands[k][0]) {
+          col = bands[k];
+          break;
+        }
+      }
+      r = Math.min(255, r + col[1] * s.a);
+      g = Math.min(255, g + col[2] * s.a);
+      b = Math.min(255, b + col[3] * s.a);
+    }
+    if (shade) {
+      r = r * 0.42 + 10;
+      g = g * 0.4 + 8;
+      b = b * 0.48 + 12;
+    }
+    litRgb[0] = r < 0 ? 0 : r > 255 ? 255 : r;
+    litRgb[1] = g < 0 ? 0 : g > 255 ? 255 : g;
+    litRgb[2] = b < 0 ? 0 : b > 255 ? 255 : b;
+    return litRgb;
+  }
+
+  function ensureSpr(w, h) {
+    if (!sprCanvas) {
+      sprCanvas = document.createElement("canvas");
+      sprCtx = sprCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    if (sprCanvas.width < w || sprCanvas.height < h) {
+      sprCanvas.width = Math.max(sprCanvas.width, w, 1);
+      sprCanvas.height = Math.max(sprCanvas.height, h, 1);
+    }
+    sprCtx.imageSmoothingEnabled = false;
+  }
+
+  function drawLitRegion(cpos, box, opt, drawFn) {
+    const x = Math.floor(box.x);
+    const y = Math.floor(box.y);
+    const w = Math.ceil(box.w);
+    const h = Math.ceil(box.h);
+    if (w < 1 || h < 1 || w > 180 || h > 140) {
+      drawFn();
+      return;
+    }
+    if (x > viewW + 8 || y > viewH + 8 || x + w < -8 || y + h < -8) return;
+    ensureSpr(w, h);
+    const g = sprCtx;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = "source-over";
+    g.clearRect(0, 0, w, h);
+    g.setTransform(1, 0, 0, 1, -x, -y);
+    const prev = ink;
+    ink = g;
+    drawFn();
+    ink = prev;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    const shade = !!(opt && opt.shade);
+    const img = g.getImageData(0, 0, w, h);
+    const d = img.data;
+    for (let py = 0; py < h; py++) {
+      const wy = cpos.y + y + py;
+      const row = py * w * 4;
+      for (let px0 = 0; px0 < w; px0++) {
+        const i = row + px0 * 4;
+        if (d[i + 3] === 0) continue;
+        const L = sampleSpriteLight(cpos.x + x + px0, wy, shade);
+        d[i] = (d[i] * L[0]) / 255;
+        d[i + 1] = (d[i + 1] * L[1]) / 255;
+        d[i + 2] = (d[i + 2] * L[2]) / 255;
+      }
+    }
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.putImageData(img, 0, 0);
+    g.globalAlpha = 1;
+    if (opt && opt.cover) {
+      g.globalCompositeOperation = "destination-out";
+      if (dockOverlay) g.drawImage(dockOverlay, dockOX - cpos.x - x, dockOY - cpos.y - y);
+      if (bldgCanvas) g.drawImage(bldgCanvas, bldgOX - cpos.x - x, bldgOY - cpos.y - y);
+      g.globalCompositeOperation = "source-over";
+    }
+    ctx.globalAlpha = 1;
+    ctx.drawImage(sprCanvas, 0, 0, w, h, x, y, w, h);
+  }
+
+  function playerViewBox(cpos) {
+    if (player.aboard && ownedBoat && scene === "island") {
+      const b = ownedBoat;
+      const bob = skiffBob(b, time);
+      const sx = b.x - cpos.x + b.w / 2;
+      const sy = b.y - cpos.y + b.h + bob;
+      return { x: sx - 24, y: sy - b.h - 24, w: 48, h: b.h + 40 };
+    }
+    const sx = Math.round(player.x - cpos.x);
+    const sy = Math.round(player.y - cpos.y);
+    return { x: sx - 10, y: sy - 6, w: 28, h: 26 };
+  }
+
+  function rodViewBox(cpos) {
+    const sx = Math.round(player.x + player.w / 2 - cpos.x);
+    const sy = Math.round(player.y + 4 - cpos.y);
+    return { x: sx - 32, y: sy - 24, w: 64, h: 48 };
+  }
+
+  function skiffViewBox(cpos, b, t) {
+    const bob = skiffBob(b, t);
+    const sx = b.x - cpos.x + b.w / 2;
+    const sy = b.y - cpos.y + b.h + bob;
+    const pad = 12;
+    return { x: sx - b.w / 2 - pad, y: sy - b.h - pad - 4, w: b.w + pad * 2, h: b.h + pad * 2 + 8 };
+  }
+
+  function boatViewBox(cpos, b, t, sail) {
+    const p = boatScreen(cpos, b, t);
+    const top = sail ? 24 : 4;
+    return { x: p.x - 6, y: p.y - top, w: b.w + 14, h: b.h + top + 10 };
+  }
+
+  function drawPlayerLit(cpos, shade) {
+    drawLitRegion(cpos, playerViewBox(cpos), shade ? { shade: true, cover: true } : null, () => drawPlayer(cpos));
+  }
+
+  function drawRodLit(cpos, shade) {
+    if (rod.phase === "idle" || !ownedBoat || !player.aboard) return;
+    drawLitRegion(cpos, rodViewBox(cpos), shade ? { shade: true, cover: true } : null, () => drawRod(cpos));
+  }
+
+  function drawSkiffPart(cpos, b, t, hull, shade) {
+    const opt = shade ? { shade: true, cover: true } : null;
+    drawLitRegion(cpos, skiffViewBox(cpos, b, t), opt, () => {
+      if (hull) drawSkiffHull(cpos, b, t);
+      else drawSkiffRails(cpos, b, t);
+    });
+  }
+
+  function drawBoatLit(cpos, b, t) {
+    drawLitRegion(cpos, boatViewBox(cpos, b, t, false), null, () => drawBoatHull(cpos, b, t));
+  }
+
+  function drawBoatSailLit(cpos, b, t) {
+    if (b.kind !== "big") return;
+    drawLitRegion(cpos, boatViewBox(cpos, b, t, true), null, () => drawBoatSail(cpos, b, t));
+  }
+
+  function drawNpcLit(cpos, n, t) {
+    if (n.scene && n.scene !== scene) return;
+    const bob = (Math.sin(t * 2.2 + n.phase) * 1.1) | 0;
+    const x = (n.x - cpos.x) | 0;
+    const y = (n.y - cpos.y + bob) | 0;
+    if (x < -24 || y < -28 || x > viewW + 24 || y > viewH + 24) return;
+    drawLitRegion(cpos, { x: x - 8, y: y - 20, w: 24, h: 32 }, null, () => drawNpc(cpos, n, t));
   }
 
   function ensureLightCanvas() {
@@ -4765,8 +5191,9 @@
   function drawWorldLight(cpos, t) {
     ensureGlows();
     ensureLightCanvas();
-    const sun = sunSample(t);
-    const lamps = lampAmount(sun);
+    beginLitFrame(cpos, t, false);
+    const sun = litFrame.sun;
+    const lamps = litFrame.lamps;
     paintAmbient(cpos, sun);
     shadeEaves(cpos);
     lightCtx.globalCompositeOperation = "lighter";
@@ -4797,13 +5224,13 @@
       ctx.fillRect(0, 0, viewW, viewH);
       ctx.restore();
     }
-    drawLightSources(cpos, t, lamps);
   }
 
   function drawIndoorLight(cpos) {
     ensureGlows();
     ensureLightCanvas();
-    const sun = sunSample(time);
+    beginLitFrame(cpos, time, true);
+    const sun = litFrame.sun;
     const g = lightCtx;
     g.globalCompositeOperation = "source-over";
     g.globalAlpha = 1;
@@ -4866,6 +5293,7 @@
   }
 
   function draw(t) {
+    ink = ctx;
     const cpos = cam();
     const jx = ((Math.random() * 2 - 1) * shake) | 0;
     const jy = ((Math.random() * 2 - 1) * shake) | 0;
@@ -4879,41 +5307,53 @@
       if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
       drawIndoorLight(cpos);
       if (scene === "shop") drawShopGoldSpark(cpos, t);
-      for (let i = 0; i < npcs.length; i++) drawNpc(cpos, npcs[i], t);
+      for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
       drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
-      drawPlayer(cpos);
+      drawPlayerLit(cpos, false);
     } else {
       px(0, 0, viewW, viewH, WATER_BLUE);
       drawLand(cpos);
       drawFoam(cpos, t);
-      drawSplashes(cpos);
       drawDockOverFoam(cpos);
-      for (let i = 0; i < boats.length; i++) {
-        if (boats[i].kind !== "big") drawBoatHull(cpos, boats[i], t);
-      }
-      for (let i = 0; i < boats.length; i++) {
-        if (boats[i].kind === "big") drawBoatHull(cpos, boats[i], t);
-      }
-      for (let i = 0; i < boats.length; i++) drawBoatSail(cpos, boats[i], t);
-      if (ownedBoat) drawSkiffHull(cpos, ownedBoat, t);
-      if (!player.aboard && ownedBoat) drawSkiffRails(cpos, ownedBoat, t);
       drawRocks(cpos);
       drawTrees(cpos);
       drawInsects(cpos, t);
       drawCrabs(cpos);
       drawSandBits(cpos);
-      for (let i = 0; i < npcs.length; i++) drawNpc(cpos, npcs[i], t);
-      drawHarborBubble(cpos, t);
       drawWorldLight(cpos, t);
+      drawSplashes(cpos);
       drawFish(cpos, t);
       drawLoot(cpos);
-      if (player.aboard) {
-        drawPlayer(cpos);
-        if (ownedBoat) drawSkiffRails(cpos, ownedBoat, t);
-        drawRod(cpos);
-      } else {
-        drawPlayer(cpos);
+      const underSkiff = !!(ownedBoat && skiffUnderDock(ownedBoat));
+      if (underSkiff) {
+        drawSkiffPart(cpos, ownedBoat, t, true, true);
+        if (player.aboard) drawPlayerLit(cpos, true);
+        drawSkiffPart(cpos, ownedBoat, t, false, true);
+        if (player.aboard) drawRodLit(cpos, true);
+      }
+      for (let i = 0; i < boats.length; i++) {
+        if (boats[i].kind !== "big") drawBoatLit(cpos, boats[i], t);
+      }
+      for (let i = 0; i < boats.length; i++) {
+        if (boats[i].kind === "big") drawBoatLit(cpos, boats[i], t);
+      }
+      for (let i = 0; i < boats.length; i++) drawBoatSailLit(cpos, boats[i], t);
+      if (ownedBoat && !underSkiff) {
+        drawSkiffPart(cpos, ownedBoat, t, true, false);
+        if (!player.aboard) drawSkiffPart(cpos, ownedBoat, t, false, false);
+      }
+      for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
+      drawHarborBubble(cpos, t);
+      drawLightSources(cpos, t, litFrame ? litFrame.lamps : 0);
+      if (!(underSkiff && player.aboard)) {
+        if (player.aboard) {
+          drawPlayerLit(cpos, false);
+          if (ownedBoat) drawSkiffPart(cpos, ownedBoat, t, false, false);
+          drawRodLit(cpos, false);
+        } else {
+          drawPlayerLit(cpos, false);
+        }
       }
     }
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
