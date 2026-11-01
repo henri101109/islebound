@@ -42,6 +42,8 @@
     mini_shark: { name: "Mini shark", max: 24, xp: 18 },
     shark: { name: "Shark", max: 24, xp: 36 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
+    wand: { name: "Wand", max: 1, xp: 0 },
+    cloak: { name: "Cloak", max: 1, xp: 0 },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
@@ -50,18 +52,18 @@
   const TRADE_VALUE = { gem: 5, crystal: 25, jelly: 15 };
   const GEM_TRADE = { gem: 5, crystal: 25 };
   const FISH_TRADE = {
-    jelly: 15,
-    cod: 6,
-    trout: 8,
-    salmon: 10,
-    catch_crab: 18,
-    mini_shark: 22,
-    jelly_green: 28,
-    shark: 55,
-    jelly_white: 60,
-    fish_blue: 6,
-    fish_gold: 8,
-    fish_reef: 7,
+    jelly: 20,
+    cod: 10,
+    trout: 15,
+    salmon: 15,
+    catch_crab: 25,
+    mini_shark: 30,
+    jelly_green: 40,
+    shark: 75,
+    jelly_white: 80,
+    fish_blue: 10,
+    fish_gold: 15,
+    fish_reef: 10,
   };
   const FISHER_MENU = [
     ["cod", "COD"],
@@ -85,6 +87,9 @@
   const inventory = [null, null, null, null, null, null, null, null];
   const DOCK_C = 150;
   const RIVER_X0 = DOCK_C * TILE - 300;
+  let riverSpans = [];
+  const riverCourses = [];
+  const bankReeds = [];
   const BOAT_PRICE = 10;
   const rocks = [];
   const palms = [];
@@ -106,10 +111,30 @@
   const SHOP_H = 128;
   const FISH_W = 120;
   const FISH_H = 96;
+  const CABIN_W = 200;
+  const CABIN_H = 136;
+  const CABIN_NPC_X = 124;
+  const CABIN_NPC_Y = 80;
+  const CABIN_TABLE = { x: 146, y: 74, w: 36, h: 12 };
+  const CABIN_KINDS = [
+    "fish_blue",
+    "fish_gold",
+    "fish_reef",
+    "cod",
+    "trout",
+    "salmon",
+    "jelly",
+    "jelly_green",
+    "jelly_white",
+    "catch_crab",
+    "mini_shark",
+    "shark",
+  ];
   const walkPads = [];
   const islandSolids = [];
   const shopSolids = [];
   const fishSolids = [];
+  const cabinSolids = [];
   const npcs = [];
   const boats = [];
   const swimFish = [];
@@ -117,14 +142,52 @@
   const MAX_SAND = 120;
   let shopCanvas = null;
   let fishCanvas = null;
+  let cabinCanvas = null;
   let shopDoor = null;
   let shopExit = null;
   let fishDoor = null;
   let fishExit = null;
   let fishDockExit = null;
+  let cabinDoor = null;
+  let cabinExit = null;
+  let cabinDockExit = null;
+  let cabinChestX = 160;
+  let cabinChestY = 66;
+  let cloakOn = false;
+  const cabinFish = [];
+  const cabinPanes = [
+    { x: 2, y: 12, w: CABIN_W - 4, h: 20 },
+    { x: 2, y: 38, w: 10, h: CABIN_H - 52 },
+    { x: CABIN_W - 12, y: 38, w: 10, h: CABIN_H - 52 },
+  ];
+  const cabinCut = {
+    kind: "",
+    t: 0,
+    value: 0,
+    pack: 0,
+    spawned: false,
+    granted: false,
+    lid: 0,
+    mode: "open",
+  };
+  let cloakBuf = null;
+  let cloakCtx = null;
+  let cloakMask = null;
+  let cloakMaskCtx = null;
   let fishCastT = 0;
   let jellySpawnT = 18;
-  const rod = { phase: "idle", t: 0, wait: 0, face: 1, bit: false };
+  const rod = {
+    phase: "idle",
+    t: 0,
+    wait: 0,
+    face: 1,
+    bit: false,
+    catchId: null,
+    tugLeft: 0,
+    tugDx: 0,
+    tugDy: 0,
+    tugCool: 0,
+  };
   let chestTalk = 0;
   const keepouts = [];
   const shopTrade = { phase: "idle", t: 0, dur: 0, id: null, value: 0, refuse: 0 };
@@ -162,6 +225,9 @@
   let glowLamp = null;
   let glowWindow = null;
   let glowFeet = null;
+  let glowChest = null;
+  let glowChestPool = null;
+  let moorSail = null;
   let sprCanvas = null;
   let sprCtx = null;
   let litFrame = null;
@@ -299,15 +365,23 @@
   }
 
   function isIndoor() {
-    return scene === "shop" || scene === "fish";
+    return scene === "shop" || scene === "fish" || scene === "cabin";
   }
 
   function indoorW() {
-    return scene === "fish" ? FISH_W : SHOP_W;
+    if (scene === "fish") return FISH_W;
+    if (scene === "cabin") return CABIN_W;
+    return SHOP_W;
   }
 
   function indoorH() {
-    return scene === "fish" ? FISH_H : SHOP_H;
+    if (scene === "fish") return FISH_H;
+    if (scene === "cabin") return CABIN_H;
+    return SHOP_H;
+  }
+
+  function cabinDoorX() {
+    return (CABIN_W / 2 - 8) | 0;
   }
 
   function northCliffY(wx) {
@@ -318,33 +392,310 @@
     return Math.floor(baseShoreRow(wx / TILE) * TILE);
   }
 
-  function riverXAt(wy) {
-    const mouthY = restShoreY(RIVER_X0);
-    const endY = northCliffY(RIVER_X0) + 96;
-    if (wy < endY || wy > mouthY + 48) return null;
-    const span = Math.max(8, mouthY - endY);
-    const u = Math.max(0, Math.min(1, (mouthY - wy) / span));
-    const x = RIVER_X0 + Math.sin(u * 2.6) * 20 + Math.sin(u * 5.4) * 7;
-    if (!landPresent(x)) return null;
-    const shore = shoreYAt(x);
-    if (wy > shore + 24) return null;
-    if (wy < shore - 20 && !onIslandLand(x, wy)) return null;
-    return x;
+  function addRiverSpan(y, l, r) {
+    y = y | 0;
+    if (y < 0 || y >= WORLD_H || !(r > l)) return;
+    const row = riverSpans[y];
+    if (!row) {
+      riverSpans[y] = [{ l: l, r: r }];
+      return;
+    }
+    let i = 0;
+    while (i < row.length && row[i].r < l) i++;
+    let L = l;
+    let R = r;
+    let j = i;
+    while (j < row.length && row[j].l <= R) {
+      if (row[j].l < L) L = row[j].l;
+      if (row[j].r > R) R = row[j].r;
+      j++;
+    }
+    row.splice(i, j - i, { l: L, r: R });
   }
 
-  function riverHalfAt(wy) {
-    const mouthY = restShoreY(RIVER_X0);
-    const endY = northCliffY(RIVER_X0) + 96;
-    const span = Math.max(8, mouthY - endY);
-    const u = Math.max(0, Math.min(1, (mouthY - wy) / span));
-    const taper = u > 0.78 ? Math.max(0.28, 1 - (u - 0.78) / 0.22) : 1;
-    return (9.5 + (1 - u) * 5) * taper;
+  function rasterPolyline(pts) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const y0 = Math.floor(Math.min(a.y, b.y));
+      const y1 = Math.floor(Math.max(a.y, b.y));
+      const den = b.y - a.y || 1;
+      for (let y = y0; y <= y1; y++) {
+        let t = (y + 0.5 - a.y) / den;
+        if (t < 0) t = 0;
+        else if (t > 1) t = 1;
+        const x = a.x + (b.x - a.x) * t;
+        const half = a.half + (b.half - a.half) * t;
+        addRiverSpan(y, x - half, x + half);
+      }
+    }
+  }
+
+  function rasterMouth(mouthX, mouthY, half) {
+    const y0 = Math.floor(mouthY);
+    const y1 = Math.min(WORLD_H - 1, Math.floor(mouthY + 46));
+    for (let y = y0; y <= y1; y++) addRiverSpan(y, mouthX - half, mouthX + half);
+  }
+
+  function courseAtY(pts, y) {
+    if (y >= pts[0].y) return pts[0];
+    const last = pts[pts.length - 1];
+    if (y <= last.y) return last;
+    let lo = 0;
+    let hi = pts.length - 1;
+    while (hi - lo > 1) {
+      const m = (lo + hi) >> 1;
+      if (pts[m].y >= y) lo = m;
+      else hi = m;
+    }
+    const a = pts[lo];
+    const b = pts[hi];
+    const t = (a.y - y) / (a.y - b.y || 1);
+    return { x: a.x + (b.x - a.x) * t, half: a.half + (b.half - a.half) * t };
+  }
+
+  function traceStem(mouthX, reach, salt, amp, halfBase, halfVar) {
+    const mouthY = shoreYAt(mouthX);
+    const cliff = northCliffY(mouthX);
+    const travel = (mouthY - cliff - 120) * reach;
+    const endY = mouthY - travel;
+    const pts = [];
+    const steps = Math.max(2, Math.ceil(travel / 2));
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const y = mouthY + (endY - mouthY) * u;
+      const fade = smoothstep(Math.min(1, (mouthY - y) / 200));
+      const x =
+        mouthX +
+        (Math.sin(u * amp.f1 + salt) * amp.a1 +
+          Math.sin(u * amp.f2 + salt * 1.6) * amp.a2 +
+          (n2(u * amp.nf + salt, salt * 2.1) - 0.5) * amp.na) *
+          fade;
+      let half = halfBase;
+      half += (Math.sin(u * 7.2 + salt * 2) * halfVar + Math.sin(u * 2.8 + 0.5) * halfVar * 0.7) * fade;
+      half += (n2(y * 0.045, salt * 4.2) - 0.5) * 7.2 * fade;
+      if (u > 0.9) half *= Math.max(0.8, 1 - ((u - 0.9) / 0.1) * 0.2);
+      if (half < 12.6) half = 12.6;
+      if (u > 0.02 && y < northCliffY(x) + 108) break;
+      if (u > 0.03 && y < mouthY - 40 && !onIslandLand(x, y)) break;
+      pts.push({ x: x, y: y, half: half });
+    }
+    return { pts: pts, mouthX: mouthX, mouthY: mouthY, halfBase: halfBase, sea: true };
+  }
+
+  function traceCreek(parent, forkU, salt, side, travel) {
+    const idx = Math.min(parent.pts.length - 1, Math.max(0, Math.floor(forkU * (parent.pts.length - 1))));
+    const origin = parent.pts[idx];
+    const pts = [{ x: origin.x, y: origin.y, half: Math.max(12.6, origin.half * 0.86) }];
+    const steps = Math.max(2, Math.ceil(travel / 2));
+    for (let i = 1; i <= steps; i++) {
+      const v = i / steps;
+      const y = origin.y - v * travel;
+      const depart = smoothstep(Math.min(1, v / 0.14));
+      let x =
+        origin.x +
+        side *
+          depart *
+          (120 +
+            v * 260 +
+            Math.sin(v * Math.PI * 2.3 + salt) * 44 +
+            Math.sin(v * Math.PI * 5.1 + 0.7) * 18 +
+            (n2(v * 3.3 + salt, salt) - 0.5) * 32);
+      let half = 12.8 + Math.sin(v * 6.6 + salt) * 1.6 * depart + (n2(y * 0.08, salt) - 0.5) * 2.6 * depart;
+      if (v > 0.88) half *= Math.max(0.82, 1 - ((v - 0.88) / 0.12) * 0.18);
+      if (half < 12.4) half = 12.4;
+      const hold = smoothstep(Math.min(1, v / 0.2));
+      const p = courseAtY(parent.pts, y);
+      const gap = (p.half + half + 46) * hold;
+      if (side < 0 && x > p.x - gap) x = p.x - gap;
+      if (side > 0 && x < p.x + gap) x = p.x + gap;
+      if (x < 1100 || x > WORLD_W - 64) break;
+      if (v > 0.03 && y < northCliffY(x) + 112) break;
+      if (v > 0.05 && !onIslandLand(x, y)) break;
+      pts.push({ x: x, y: y, half: half });
+    }
+    return { pts: pts, sea: false };
+  }
+
+  function buildRivers() {
+    riverSpans = new Array(WORLD_H);
+    riverCourses.length = 0;
+    const PI = Math.PI;
+    const west = traceStem(RIVER_X0, 0.9, 0.35, { f1: PI * 2.5, a1: 168, f2: PI * 5.4, a2: 52, nf: 3.6, na: 64 }, 14.8, 3.4);
+    const creek = traceCreek(west, 0.34, 1.2, -1, 700);
+    const mid = traceStem(4096, 0.86, 2.15, { f1: PI * 2.1, a1: 188, f2: PI * 4.8, a2: 58, nf: 2.7, na: 72 }, 14.4, 3.6);
+    const east = traceStem(5968, 0.82, 4.7, { f1: PI * 2.7, a1: 140, f2: PI * 6.1, a2: 44, nf: 4.1, na: 50 }, 13.8, 3.2);
+    const all = [west, creek, mid, east];
+    for (let i = 0; i < all.length; i++) {
+      const c = all[i];
+      riverCourses.push(c);
+      rasterPolyline(c.pts);
+      if (c.sea) rasterMouth(c.mouthX, c.mouthY, c.halfBase);
+    }
+  }
+
+  function spanCovers(row, px) {
+    if (!row) return false;
+    for (let i = 0; i < row.length; i++) {
+      const s = row[i];
+      if (px >= s.l && px < s.r) return true;
+      if (s.l > px) break;
+    }
+    return false;
   }
 
   function inRiverWater(px, py) {
-    const cx = riverXAt(py);
-    if (cx == null) return false;
-    return Math.abs(px - cx) < riverHalfAt(py);
+    return spanCovers(riverSpans[py | 0], px);
+  }
+
+  function riverClear(px, py, pad) {
+    const y = py | 0;
+    const p = pad | 0;
+    for (let dy = -p; dy <= p; dy++) {
+      const row = riverSpans[y + dy];
+      if (!row) continue;
+      for (let i = 0; i < row.length; i++) {
+        const s = row[i];
+        if (px > s.l - p && px < s.r + p) return false;
+      }
+    }
+    return true;
+  }
+
+  function riverBand(px, py) {
+    const y = py | 0;
+    let edge = false;
+    for (let dy = -1; dy <= 1; dy++) {
+      const row = riverSpans[y + dy];
+      if (!row) continue;
+      for (let i = 0; i < row.length; i++) {
+        const s = row[i];
+        if (px >= s.l && px < s.r) {
+          if (dy === 0) return 0;
+          edge = true;
+        } else if (px >= s.l - 1 && px < s.r + 1) edge = true;
+      }
+    }
+    return edge ? 1 : 9;
+  }
+
+  function riverLip(px, py) {
+    const y = py | 0;
+    const row = riverSpans[y];
+    if (!row) return false;
+    for (let i = 0; i < row.length; i++) {
+      const s = row[i];
+      if (px < s.l || px >= s.r) continue;
+      if (px < s.l + 2.2 || px >= s.r - 2.2) return true;
+      if (!spanCovers(riverSpans[y - 1], px) || !spanCovers(riverSpans[y + 1], px)) return true;
+      return false;
+    }
+    return false;
+  }
+
+  function riverTouchesTile(wx, wy) {
+    for (let y = wy; y < wy + TILE; y += 5) {
+      const row = riverSpans[y];
+      if (!row) continue;
+      for (let i = 0; i < row.length; i++) {
+        const s = row[i];
+        if (s.r > wx - 3 && s.l < wx + TILE + 3) return true;
+      }
+    }
+    return false;
+  }
+
+  function riverBankColor(wx, wy) {
+    const e = eastness(wx / TILE);
+    const n = n2(wx * 0.085, wy * 0.07);
+    const h = hash(wx, wy);
+    if (e < 0.32) {
+      if (n > 0.7) return h > 0.62 ? "#6a6660" : "#908b82";
+      if (n > 0.46) return h > 0.5 ? "#a9c47a" : "#7eae62";
+      return null;
+    }
+    if (e < 0.64) {
+      if (n > 0.74) return h > 0.5 ? "#7a756c" : "#5e5a54";
+      if (n > 0.4) return h > 0.55 ? "#e6cc96" : "#c9b07a";
+      return null;
+    }
+    if (n > 0.28) return h > 0.45 ? "#5c5852" : "#9c968c";
+    if (n > 0.16) return "#b5a78c";
+    return null;
+  }
+
+  function bankLand(x, y) {
+    if (x < 2 || y < 2 || x >= WORLD_W - 2 || y >= WORLD_H - 2) return false;
+    if (y >= shoreYAt(x) - 2) return false;
+    if (y < northCliffY(x) + 8) return false;
+    if (inRiverWater(x, y)) return false;
+    return landPresent(x);
+  }
+
+  function paintRiverBanks(g) {
+    bankReeds.length = 0;
+    let palms = 0;
+    for (let ci = 0; ci < riverCourses.length; ci++) {
+      const course = riverCourses[ci];
+      const pts = course.pts;
+      for (let i = 2; i < pts.length; i += 4) {
+        if (course.sea && course.mouthY - pts[i].y < 22) continue;
+        const a = pts[i];
+        const b = pts[Math.min(pts.length - 1, i + 1)];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        dx /= len;
+        dy /= len;
+        const nx = -dy;
+        const ny = dx;
+        for (let s = 0; s < 2; s++) {
+          const side = s === 0 ? -1 : 1;
+          const dist = a.half + 3 + ((hash(i + ci, s + 9) * 3) | 0);
+          const x = (a.x + nx * side * dist) | 0;
+          const y = (a.y + ny * side * dist) | 0;
+          if (!bankLand(x, y)) continue;
+          const e = eastness(x / TILE);
+          const h = hash(x + i, y + s * 13);
+          if (e < 0.32) {
+            if (h > 0.55) {
+              pxi(g, x, y, 1, 1, "#1d5c2c");
+              pxi(g, x, y - 1, 1, 1, "#c6e86a");
+            } else if (h > 0.4) {
+              pxi(g, x, y, 2, 1, "#145028");
+              pxi(g, x + 1, y - 1, 1, 1, "#8ed44e");
+            } else if (palms < 28 && (i % 8) === 2 && bankLand(x, y - 2)) {
+              pxi(g, x, y, 1, 2, "#6b4424");
+              pxi(g, x - 1, y - 1, 1, 1, "#9ed85a");
+              pxi(g, x + 1, y - 1, 1, 1, "#d2f08a");
+              pxi(g, x, y - 2, 1, 1, "#3d9a34");
+              palms++;
+            }
+            if (bankReeds.length < 40 && h > 0.72) {
+              bankReeds.push({ x: x, y: y, phase: h * 6.2, kind: "lush", side: side });
+            }
+          } else if (e < 0.64) {
+            if (h > 0.66) {
+              pxi(g, x, y, 1, 1, "#245c30");
+              pxi(g, x, y - 1, 1, 1, "#8fbe58");
+            } else if (h > 0.52 && bankLand(x + 2, y)) {
+              pxi(g, x, y, 3, 1, "#6b4e30");
+              pxi(g, x + 1, y, 1, 1, "#c4a070");
+            }
+            if (bankReeds.length < 40 && h > 0.78) {
+              bankReeds.push({ x: x, y: y, phase: h * 6.2, kind: "reed", side: side });
+            }
+          } else if (h > 0.93) {
+            pxi(g, x, y, 1, 1, "#6a7044");
+            if (bankReeds.length < 40) {
+              bankReeds.push({ x: x, y: y, phase: h * 6.2, kind: "dry", side: side });
+            }
+          } else if (h > 0.58) {
+            pxi(g, x, y, 1, 1, h > 0.8 ? "#5c5852" : "#8a847c");
+          }
+        }
+      }
+    }
   }
 
   const FOAM_WAVES = [
@@ -399,6 +750,7 @@
   function isSolidPoint(px, py) {
     if (scene === "shop") return !!hitPad(px, py, shopSolids);
     if (scene === "fish") return !!hitPad(px, py, fishSolids);
+    if (scene === "cabin") return !!hitPad(px, py, cabinSolids);
     if (hitPad(px, py, islandSolids)) return true;
     for (const rock of rocks) {
       if (px > rock.x && px < rock.x + rock.w && py > rock.y && py < rock.y + rock.h) {
@@ -415,6 +767,9 @@
     }
     if (scene === "fish") {
       return px >= 8 && py >= 10 && px < FISH_W - 8 && py < FISH_H - 6;
+    }
+    if (scene === "cabin") {
+      return px >= 16 && py >= 36 && px < CABIN_W - 16 && py < CABIN_H - 4;
     }
     if (hitPad(px, py, walkPads)) return true;
     if (landPresent(px) && py < northCliffY(px)) return false;
@@ -438,6 +793,7 @@
   }
 
   function buildWorld() {
+    buildRivers();
     for (let r = 0; r < ROWS; r++) {
       world[r] = [];
       for (let c = 0; c < COLS; c++) {
@@ -454,16 +810,18 @@
       }
     }
     for (let r = 0; r < ROWS; r++) {
-      const wy = r * TILE + 8;
-      const cx = riverXAt(wy);
-      if (cx == null) continue;
-      const half = riverHalfAt(wy) + 2;
-      const c0 = Math.max(0, Math.floor((cx - half) / TILE));
-      const c1 = Math.min(COLS - 1, Math.floor((cx + half) / TILE));
-      for (let c = c0; c <= c1; c++) {
-        const px = c * TILE + 8;
-        if (wy > shoreYAt(px)) continue;
-        if (Math.abs(px - cx) < riverHalfAt(wy)) world[r][c] = TILES.DEEP;
+      for (let k = 2; k < TILE; k += 6) {
+        const py = r * TILE + k;
+        const row = riverSpans[py];
+        if (!row) continue;
+        for (let i = 0; i < row.length; i++) {
+          const s = row[i];
+          const c0 = Math.max(0, Math.floor(s.l / TILE));
+          const c1 = Math.min(COLS - 1, Math.floor((s.r - 1) / TILE));
+          for (let c = c0; c <= c1; c++) {
+            if (py <= shoreYAt(c * TILE + 8)) world[r][c] = TILES.DEEP;
+          }
+        }
       }
     }
 
@@ -485,7 +843,7 @@
       if (!inBounds(c | 0, r | 0) || r < northCliffRow(c) + 1) continue;
       const t = world[r | 0][c | 0];
       if (t !== TILES.GRASS && t !== TILES.DIRT) continue;
-      if (inRiverWater(c * TILE + 4, r * TILE + 4)) continue;
+      if (!riverClear(c * TILE + 4, r * TILE + 4, 8)) continue;
       const big = eastness(c) > 0.62 && hash(i, 31) > 0.55;
       rocks.push({
         x: Math.floor(c * TILE + rand(0, 10)),
@@ -750,39 +1108,93 @@
     for (let i = 0; i < MAX_SAND; i++) {
       sandBits.push({ life: 0, x: 0, y: 0, vx: 0, vy: 0, col: "#d8bc86", crab: null });
     }
-    const nCrabs = irand(11, 16);
-    for (let i = 0; i < nCrabs; i++) {
-      let placed = false;
-      for (let t = 0; t < 50 && !placed; t++) {
-        const near = i < 3;
-        const x = near
-          ? spawnX + (i - 1) * 70 + rand(-18, 18)
-          : 24 + ((i + hash(i, t + 4)) / nCrabs) * (WORLD_W - 48);
-        const rest = restShoreY(x);
-        const sandPx = sandWidth(x / TILE) * TILE;
-        const y = rest - rand(58, Math.max(80, sandPx * 0.62));
+  }
+
+  function pushBeachCrab(x, y, i, hidden) {
+    const w = 5 + ((hash(i, 11) * 3.2) | 0);
+    crabs.push({
+      x,
+      y,
+      w,
+      h: 3 + (w > 6 ? 1 : 0),
+      dir: hash(i, 8) > 0.5 ? 1 : -1,
+      state: hidden ? "hidden" : hash(i, 1) > 0.5 ? "idle" : "scuttle",
+      t: hidden ? rand(2, 11) : rand(0.8, 3.6),
+      bury: hidden ? 1 : 0,
+      hop: 0,
+      mound: hidden ? 1 : 0,
+      cover: [],
+      sandBurst: false,
+      anim: rand(0, 8),
+      seen: hidden ? 0 : rand(0.2, 1.8),
+      squash: 1,
+    });
+  }
+
+  function placeBeachCrabs() {
+    crabs.length = 0;
+    const spots = [];
+    for (let c = 2; c < COLS - 2; c += 2) {
+      if (islandCap(c) <= 0.08) continue;
+      const x = c * TILE + 8;
+      const rest = restShoreY(x);
+      const band = sandWidth(c) * TILE;
+      const yTop = rest - (band - 22);
+      const yBot = rest - 52;
+      if (yTop > yBot) continue;
+      for (let y = yBot; y >= yTop; y -= 8) {
         if (!isDryBeachSand(x, y)) continue;
-        const w = 5 + (hash(i, 11) * 3.2) | 0;
-        const hidden = near ? false : hash(i, 3) > 0.55;
-        crabs.push({
-          x,
-          y,
-          w,
-          h: 3 + (w > 6 ? 1 : 0),
-          dir: hash(i, 8) > 0.5 ? 1 : -1,
-          state: hidden ? "hidden" : hash(i, 1) > 0.5 ? "idle" : "scuttle",
-          t: hidden ? rand(2, 11) : rand(0.8, 3.6),
-          bury: hidden ? 1 : 0,
-          hop: 0,
-          mound: hidden ? 1 : 0,
-          cover: [],
-          sandBurst: false,
-          anim: rand(0, 8),
-          seen: hidden ? 0 : rand(0.2, 1.8),
-          squash: 1,
-        });
-        placed = true;
+        spots.push({ x, y });
+        break;
       }
+    }
+    if (spots.length < 4) return;
+    const n = Math.min(spots.length, irand(11, 16));
+    const used = new Array(spots.length).fill(false);
+    const picks = [];
+    const stride = spots.length / n;
+    for (let i = 0; i < n; i++) {
+      const idx = Math.min(spots.length - 1, Math.floor(i * stride + stride * 0.5));
+      used[idx] = true;
+      picks.push(idx);
+    }
+    const pierX = 48 * TILE;
+    const ensureNear = (goal) => {
+      for (let p = 0; p < picks.length; p++) {
+        if (Math.abs(spots[picks[p]].x - goal) < 180) return;
+      }
+      let best = -1;
+      let bestD = Infinity;
+      for (let i = 0; i < spots.length; i++) {
+        const d = Math.abs(spots[i].x - goal);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      if (best < 0 || bestD > 240 || used[best]) return;
+      let rep = 0;
+      let repD = Infinity;
+      for (let p = 0; p < picks.length; p++) {
+        const d = Math.abs(spots[picks[p]].x - goal);
+        if (d < repD) {
+          repD = d;
+          rep = p;
+        }
+      }
+      used[picks[rep]] = false;
+      used[best] = true;
+      picks[rep] = best;
+    };
+    ensureNear(pierX - 90);
+    ensureNear(pierX + 260);
+    for (let i = 0; i < picks.length; i++) {
+      const s = spots[picks[i]];
+      let x = s.x + rand(-6, 6);
+      if (!isDryBeachSand(x, s.y)) x = s.x;
+      const nearPier = Math.abs(x - (pierX + 80)) < 360;
+      const hidden = !nearPier && hash(i, 3) > 0.58;
+      pushBeachCrab(x, s.y, i, hidden);
     }
   }
 
@@ -1090,7 +1502,7 @@
     updateSandBits(dt);
   }
 
-  function emitSplash(wx, wy, n) {
+  function emitSplash(wx, wy, n, fromFish) {
     if (onIslandLand(wx, wy) || fishOverDock(wx, wy)) return;
     let k = 0;
     for (let i = 0; i < MAX_SPLASH && k < n; i++) {
@@ -1103,6 +1515,7 @@
       p.life = rand(0.22, 0.48);
       p.max = p.life;
       p.col = Math.random() > 0.4 ? "#ffffff" : "#e8f6ff";
+      p.fish = !!fromFish;
       k++;
     }
     if (k > 0) return;
@@ -1116,6 +1529,13 @@
       p.life = rand(0.22, 0.48);
       p.max = p.life;
       p.col = i & 1 ? "#ffffff" : "#e8f6ff";
+      p.fish = !!fromFish;
+    }
+  }
+
+  function clearFishSplashes() {
+    for (let i = 0; i < splashes.length; i++) {
+      if (splashes[i].fish) splashes[i].life = 0;
     }
   }
 
@@ -1316,48 +1736,58 @@
     }
   }
 
+  function hideSurfaceFish() {
+    for (let i = 0; i < fishJumps.length; i++) fishJumps[i].alive = false;
+    sharkFins.length = 0;
+    clearFishSplashes();
+  }
+
   function updateFish(dt) {
-    updateSharkFins(dt);
-    fishSpawnT -= dt;
-    if (fishSpawnT <= 0) {
-      fishSpawnT = rand(1.7, 5.2);
-      let live = 0;
-      for (let i = 0; i < fishJumps.length; i++) if (fishJumps[i].alive) live++;
-      if (live < MAX_FISH && Math.random() < 0.78) spawnFishJump();
-    }
-    for (let i = 0; i < fishJumps.length; i++) {
-      const f = fishJumps[i];
-      if (!f.alive) continue;
-      if (!(f.dur > 0.25)) f.dur = 1;
-      const prevU = f.u;
-      f.u += dt / f.dur;
-      if (!(f.u >= 0)) f.u = 1;
-      const u = f.u > 1 ? 1 : f.u;
-      f.x = bez(f.x0, f.x1, f.x2, u);
-      f.y = bez(f.y0, f.y1, f.y2, u);
-      const vx = bez(f.x0, f.x1, f.x2, Math.min(1, u + 0.04)) - f.x;
-      const vy = bez(f.y0, f.y1, f.y2, Math.min(1, u + 0.04)) - f.y;
-      if (vx * vx + vy * vy > 0.0001) f.ang = Math.atan2(vy, vx);
-      if (!f.splashedUp) {
-        emitSplash(f.x0, f.y0, f.len > 10 ? 12 : 8);
-        f.splashedUp = true;
-        f.squash = 0.55;
+    if (!fishDaytime(time)) {
+      hideSurfaceFish();
+    } else {
+      updateSharkFins(dt);
+      fishSpawnT -= dt;
+      if (fishSpawnT <= 0) {
+        fishSpawnT = rand(1.7, 5.2);
+        let live = 0;
+        for (let i = 0; i < fishJumps.length; i++) if (fishJumps[i].alive) live++;
+        if (live < MAX_FISH && Math.random() < 0.78) spawnFishJump();
       }
-      if (!f.splashedDown && prevU < 0.9 && f.u >= 0.9) {
-        emitSplash(f.x2, f.y2, f.len > 10 ? 14 : 9);
-        f.splashedDown = true;
-        f.squash = 0.5;
-      }
-      const lift = Math.sin(Math.min(1, u) * Math.PI);
-      f.squash += (0.84 + lift * 0.32 - f.squash) * Math.min(1, dt * 7);
-      if (f.u > 0.06 && !fishWater(f.x, f.y)) {
-        if (!f.splashedDown) emitSplash(f.x, f.y, 6);
-        f.alive = false;
-        continue;
-      }
-      if (f.u >= 1) {
-        if (!f.splashedDown) emitSplash(f.x2, f.y2, f.len > 10 ? 12 : 8);
-        f.alive = false;
+      for (let i = 0; i < fishJumps.length; i++) {
+        const f = fishJumps[i];
+        if (!f.alive) continue;
+        if (!(f.dur > 0.25)) f.dur = 1;
+        const prevU = f.u;
+        f.u += dt / f.dur;
+        if (!(f.u >= 0)) f.u = 1;
+        const u = f.u > 1 ? 1 : f.u;
+        f.x = bez(f.x0, f.x1, f.x2, u);
+        f.y = bez(f.y0, f.y1, f.y2, u);
+        const vx = bez(f.x0, f.x1, f.x2, Math.min(1, u + 0.04)) - f.x;
+        const vy = bez(f.y0, f.y1, f.y2, Math.min(1, u + 0.04)) - f.y;
+        if (vx * vx + vy * vy > 0.0001) f.ang = Math.atan2(vy, vx);
+        if (!f.splashedUp) {
+          emitSplash(f.x0, f.y0, f.len > 10 ? 12 : 8, true);
+          f.splashedUp = true;
+          f.squash = 0.55;
+        }
+        if (!f.splashedDown && prevU < 0.9 && f.u >= 0.9) {
+          emitSplash(f.x2, f.y2, f.len > 10 ? 14 : 9, true);
+          f.splashedDown = true;
+          f.squash = 0.5;
+        }
+        const lift = Math.sin(Math.min(1, u) * Math.PI);
+        f.squash += (0.84 + lift * 0.32 - f.squash) * Math.min(1, dt * 7);
+        if (f.u > 0.06 && !fishWater(f.x, f.y)) {
+          if (!f.splashedDown) emitSplash(f.x, f.y, 6, true);
+          f.alive = false;
+          continue;
+        }
+        if (f.u >= 1) {
+          if (!f.splashedDown) emitSplash(f.x2, f.y2, f.len > 10 ? 12 : 8, true);
+          f.alive = false;
+        }
       }
     }
     for (let i = 0; i < MAX_SPLASH; i++) {
@@ -1429,13 +1859,13 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen) {
+    if (guideOpen || cabinCut.kind) {
       dx = 0;
       dy = 0;
       player.moving = false;
     }
 
-    if (player.dead <= 0 && !fadeMode && !guideOpen) {
+    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind) {
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
       } else {
@@ -1710,6 +2140,7 @@
       slot: isCoin ? 0 : slotIndexFor(id),
       dest: isCoin ? "coins" : "slot",
       value: item.value | 0,
+      pack: item.pack || 0,
     });
     item.taken = true;
   }
@@ -1737,9 +2168,10 @@
     for (let i = pickupAnims.length - 1; i >= 0; i--) {
       const a = pickupAnims[i];
       a.t += dt;
-      if (a.t < 1.7) continue;
+      const doneAt = a.style === "drop" ? 1.42 : 1.7;
+      if (a.t < doneAt) continue;
       if (a.dest === "coins") coinBatch += a.value | 0;
-      else {
+      else if (a.dest !== "miss") {
         addToInventory(a.id);
         xpBatch += ITEM_DEFS[a.id].xp | 0;
         slotBatch = a.slot;
@@ -2143,6 +2575,7 @@
     const ty = player.y + 2;
     for (const item of loot) {
       if (item.taken || item.id !== "coin" || item.pack == null) continue;
+      if ((item.scene || "island") !== scene) continue;
       if (!item.drift) {
         if (item.ignoreUntil === Infinity) {
           item.x = tx;
@@ -2151,6 +2584,18 @@
         continue;
       }
       item.flight += dt;
+      if (item.spill && !item.spilled) {
+        const su = Math.min(1, item.flight / item.spill);
+        item.x = item.ox + (item.side || 0) * su * 12;
+        item.y = item.oy + (item.drop || 0) * su * 5 - Math.sin(su * Math.PI) * 7;
+        if (su >= 1) {
+          item.spilled = true;
+          item.ox = item.x;
+          item.oy = item.y;
+          item.flight = 0;
+        }
+        continue;
+      }
       const u = Math.min(1, item.flight / item.flightDur);
       const ease = u * u * (3 - 2 * u);
       const lift = Math.sin(u * Math.PI) * item.arc;
@@ -2201,6 +2646,188 @@
     if (!shopSales.length) {
       shopTrade.phase = "idle";
       shopTrade.t = 0;
+    }
+  }
+
+  function ownsItem(id) {
+    for (let i = 0; i < inventory.length; i++) {
+      if (inventory[i] && inventory[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function emptySlots() {
+    let n = 0;
+    for (let i = 0; i < inventory.length; i++) if (!inventory[i]) n++;
+    return n;
+  }
+
+  function cabinNpc() {
+    for (let i = 0; i < npcs.length; i++) {
+      if (npcs[i].kind === "warden") return npcs[i];
+    }
+    return null;
+  }
+
+  function nearCabinNpc() {
+    if (scene !== "cabin" || cabinCut.kind || fadeMode || guideOpen) return false;
+    const n = cabinNpc();
+    if (!n) return false;
+    const mid = playerCenter();
+    return Math.hypot(mid.x - (n.x + 4), mid.y - (n.y - 6)) < 36;
+  }
+
+  function spawnCabinCoins(amount, hx, hy, pack) {
+    const n = 7;
+    const share = Math.floor(amount / n);
+    let left = amount;
+    for (let i = 0; i < n; i++) {
+      const value = i === n - 1 ? left : share;
+      left -= value;
+      const ox = hx + (i - 3) * 2;
+      const oy = hy + (i % 3);
+      loot.push({
+        id: "coin",
+        value,
+        x: ox,
+        y: oy,
+        taken: false,
+        born: waveCycle,
+        life: Infinity,
+        ignoreUntil: Infinity,
+        scene,
+        drift: true,
+        flight: 0,
+        flightDur: 0.78 + i * 0.06,
+        spill: 0.34,
+        spilled: false,
+        ox,
+        oy,
+        arc: 8 + (i % 3) * 3,
+        side: i - 3,
+        drop: (i % 2 ? 1 : -1) * ((i % 3) + 1),
+        pack,
+      });
+    }
+  }
+
+  function cabinPayoutDone(pack) {
+    for (let i = 0; i < loot.length; i++) {
+      const item = loot[i];
+      if (!item.taken && item.pack === pack) return false;
+    }
+    for (let i = 0; i < pickupAnims.length; i++) {
+      if (pickupAnims[i].pack === pack) return false;
+    }
+    return true;
+  }
+
+  function beginMagicDrops() {
+    const ids = ["wand", "cloak"];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const fits = canTake(id);
+      const from = worldToUi(player.x + player.w / 2 + (i === 0 ? -7 : 7), player.y - 22);
+      pickupAnims.push({
+        id,
+        t: 0,
+        fromX: from.x,
+        fromY: from.y,
+        slot: fits ? slotIndexFor(id) : 0,
+        dest: fits ? "slot" : "miss",
+        value: 0,
+        style: "drop",
+        pack: 0,
+      });
+    }
+  }
+
+  function startCabinCut(kind) {
+    if (cabinCut.kind || fadeMode) return;
+    cabinCut.kind = kind;
+    cabinCut.t = 0;
+    cabinCut.value = kind === "classic" ? irand(100, 500) : 0;
+    cabinCut.pack = 0;
+    cabinCut.spawned = false;
+    cabinCut.granted = false;
+    cabinCut.lid = 0;
+    cabinCut.mode = "open";
+  }
+
+  function updateCabinCut(dt) {
+    if (!cabinCut.kind) return;
+    cabinCut.t += dt;
+    if (cabinCut.kind === "classic") {
+      if (cabinCut.mode === "open") {
+        const creak = 0.46;
+        cabinCut.lid = cabinCut.t <= creak ? 0 : Math.min(1, (cabinCut.t - creak) / 0.64);
+        if (cabinCut.lid >= 1 && !cabinCut.spawned) {
+          cabinCut.pack = tradePackSeq++;
+          spawnCabinCoins(cabinCut.value, cabinChestX + 4, cabinChestY + 2, cabinCut.pack);
+          cabinCut.spawned = true;
+          cabinCut.mode = "wait";
+        }
+      } else if (cabinCut.mode === "wait") {
+        if (cabinPayoutDone(cabinCut.pack)) {
+          cabinCut.mode = "close";
+          cabinCut.t = 0;
+        }
+      } else {
+        cabinCut.lid = Math.max(0, 1 - cabinCut.t / 0.42);
+        if (cabinCut.t >= 0.48) cabinCut.kind = "";
+      }
+      return;
+    }
+    const u = cabinCut.t;
+    if (u < 0.42) cabinCut.lid = 0;
+    else if (u < 1.12) cabinCut.lid = (u - 0.42) / 0.7;
+    else if (u < 3.55) cabinCut.lid = 1;
+    else cabinCut.lid = Math.max(0, 1 - (u - 3.55) / 0.42);
+    if (!cabinCut.spawned && u >= 3.2) {
+      cabinCut.spawned = true;
+      beginMagicDrops();
+    }
+    if (u >= 4.85) {
+      let falling = false;
+      for (let i = 0; i < pickupAnims.length; i++) {
+        if (pickupAnims[i].style === "drop") falling = true;
+      }
+      if (!falling) cabinCut.kind = "";
+    }
+  }
+
+  function seedCabinFish() {
+    cabinFish.length = 0;
+    for (let p = 0; p < cabinPanes.length; p++) {
+      const pane = cabinPanes[p];
+      const n = p === 0 ? 6 : 3;
+      for (let i = 0; i < n; i++) {
+        cabinFish.push({
+          pane: p,
+          id: CABIN_KINDS[(p * 5 + i * 3) % CABIN_KINDS.length],
+          x: pane.x + 2 + ((i * 23) % Math.max(4, pane.w - 8)),
+          y: pane.y + 2 + ((i * 7) % Math.max(4, pane.h - 6)),
+          dir: i & 1 ? 1 : -1,
+          bob: rand(0, 6.2),
+          speed: p === 0 ? rand(4.2, 6.4) : rand(2.4, 3.6),
+        });
+      }
+    }
+  }
+
+  function updateCabinFish(dt) {
+    for (let i = 0; i < cabinFish.length; i++) {
+      const f = cabinFish[i];
+      const pane = cabinPanes[f.pane];
+      f.bob += dt * 0.7;
+      f.x += f.dir * f.speed * dt;
+      f.y += Math.sin(f.bob) * f.speed * 0.45 * dt;
+      if (f.x < pane.x + 1 || f.x > pane.x + pane.w - 8) {
+        f.dir *= -1;
+        f.x = Math.max(pane.x + 1, Math.min(pane.x + pane.w - 8, f.x));
+      }
+      if (f.y < pane.y + 1) f.y = pane.y + 1;
+      if (f.y > pane.y + pane.h - 6) f.y = pane.y + pane.h - 6;
     }
   }
 
@@ -2284,6 +2911,7 @@
       p.life = rand(0.18, 0.38);
       p.max = p.life;
       p.col = Math.random() > 0.5 ? "#e8f6ff" : "#ffffff";
+      p.fish = false;
       k++;
     }
   }
@@ -2527,7 +3155,6 @@
 
   function rollBoatCatch() {
     const band = fishBand();
-    if (Math.random() >= band.bite) return null;
     const r = Math.random();
     if (r < band.legend) return CATCH_LEGEND[irand(0, CATCH_LEGEND.length - 1)];
     if (r < band.legend + band.rare) return CATCH_RARE[irand(0, CATCH_RARE.length - 1)];
@@ -2542,13 +3169,111 @@
     rod.phase = "wait";
     rod.t = 0;
     rod.bit = false;
-    rod.wait = rand(0.65, 1.55);
+    rod.wait = 15;
     rod.face = player.facing;
+    rod.catchId = rollBoatCatch();
+    rod.tugLeft = 0;
+    rod.tugDx = 0;
+    rod.tugDy = 0;
+    rod.tugCool = 0;
     fishCastT = rod.wait + 0.5;
   }
 
+  function hullInOpenWater(x, y, w, h) {
+    const pts = [
+      [x + 2, y + 2],
+      [x + w - 3, y + 2],
+      [x + w * 0.5, y + 3],
+      [x + 2, y + h - 2],
+      [x + w - 3, y + h - 2],
+      [x + w * 0.5, y + h - 2],
+    ];
+    for (let i = 0; i < pts.length; i++) {
+      const px = pts[i][0];
+      const py = pts[i][1];
+      if (px < 4 || py < 4 || px >= WORLD_W - 4 || py >= WORLD_H - 4) return false;
+      if (isSolidPoint(px, py)) return false;
+      if (hitPad(px, py, dockWood) || hitPad(px, py, walkPads)) return false;
+      if (!isWaterAt(px, py)) return false;
+      if (onIslandLand(px, py) && !inRiverWater(px, py)) return false;
+    }
+    return true;
+  }
+
+  function pickYankDir(b) {
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    for (let i = dirs.length - 1; i > 0; i--) {
+      const j = irand(0, i);
+      const swap = dirs[i];
+      dirs[i] = dirs[j];
+      dirs[j] = swap;
+    }
+    let fallback = null;
+    for (let i = 0; i < dirs.length; i++) {
+      const d = dirs[i];
+      if (!hullInOpenWater(b.x + d[0] * 8, b.y + d[1] * 8, b.w, b.h)) continue;
+      if (!fallback) fallback = d;
+      if (d[0] === rod.tugDx && d[1] === rod.tugDy) continue;
+      return d;
+    }
+    return fallback;
+  }
+
+  function updateSharkTug(dt) {
+    const id = rod.catchId;
+    if (id !== "mini_shark" && id !== "shark") return;
+    const fighting =
+      (rod.phase === "wait" && rod.t >= rod.wait - 7) || rod.phase === "reel";
+    if (!fighting) return;
+    const b = ownedBoat;
+    if (!b || boatThrow || !player.aboard) return;
+    if (rod.tugCool > 0) {
+      rod.tugCool -= dt;
+      b.vx = 0;
+      b.vy = 0;
+      return;
+    }
+    if (rod.tugLeft <= 0) {
+      const dir = pickYankDir(b);
+      if (!dir) return;
+      const tiles = id === "shark" ? 3 : 2;
+      rod.tugDx = dir[0];
+      rod.tugDy = dir[1];
+      rod.tugLeft = tiles * TILE;
+      rod.tugV = (tiles * TILE) / (id === "shark" ? 0.46 : 0.4);
+      emitSplash(b.x + b.w / 2, b.y + b.h - 1, id === "shark" ? 8 : 4);
+    }
+    let left = Math.min(rod.tugLeft, rod.tugV * dt);
+    while (left > 0.01) {
+      const hop = Math.min(2, left);
+      const nx = b.x + rod.tugDx * hop;
+      const ny = b.y + rod.tugDy * hop;
+      if (!hullInOpenWater(nx, ny, b.w, b.h)) {
+        rod.tugLeft = 0;
+        rod.tugCool = rand(0.08, 0.2);
+        break;
+      }
+      b.x = nx;
+      b.y = ny;
+      left -= hop;
+      rod.tugLeft -= hop;
+    }
+    if (rod.tugLeft <= 0) {
+      rod.tugLeft = 0;
+      if (rod.tugCool <= 0) rod.tugCool = rand(0.1, 0.28);
+    }
+    b.vx = 0;
+    b.vy = 0;
+    seatPlayerOnBoat();
+  }
+
   function landRodCatch() {
-    const id = rollBoatCatch();
+    const id = rod.catchId || rollBoatCatch();
     const b = ownedBoat;
     const fx = b.x + b.w / 2 + rod.face * 16;
     const fy = b.y + b.h + 6;
@@ -2580,10 +3305,17 @@
   function updateRod(dt) {
     if (chestTalk > 0) chestTalk = Math.max(0, chestTalk - dt);
     if (rod.phase === "idle") return;
-    if (!player.aboard || !boatIsStill()) {
+    const sharkFight =
+      (rod.catchId === "mini_shark" || rod.catchId === "shark") &&
+      rod.phase === "wait" &&
+      rod.t >= rod.wait - 7;
+    if (!player.aboard || player.moving || (rod.phase === "wait" && !sharkFight && !boatIsStill())) {
       rod.phase = "idle";
+      rod.catchId = null;
+      rod.tugLeft = 0;
       return;
     }
+    if (rod.phase === "wait" || rod.phase === "reel") updateSharkTug(dt);
     rod.t += dt;
     if (rod.phase === "wait" && rod.t >= rod.wait) {
       rod.phase = "reel";
@@ -2591,6 +3323,8 @@
       landRodCatch();
     } else if (rod.phase === "reel" && rod.t > 0.5) {
       rod.phase = "idle";
+      rod.catchId = null;
+      rod.tugLeft = 0;
     }
   }
 
@@ -2605,7 +3339,10 @@
     const pos = findDropPos(stack.id);
     const id = stack.id;
     stack.count -= 1;
-    if (stack.count <= 0) inventory[heldSlot] = null;
+    if (stack.count <= 0) {
+      inventory[heldSlot] = null;
+      if (id === "cloak") cloakOn = false;
+    }
     if (isIndoor() && nearShopkeeper(pos.x + 4, pos.y + 4)) {
       if (tradeValueFor(id)) {
         beginShopTrade(id);
@@ -2635,6 +3372,11 @@
     }
     if (stack.id === "shell") {
       startHorn();
+      return;
+    }
+    if (stack.id === "wand") return;
+    if (stack.id === "cloak") {
+      cloakOn = !cloakOn;
       return;
     }
     useFx = { t: 0, id: stack.id };
@@ -2810,17 +3552,18 @@
   const COL_SCRUB = [86, 96, 58];
 
   function landColor(wx, wy) {
-    const rcx = riverXAt(wy);
     const shore = shoreYAt(wx);
     const cliff = northCliffY(wx);
     const cap = islandCap(wx / TILE);
-    if (rcx != null) {
-      const rd = Math.abs(wx - rcx);
-      const rh = riverHalfAt(wy);
-      if (rd < rh) {
-        if (wy >= shore) return wy - shore < 36 ? WATER_BLUE : WATER_DEEP;
-        return WATER_BLUE;
-      }
+    const band = riverBand(wx, wy);
+    if (band === 0) {
+      if (wy < shore - 2 && riverLip(wx, wy) && eastness(wx / TILE) < 0.32) return "#178f74";
+      if (wy >= shore) return wy - shore < 36 ? WATER_BLUE : WATER_DEEP;
+      return WATER_BLUE;
+    }
+    if (band === 1 && wy < shore - 2 && wy > cliff + 2 && cap > 0.04) {
+      const bank = riverBankColor(wx, wy);
+      if (bank) return bank;
     }
     if (cap <= 0) return wy - SHORE_BASE * TILE < 36 ? WATER_BLUE : WATER_DEEP;
     if (wy < cliff) {
@@ -2910,9 +3653,7 @@
         const fullyWater = wy0 >= sMax;
         const fullyOcean =
           (capL <= 0 && capR <= 0) || wy0 + TILE <= Math.min(cliff0, cliff1) - 10;
-        const riverish =
-          riverXAt(wy0 + 8) != null &&
-          Math.abs(wx0 + 8 - riverXAt(wy0 + 8)) < riverHalfAt(wy0 + 8) + TILE;
+        const riverish = riverTouchesTile(wx0, wy0);
 
         if (fullyOcean && !riverish) {
           g.fillStyle = WATER_BLUE;
@@ -2934,6 +3675,7 @@
         }
       }
     }
+    paintRiverBanks(g);
   }
 
   function pxi(g, x, y, w, h, col) {
@@ -3284,11 +4026,151 @@
     shopSolids.push({ x: SHOP_W - 72, y: 14, w: 52, h: 16 });
   }
 
+  function withInk(g, fn) {
+    const prev = ink;
+    ink = g;
+    fn();
+    ink = prev;
+  }
+
+  function paintDimWand(g, x, y) {
+    pxi(g, x + 1, y, 1, 9, "#3a3028");
+    pxi(g, x, y, 3, 2, "#241c30");
+    pxi(g, x + 1, y, 1, 2, "#5a4878");
+    pxi(g, x + 1, y + 8, 1, 1, "#2a1c14");
+  }
+
+  function paintFoldedCloth(g, x, y) {
+    pxi(g, x, y, 8, 2, "#6a3048");
+    pxi(g, x + 1, y + 2, 7, 2, "#8a4060");
+    pxi(g, x, y + 4, 8, 2, "#4a2038");
+    pxi(g, x + 2, y + 1, 3, 1, "#c08098");
+  }
+
+  function paintClosedBook(g, x, y) {
+    pxi(g, x, y, 8, 6, "#6b2a22");
+    pxi(g, x, y, 1, 6, "#3a1410");
+    pxi(g, x + 2, y + 1, 4, 1, "#c4a070");
+    pxi(g, x + 6, y + 3, 1, 1, "#e8c44a");
+  }
+
+  function paintLightJar(g, x, y) {
+    pxi(g, x + 2, y, 3, 1, "#9ab0b8");
+    pxi(g, x + 1, y + 1, 5, 1, "#c5d4d0");
+    pxi(g, x, y + 2, 7, 6, "#d7ece8");
+    pxi(g, x + 1, y + 3, 5, 4, "#fff1b0");
+    pxi(g, x + 2, y + 4, 3, 2, "#ffffff");
+    pxi(g, x + 1, y + 7, 5, 1, "#7a9098");
+  }
+
+  function paintShelfBank(g, x, y, w, h) {
+    pxi(g, x, y, w, h, "#5a3420");
+    pxi(g, x, y, w, 2, "#c4a070");
+    pxi(g, x, y + ((h / 2) | 0), w, 2, "#8a5a32");
+    pxi(g, x, y + h - 2, w, 2, "#3a2414");
+    pxi(g, x, y, 1, h, "#3a2414");
+    pxi(g, x + w - 1, y, 1, h, "#3a2414");
+  }
+
+  function bakeCabinInterior() {
+    cabinCanvas = document.createElement("canvas");
+    cabinCanvas.width = CABIN_W;
+    cabinCanvas.height = CABIN_H;
+    const g = cabinCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    for (let y = 0; y < 12; y++) {
+      for (let x = 0; x < CABIN_W; x++) {
+        const joist = x % 16 < 2;
+        const col = joist ? "#3a2414" : (x + y) & 1 ? "#5a3420" : "#6b3f1f";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    pxi(g, 0, 32, CABIN_W, 6, "#4a2e16");
+    pxi(g, 0, 32, CABIN_W, 1, "#8a5a32");
+    for (let x = 18; x < CABIN_W - 10; x += 18) pxi(g, x, 12, 2, 20, "#3a2414");
+    pxi(g, 12, 10, 4, CABIN_H - 18, "#5a3420");
+    pxi(g, CABIN_W - 16, 10, 4, CABIN_H - 18, "#5a3420");
+    pxi(g, 0, 10, 2, CABIN_H - 18, "#2a1810");
+    pxi(g, CABIN_W - 2, 10, 2, CABIN_H - 18, "#2a1810");
+    for (let y = 38; y < CABIN_H - 8; y++) {
+      for (let x = 16; x < CABIN_W - 16; x++) {
+        const n = hash(x + 4, y + 11);
+        const board = (y / 3) | 0;
+        let col = board % 2 === 0 ? "#8a5a32" : "#7a4a28";
+        if (n > 0.92) col = "#a07448";
+        if (n < 0.06) col = "#5a3420";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    for (let i = 0; i < 4; i++) {
+      const by = 48 + i * 16;
+      pxi(g, 20, by, CABIN_W - 40, 2, "#3a2414");
+      pxi(g, 20, by, CABIN_W - 40, 1, "#6b3f1f");
+    }
+    pxi(g, 0, CABIN_H - 8, CABIN_W, 8, "#3a2414");
+    const doorX = cabinDoorX();
+    pxi(g, doorX - 2, CABIN_H - 22, 20, 3, "#5a3420");
+    pxi(g, doorX, CABIN_H - 18, 16, 3, "#7a4a28");
+    pxi(g, doorX + 2, CABIN_H - 14, 12, 3, "#a07448");
+    pxi(g, doorX, CABIN_H - 10, 16, 10, "#100c0a");
+    pxi(g, doorX + 12, CABIN_H - 6, 1, 1, "#c4a070");
+    paintShelfBank(g, 18, 42, 28, 32);
+    paintDimWand(g, 22, 46);
+    paintFoldedCloth(g, 30, 48);
+    paintShelfBank(g, 156, 40, 28, 24);
+    paintClosedBook(g, 160, 44);
+    paintLightJar(g, 170, 42);
+    const table = CABIN_TABLE;
+    pxi(g, table.x, table.y, table.w, table.h, "#7a4a28");
+    pxi(g, table.x, table.y, table.w, 2, "#c4a070");
+    pxi(g, table.x, table.y + table.h - 1, table.w, 1, "#3a2414");
+    pxi(g, table.x + 2, table.y + table.h, 2, 6, "#5a3420");
+    pxi(g, table.x + table.w - 4, table.y + table.h, 2, 6, "#5a3420");
+    cabinChestX = table.x + 10;
+    cabinChestY = table.y - 8;
+    withInk(g, () => {
+      pxi(g, 128, 56, 24, 13, "#3a2414");
+      pxi(g, 129, 57, 22, 11, "#e8d5a8");
+      drawCoinIcon(131, 59);
+      drawPixText("50", 140, 60, "#3a2414");
+    });
+    cabinSolids.length = 0;
+    cabinSolids.push({ x: 0, y: 0, w: CABIN_W, h: 38 });
+    cabinSolids.push({ x: 0, y: 0, w: 16, h: CABIN_H });
+    cabinSolids.push({ x: CABIN_W - 16, y: 0, w: 16, h: CABIN_H });
+    cabinSolids.push({ x: 0, y: CABIN_H - 8, w: doorX, h: 8 });
+    cabinSolids.push({ x: doorX + 16, y: CABIN_H - 8, w: CABIN_W - (doorX + 16), h: 8 });
+    cabinSolids.push({ x: 18, y: 42, w: 28, h: 32 });
+    cabinSolids.push({ x: 156, y: 40, w: 28, h: 24 });
+    cabinSolids.push({ x: table.x, y: table.y, w: table.w, h: table.h + 4 });
+    cabinExit = { x: doorX, y: CABIN_H - 14, w: 16, h: 14 };
+    seedCabinFish();
+  }
+
+  function paintMooredBoat(g, deck, hatch) {
+    const x = deck.x;
+    const y = deck.y;
+    const w = deck.w;
+    const h = deck.h;
+    pxi(g, x + 8, y + h - 2, w - 16, 2, "#0e4a62");
+    pxi(g, x + 4, y + 8, w - 8, h - 10, "#5a3420");
+    pxi(g, x + 2, y + 6, w - 4, 5, "#8a5a32");
+    pxi(g, x + 8, y + 4, w - 16, 4, "#a07448");
+    pxi(g, x + 12, y + 5, w - 24, 1, "#c4a070");
+    pxi(g, x + 6, y + 11, w - 12, 1, "#3a2414");
+    pxi(g, x, y + 8, 3, 4, "#6b3f1f");
+    pxi(g, x + w - 3, y + 8, 3, 4, "#4a2e16");
+    pxi(g, hatch.x - 1, hatch.y - 1, hatch.w + 2, hatch.h + 2, "#3a2414");
+    pxi(g, hatch.x, hatch.y, hatch.w, hatch.h, "#100c0a");
+    pxi(g, hatch.x + 1, hatch.y + 1, hatch.w - 2, 1, "#5a3420");
+    pxi(g, hatch.x + hatch.w - 3, hatch.y + ((hatch.h / 2) | 0), 1, 1, "#e8c44a");
+  }
+
   function buildDockAndShop() {
     const cx = 48 * TILE;
     const rest = restShoreY(cx + 64);
     const pier = { x: cx, y: rest - 8, w: 176, h: 20 };
-    const shop = { x: pier.x + 10, y: pier.y - 48, w: 62, h: 52 };
+    const shop = { x: pier.x + 10, y: pier.y - 51, w: 62, h: 52 };
     const door = { x: shop.x + 24, y: shop.y + shop.h - 10, w: 13, h: 10 };
     const hut = { x: shop.x + shop.w + 8, y: pier.y - 36, w: 32, h: 38 };
     const hutDoor = { x: hut.x + 12, y: hut.y + hut.h - 9, w: 8, h: 9 };
@@ -3297,14 +4179,29 @@
     const boatA = { x: pier.x + 122, y: rest + 42, w: 64, h: 20 };
     const rowA = { x: pier.x + 108, y: rest + 14, w: 30, h: 10 };
     const rowB = { x: pier.x + 140, y: rest + 22, w: 26, h: 9 };
+    const moorDeck = { x: pier.x + 6, y: pier.y + pier.h + 24, w: 76, h: 22 };
+    const moorPlank = {
+      x: moorDeck.x + ((moorDeck.w / 2) | 0) - 7,
+      y: pier.y + pier.h - 4,
+      w: 14,
+      h: moorDeck.y + 4 - (pier.y + pier.h - 4),
+    };
+    const moorDoor = {
+      x: moorDeck.x + ((moorDeck.w / 2) | 0) - 5,
+      y: moorDeck.y + 7,
+      w: 10,
+      h: 7,
+    };
+    const moorHull = { x: moorDeck.x - 2, y: moorDeck.y, w: moorDeck.w + 4, h: moorDeck.h + 2 };
+    moorSail = { x: moorDeck.x, y: moorDeck.y };
     dockWood.length = 0;
     dockWood.push(pier, finger);
     deckPads.length = 0;
-    deckPads.push(pier, finger, ramp);
+    deckPads.push(pier, finger, ramp, moorDeck, moorPlank);
     walkPads.length = 0;
     islandSolids.length = 0;
     keepouts.length = 0;
-    walkPads.push(pier, finger, boatA, rowA, rowB, ramp);
+    walkPads.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorPlank);
     walkPads.push({ x: door.x - 4, y: door.y, w: door.w + 8, h: pier.y + pier.h - door.y });
     walkPads.push({ x: hutDoor.x - 3, y: hutDoor.y, w: hutDoor.w + 6, h: pier.y + pier.h - hutDoor.y });
     islandSolids.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h - 10 });
@@ -3329,9 +4226,11 @@
     fishDoor = { x: hutDoor.x, y: hutDoor.y, w: hutDoor.w, h: hutDoor.h + 2 };
     fishExit = { x: (FISH_W / 2 - 6) | 0, y: FISH_H - 10, w: 12, h: 10 };
     fishDockExit = { x: hutDoor.x + hutDoor.w + 8, y: pier.y + 4 };
+    cabinDoor = { x: moorDoor.x, y: moorDoor.y, w: moorDoor.w, h: moorDoor.h };
+    cabinDockExit = { x: moorDeck.x + 8, y: pier.y + 4 };
     foamBlockers.length = 0;
     dockBlit.length = 0;
-    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp);
+    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank);
     foamBlockers.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h });
     foamBlockers.push({ x: hut.x, y: hut.y, w: hut.w, h: hut.h });
     foamBlockers.push({ x: pier.x - 2, y: pier.y + pier.h - 2, w: pier.w + 4, h: 26 });
@@ -3347,7 +4246,10 @@
     padKeep(boatA, 18);
     padKeep(rowA, 14);
     padKeep(rowB, 14);
+    padKeep(moorHull, 10);
     dockBlit.push({ x: ramp.x, y: ramp.y, w: ramp.w + 4, h: ramp.h + 4 });
+    dockBlit.push({ x: moorPlank.x - 2, y: moorPlank.y - 2, w: moorPlank.w + 4, h: moorPlank.h + 4 });
+    dockBlit.push({ x: moorHull.x - 2, y: moorDeck.y - 2, w: moorHull.w + 4, h: moorHull.h + 6 });
     dockBlit.push({ x: pier.x - 2, y: pier.y - 2, w: pier.w + 4, h: pier.h + 28 });
     dockBlit.push({ x: finger.x - 2, y: finger.y - 2, w: finger.w + 6, h: finger.h + 24 });
     function paintDockBits(g) {
@@ -3359,6 +4261,10 @@
       }
       paintPost(g, finger.x + 1, rest + 78, 20);
       paintPost(g, finger.x + 15, rest + 84, 16);
+      paintPlanks(g, moorPlank.x, moorPlank.y, moorPlank.w, moorPlank.h, true);
+      pxi(g, moorPlank.x, moorPlank.y, 1, moorPlank.h, "#3a2414");
+      pxi(g, moorPlank.x + moorPlank.w - 1, moorPlank.y, 1, moorPlank.h, "#3a2414");
+      paintMooredBoat(g, moorDeck, moorDoor);
     }
     const g = landCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
@@ -3370,10 +4276,10 @@
     }
     dockLamps.push({ x: finger.x + 1, y: rest + 75 });
     dockLamps.push({ x: finger.x + 15, y: rest + 81 });
-    const deckLeft = Math.min(ramp.x, pier.x, finger.x) - 2;
-    const deckTop = Math.min(ramp.y, pier.y, finger.y) - 2;
-    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w) + 4;
-    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102) + 2;
+    const deckLeft = Math.min(ramp.x, pier.x, finger.x, moorHull.x) - 2;
+    const deckTop = Math.min(ramp.y, pier.y, finger.y, moorHull.y) - 2;
+    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w, moorHull.x + moorHull.w) + 4;
+    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102, moorHull.y + moorHull.h) + 2;
     dockOX = deckLeft;
     dockOY = deckTop;
     dockOverlay = document.createElement("canvas");
@@ -3425,6 +4331,7 @@
     harborDrop = { x: finger.x - 2, y: finger.y + finger.h + 8 };
     npcs.push({ kind: "keeper", scene: "shop", x: (SHOP_W / 2 - 3) | 0, y: 46, phase: 0.5 });
     npcs.push({ kind: "fisher", scene: "fish", x: (FISH_W / 2 - 3) | 0, y: 36, phase: 2.1 });
+    npcs.push({ kind: "warden", scene: "cabin", x: CABIN_NPC_X, y: CABIN_NPC_Y, phase: 0.8 });
     for (let c = 0; c < COLS; c++) {
       if (islandCap(c) < 0.04) continue;
       const y = northCliffRow(c) * TILE;
@@ -3434,9 +4341,11 @@
     boats.push({ x: boatA.x, y: boatA.y, w: boatA.w, h: boatA.h, kind: "big", phase: 0.2 });
     boats.push({ x: rowA.x, y: rowA.y, w: rowA.w, h: rowA.h, kind: "row", phase: 1.1 });
     boats.push({ x: rowB.x, y: rowB.y, w: rowB.w, h: rowB.h, kind: "row", phase: 2.4 });
+    boats.push({ x: moorHull.x, y: moorHull.y, w: moorHull.w, h: moorHull.h, kind: "moored", phase: 0.4 });
     swimFish.length = 0;
     bakeShopInterior();
     bakeFishInterior();
+    bakeCabinInterior();
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
       if (p.x > shop.x - 20 && p.x < hut.x + hut.w + 20 && p.y > hut.y - 10 && p.y < pier.y + 24) {
@@ -3446,9 +4355,7 @@
     for (let i = loot.length - 1; i >= 0; i--) {
       if (inKeepout(loot[i].x + 3, loot[i].y + 3)) loot.splice(i, 1);
     }
-    for (let i = crabs.length - 1; i >= 0; i--) {
-      if (inKeepout(crabs[i].x, crabs[i].y)) crabs.splice(i, 1);
-    }
+    placeBeachCrabs();
     player.x = pier.x + 48;
     player.y = pier.y + 4;
     doorCool = 0.6;
@@ -3512,7 +4419,8 @@
     player.y = placed.y;
     player.inWater = false;
     player.submerged = 0;
-    player.facing = next.scene === "shop" || next.scene === "fish" ? 1 : -1;
+    player.facing = next.scene === "shop" || next.scene === "fish" || next.scene === "cabin" ? 1 : -1;
+    if (next.scene === "cabin") player.aboard = false;
     doorCool = 0.85;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
@@ -3548,7 +4456,7 @@
 
   function updateDoors(dt) {
     if (doorCool > 0) doorCool = Math.max(0, doorCool - dt);
-    if (fadeMode || player.dead > 0 || doorCool > 0 || player.aboard) return;
+    if (fadeMode || player.dead > 0 || doorCool > 0 || player.aboard || cabinCut.kind) return;
     if (scene === "island" && shopDoor && playerHits(shopDoor)) {
       beginFade("shop", { x: (SHOP_W / 2 - 4) | 0, y: SHOP_H - 48 });
     }
@@ -3560,6 +4468,12 @@
     }
     if (scene === "fish" && fishExit && playerHits(fishExit)) {
       beginFade("island", { x: fishDockExit.x, y: fishDockExit.y });
+    }
+    if (scene === "island" && cabinDoor && playerHits(cabinDoor)) {
+      beginFade("cabin", { x: cabinDoorX() + 2, y: CABIN_H - 42 });
+    }
+    if (scene === "cabin" && cabinExit && playerHits(cabinExit)) {
+      beginFade("island", { x: cabinDockExit.x, y: cabinDockExit.y });
     }
   }
 
@@ -3598,6 +4512,31 @@
       px(x + 38, y - 15 + row, span, 1, col);
     }
     px(x + 38, y - 4, 9, 1, "#8a5a32");
+  }
+
+  function drawMooredSail(cpos) {
+    if (!moorSail) return;
+    const x = (moorSail.x - cpos.x) | 0;
+    const y = (moorSail.y - cpos.y) | 0;
+    const mx = x + 58;
+    const top = y - 16;
+    px(mx, top, 2, 26, "#4a2e16");
+    px(mx, top, 2, 1, "#2a1810");
+    px(mx, y + 8, 2, 2, "#6b3f1f");
+    for (let row = 0; row < 12; row++) {
+      const span = 2 + ((row * 8) / 12) | 0;
+      const col = row & 1 ? "#d4c09a" : "#c4a070";
+      px(mx + 2, top + 2 + row, span, 1, col);
+    }
+    px(mx + 2, top + 13, 9, 1, "#8a5a32");
+    px(mx + 3, top + 3, 1, 1, "#f3e2c4");
+  }
+
+  function drawMooredSailLit(cpos) {
+    if (!moorSail || scene !== "island") return;
+    const x = moorSail.x - cpos.x;
+    const y = moorSail.y - cpos.y;
+    drawLitRegion(cpos, { x: x + 54, y: y - 18, w: 22, h: 34 }, null, () => drawMooredSail(cpos));
   }
 
   function withSkiffXform(cpos, b, t, fn) {
@@ -3743,6 +4682,29 @@
       px(x + 6, y - 5, 3, 2, "#e8c44a");
       px(x + 1, y, 2, 3, "#3a2414");
       px(x + 4, y, 2, 3, "#3a2414");
+    } else if (n.kind === "warden") {
+      const magic = cabinCut.kind === "magic" && cabinCut.t > 0.22;
+      px(x + 1, y - 14, 5, 2, "#141820");
+      px(x, y - 13, 7, 2, "#1c2430");
+      px(x + 1, y - 11, 5, 4, "#d8c4a8");
+      px(x + 2, y - 10, 1, 1, magic ? "#ffffff" : "#201010");
+      px(x + 4, y - 10, 1, 1, magic ? "#ffffff" : "#201010");
+      if (magic) {
+        px(x + 2, y - 8, 3, 1, "#8a3030");
+        px(x - 3, y - 14, 2, 5, "#3a4a62");
+        px(x + 7, y - 14, 2, 5, "#3a4a62");
+        px(x - 4, y - 15, 2, 2, "#d8c4a8");
+        px(x + 8, y - 15, 2, 2, "#d8c4a8");
+      }
+      px(x, y - 7, 7, 6, "#243044");
+      px(x + 1, y - 6, 5, 3, "#3a4a62");
+      px(x + 2, y - 5, 3, 1, "#c9a227");
+      if (!magic) {
+        px(x - 2, y - 5, 2, 3, "#3a4a62");
+        px(x + 6, y - 5, 2, 3, "#d8c4a8");
+      }
+      px(x + 1, y, 2, 3, "#1a1814");
+      px(x + 4, y, 2, 3, "#1a1814");
     } else {
       px(x + 1, y - 13, 5, 2, "#3a2414");
       px(x, y - 12, 7, 1, "#2a1810");
@@ -3822,6 +4784,20 @@
       px(x + 1, y + 1, 6, 2, "#c9a227");
       px(x + 3, y + 3, 2, 2, "#e8c44a");
       px(x, y + 6, 8, 1, "#4a2e16");
+      return true;
+    }
+    if (id === "wand") {
+      px(x + 2, y, 1, 8, "#4a3428");
+      px(x + 1, y, 3, 2, "#2a2438");
+      px(x + 2, y, 1, 1, "#6a5088");
+      px(x + 2, y + 7, 1, 1, "#2a1c14");
+      return true;
+    }
+    if (id === "cloak") {
+      px(x, y + 1, 6, 2, "#1a2848");
+      px(x, y + 3, 7, 4, "#243860");
+      px(x + 1, y + 2, 4, 1, "#3a5080");
+      px(x + 1, y + 6, 5, 1, "#141c30");
       return true;
     }
     if (
@@ -4129,6 +5105,20 @@
     }
   }
 
+  function drawBankReeds(cpos, t) {
+    for (let i = 0; i < bankReeds.length; i++) {
+      const r = bankReeds[i];
+      const sway = Math.sin(t * 2.2 + r.phase) > 0 ? 1 : 0;
+      const x = (r.x - cpos.x) | 0;
+      const y = (r.y - cpos.y) | 0;
+      if (x < -3 || y < -6 || x > viewW + 3 || y > viewH + 3) continue;
+      const tip = r.kind === "lush" ? "#d2f08a" : r.kind === "dry" ? "#8a8a58" : "#9ed85a";
+      const stem = r.kind === "dry" ? "#6a6840" : "#1f6a30";
+      px(x, y, 1, 1, stem);
+      px(x + (r.side || 1) * sway, y - 1, 1, 1, tip);
+    }
+  }
+
   function drawInsects(cpos, t) {
     for (let i = 0; i < insects.length; i++) {
       const b = insects[i];
@@ -4179,6 +5169,7 @@
     const face = player.facing;
 
     ink.save();
+    if (cloakOn) ink.globalAlpha = 0.06;
     if (player.aboard && ownedBoat && scene === "island") {
       const b = ownedBoat;
       const bob = skiffBob(b, time);
@@ -4350,6 +5341,48 @@
     ctx.restore();
   }
 
+  function magicDropTarget(a) {
+    if (a.dest === "miss") {
+      const h = hudBarOrigin();
+      return { x: h.x0 + h.barW * 0.5, y: h.y0 + h.slot };
+    }
+    return hudSlotPos(Math.min(MAX_SLOTS - 1, a.slot));
+  }
+
+  function drawMagicDrop(a) {
+    const slot = magicDropTarget(a);
+    const tt = a.t;
+    let x;
+    let y;
+    let sc;
+    let alpha;
+    if (tt < 0.22) {
+      const k = smoothstep(tt / 0.22);
+      x = a.fromX;
+      y = a.fromY + (1 - k) * 10;
+      sc = 0.55 + k * 1.2;
+      alpha = k;
+    } else if (tt < 0.78) {
+      const k = (tt - 0.22) / 0.56;
+      x = a.fromX;
+      y = a.fromY + Math.sin(k * Math.PI * 2) * 1.5;
+      sc = 1.75;
+      alpha = 1;
+    } else {
+      const k = smoothstep((tt - 0.78) / 0.64);
+      const fall = k * k;
+      x = a.fromX + (slot.x - a.fromX) * fall;
+      y = a.fromY + (slot.y - a.fromY) * fall;
+      sc = 1.75 + (1.05 - 1.75) * fall;
+      alpha = a.dest === "miss" ? 1 - fall : 1;
+    }
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    drawWorldItem(a.id, 0, 0, sc);
+    ctx.restore();
+  }
+
   function drawPickupFx() {
     if (!pickupAnims.length) return;
     const uiW = canvas.width / SCALE_UI;
@@ -4360,6 +5393,10 @@
     let titleA = 0;
     for (let i = 0; i < pickupAnims.length; i++) {
       const a = pickupAnims[i];
+      if (a.style === "drop") {
+        drawMagicDrop(a);
+        continue;
+      }
       const slot = a.dest === "coins" ? hudCoinPos() : hudSlotPos(Math.min(MAX_SLOTS - 1, a.slot));
       const tt = a.t;
       let x;
@@ -4487,6 +5524,7 @@
     const msg = promptText();
     let naming = false;
     for (let i = 0; i < pickupAnims.length; i++) {
+      if (pickupAnims[i].style === "drop") continue;
       const tt = pickupAnims[i].t;
       if (tt > 0.42 && tt < 1.12) naming = true;
     }
@@ -4635,6 +5673,7 @@
   }
 
   function drawFish(cpos, t) {
+    if (!fishDaytime(t)) return;
     drawSharkFins(cpos);
     for (let i = 0; i < fishJumps.length; i++) {
       const f = fishJumps[i];
@@ -4667,9 +5706,11 @@
   }
 
   function drawSplashes(cpos) {
+    const day = fishDaytime(time);
     for (let i = 0; i < MAX_SPLASH; i++) {
       const p = splashes[i];
       if (p.life <= 0) continue;
+      if (p.fish && !day) continue;
       if (fishOverDock(p.x, p.y) || onIslandLand(p.x, p.y)) continue;
       const x = (p.x - cpos.x) | 0;
       const y = (p.y - cpos.y) | 0;
@@ -4704,7 +5745,7 @@
     }
     const g = wormPix;
     g.clearRect(0, 0, WORM_W, WORM_H);
-    const inward = fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish");
+    const inward = fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish" || fadeNext.scene === "cabin");
     const cx = WORM_W * 0.5;
     const cy = WORM_H * 0.5;
     const maxR = Math.hypot(cx, cy);
@@ -4740,46 +5781,52 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  const DAY_LEN = 60;
-  const SUN_KEYS = [
-    [0.0, 36, 48, 92],
-    [0.07, 58, 68, 118],
-    [0.13, 196, 112, 68],
-    [0.2, 248, 196, 132],
-    [0.28, 255, 238, 208],
-    [0.44, 255, 250, 236],
-    [0.52, 255, 214, 156],
-    [0.58, 232, 118, 52],
-    [0.64, 150, 64, 52],
-    [0.71, 64, 46, 82],
-    [0.8, 32, 42, 84],
-    [0.92, 34, 46, 88],
-    [1.0, 36, 48, 92],
-  ];
+  const DAY_HOLD = 180;
+  const DUSK_LEN = 25;
+  const NIGHT_HOLD = 30;
+  const DAWN_LEN = 35;
+  const DAY_LEN = DAY_HOLD + DUSK_LEN + NIGHT_HOLD + DAWN_LEN;
+  const DAY_SUN = [255, 250, 236];
+  const NIGHT_SUN = [34, 44, 86];
 
   function clampByte(n) {
     n = n | 0;
     return n < 0 ? 0 : n > 255 ? 255 : n;
   }
 
+  function dayClock(t) {
+    let u = t % DAY_LEN;
+    if (u < 0) u += DAY_LEN;
+    return u;
+  }
+
+  function nightMix(t) {
+    const u = dayClock(t);
+    const duskAt = DAY_HOLD;
+    const nightAt = DAY_HOLD + DUSK_LEN;
+    const dawnAt = nightAt + NIGHT_HOLD;
+    if (u < duskAt) return 0;
+    if (u < nightAt) return smoothstep((u - duskAt) / DUSK_LEN);
+    if (u < dawnAt) return 1;
+    return 1 - smoothstep((u - dawnAt) / DAWN_LEN);
+  }
+
+  function fishDaytime(t) {
+    return dayClock(t) < DAY_HOLD;
+  }
+
   function sunSample(t) {
-    const u = ((((t + 22) % DAY_LEN) + DAY_LEN) % DAY_LEN) / DAY_LEN;
-    let i = 0;
-    while (i < SUN_KEYS.length - 2 && u > SUN_KEYS[i + 1][0]) i++;
-    const a = SUN_KEYS[i];
-    const b = SUN_KEYS[i + 1];
-    const span = b[0] - a[0] || 1;
-    const k = smoothstep((u - a[0]) / span);
+    const k = nightMix(t);
+    const warm = Math.sin(Math.PI * k);
     return {
-      r: a[1] + (b[1] - a[1]) * k,
-      g: a[2] + (b[2] - a[2]) * k,
-      b: a[3] + (b[3] - a[3]) * k,
+      r: DAY_SUN[0] + (NIGHT_SUN[0] - DAY_SUN[0]) * k + warm * 36,
+      g: DAY_SUN[1] + (NIGHT_SUN[1] - DAY_SUN[1]) * k + warm * 8,
+      b: DAY_SUN[2] + (NIGHT_SUN[2] - DAY_SUN[2]) * k - warm * 28,
     };
   }
 
-  function lampAmount(sun) {
-    const lum = (sun.r * 0.3 + sun.g * 0.59 + sun.b * 0.11) / 255;
-    return smoothstep((0.62 - lum) / 0.28);
+  function lampAmount(t) {
+    return nightMix(t);
   }
 
   function ambientAt(worldX, sun) {
@@ -4816,6 +5863,19 @@
     [0.55, 28, 16, 8],
     [0.99, 4, 2, 1],
   ];
+  const GLOW_CHEST = [
+    [0.14, 255, 246, 214],
+    [0.32, 220, 180, 90],
+    [0.58, 90, 70, 30],
+    [0.99, 12, 8, 4],
+  ];
+  const GLOW_CHEST_POOL = [
+    [0.18, 160, 120, 48],
+    [0.42, 70, 48, 18],
+    [0.7, 24, 16, 8],
+    [0.99, 4, 3, 2],
+  ];
+  const MAGIC_MOTE_COL = ["#fff6d0", "#9ee8ff", "#e8c44a", "#ffffff", "#b9f6ff", "#f3d56a", "#dff6ff"];
   const litRgb = [255, 255, 255];
 
   function makeGlowSprite(diam, bands) {
@@ -4854,33 +5914,93 @@
     glowLamp = makeGlowSprite(64, GLOW_LAMP);
     glowWindow = makeGlowSprite(46, GLOW_WINDOW);
     glowFeet = makeGlowSprite(30, GLOW_FEET);
+    glowChest = makeGlowSprite(36, GLOW_CHEST);
+    glowChestPool = makeGlowSprite(78, GLOW_CHEST_POOL);
+  }
+
+  function cabinLampPulse() {
+    if (scene !== "cabin" || cabinCut.kind !== "magic") return 1;
+    const u = cabinCut.t;
+    const wave = 0.5 + 0.5 * Math.sin(u * 28);
+    const wave2 = 0.5 + 0.5 * Math.sin(u * 47);
+    let v = 0.7 + 0.3 * wave * (0.6 + 0.4 * wave2);
+    const tick = u * 9;
+    if (tick - Math.floor(tick) > 0.84) v = 0.6;
+    if (u > 2.5) v = v + (1 - v) * Math.min(1, (u - 2.5) / 1.3);
+    if (v < 0.6) v = 0.6;
+    if (v > 1) v = 1;
+    return v;
+  }
+
+  function cabinChestGlow() {
+    if (cabinCut.kind !== "magic") return 0;
+    const u = cabinCut.t;
+    if (u < 0.28) return (u / 0.28) * 0.22;
+    if (u < 1.2) return 0.22 + ((u - 0.28) / 0.92) * 0.78;
+    if (u < 3.5) return 1;
+    return Math.max(0, 1 - (u - 3.5) / 0.8);
+  }
+
+  function indoorLitBase(sun) {
+    const pulse = cabinLampPulse();
+    const r0 = Math.max(226, (248 * 0.82 + sun.r * 0.18) | 0);
+    const g0 = Math.max(200, (220 * 0.82 + sun.g * 0.18) | 0);
+    const b0 = Math.max(150, (168 * 0.82 + sun.b * 0.18) | 0);
+    return {
+      r: Math.max(148, (r0 * pulse) | 0),
+      g: Math.max(128, (g0 * pulse) | 0),
+      b: Math.max(96, (b0 * pulse) | 0),
+      pulse,
+    };
   }
 
   function beginLitFrame(cpos, t, indoor) {
     ensureGlows();
     const sun = sunSample(t);
-    const lamps = lampAmount(sun);
+    const lamps = lampAmount(t);
     const glows = [];
     if (indoor) {
-      const lx = (scene === "fish" ? FISH_W : SHOP_W) / 2;
-      glows.push({ x: lx, y: 22, diam: 46, bands: GLOW_WINDOW, a: 1 });
-      glows.push({ x: lx, y: scene === "fish" ? 50 : 64, diam: 30, bands: GLOW_FEET, a: 1 });
+      const lamp = indoorGlowAnchor();
+      const base = indoorLitBase(sun);
+      glows.push({ x: lamp.x, y: lamp.y, diam: 46, bands: GLOW_WINDOW, a: base.pulse });
+      glows.push({ x: lamp.x, y: lamp.feet, diam: 30, bands: GLOW_FEET, a: base.pulse });
+      if (scene === "cabin" && glowChest) {
+        const chest = cabinChestGlow();
+        if (chest > 0.02) {
+          glows.push({
+            x: cabinChestX + 8,
+            y: cabinChestY + 6,
+            diam: 36,
+            bands: GLOW_CHEST,
+            a: chest * 0.28,
+          });
+          glows.push({
+            x: cabinChestX + 8,
+            y: cabinChestY + 18,
+            diam: 78,
+            bands: GLOW_CHEST_POOL,
+            a: chest * 0.2,
+          });
+        }
+      }
       litFrame = {
         cpos,
         sun,
         lamps,
         indoor: true,
         glows,
-        baseR: Math.max(226, (248 * 0.82 + sun.r * 0.18) | 0),
-        baseG: Math.max(200, (220 * 0.82 + sun.g * 0.18) | 0),
-        baseB: Math.max(150, (168 * 0.82 + sun.b * 0.18) | 0),
+        baseR: base.r,
+        baseG: base.g,
+        baseB: base.b,
       };
       return;
     }
-    for (let i = 0; i < windowLights.length; i++) {
-      glows.push({ x: windowLights[i].x, y: windowLights[i].y, diam: 46, bands: GLOW_WINDOW, a: 1 });
+    if (lamps > 0.001) {
+      for (let i = 0; i < windowLights.length; i++) {
+        glows.push({ x: windowLights[i].x, y: windowLights[i].y, diam: 46, bands: GLOW_WINDOW, a: lamps });
+      }
     }
-    if (lamps > 0.04) {
+    if (lamps > 0.001) {
       for (let i = 0; i < dockLamps.length; i++) {
         const bob = (Math.sin(t * 7 + i * 1.7) * 1.2) | 0;
         glows.push({
@@ -4919,9 +6039,11 @@
       b = F.baseB;
     } else {
       const amb = ambientAt(wx, F.sun);
-      r = amb[0];
-      g = amb[1];
-      b = amb[2];
+      const lum = (F.sun.r * 0.3 + F.sun.g * 0.59 + F.sun.b * 0.11) / 255;
+      const dark = smoothstep((0.78 - lum) / 0.42);
+      r = amb[0] + (Math.max(amb[0], 140) - amb[0]) * dark;
+      g = amb[1] + (Math.max(amb[1], 136) - amb[1]) * dark;
+      b = amb[2] + (Math.max(amb[2], 128) - amb[2]) * dark;
       const sx = wx - F.cpos.x;
       const sy = wy - F.cpos.y;
       for (let i = 0; i < eaveShades.length; i++) {
@@ -5165,26 +6287,30 @@
   }
 
   function drawLightSources(cpos, t, lamps) {
-    for (let i = 0; i < windowLights.length; i++) {
-      const x = (windowLights[i].x - cpos.x - 2) | 0;
-      const y = (windowLights[i].y - cpos.y - 2) | 0;
-      px(x, y, 5, 4, "#ffd27a");
-      px(x + 1, y + 1, 2, 1, "#fff6d0");
-      px(x + 3, y + 2, 1, 1, "#e88830");
+    if (lamps > 0.004) {
+      ctx.globalAlpha = lamps;
+      for (let i = 0; i < windowLights.length; i++) {
+        const x = (windowLights[i].x - cpos.x - 2) | 0;
+        const y = (windowLights[i].y - cpos.y - 2) | 0;
+        px(x, y, 5, 4, "#ffd27a");
+        px(x + 1, y + 1, 2, 1, "#fff6d0");
+        px(x + 3, y + 2, 1, 1, "#e88830");
+      }
+      ctx.globalAlpha = 1;
     }
     for (let i = 0; i < dockLamps.length; i++) {
       const x = (dockLamps[i].x - cpos.x) | 0;
       const y = (dockLamps[i].y - cpos.y) | 0;
-      if (lamps < 0.12) {
-        px(x, y, 3, 2, "#3a2414");
-        px(x, y + 2, 3, 2, "#5a4030");
-        continue;
-      }
+      px(x, y, 3, 2, "#3a2414");
+      px(x, y + 2, 3, 2, "#5a4030");
+      if (lamps <= 0.004) continue;
+      ctx.globalAlpha = lamps;
       const flick = ((t * 9 + i * 2.1) | 0) & 1;
       px(x, y, 3, 1, "#2a1810");
       px(x, y + 1, 3, 3, flick ? "#ffb04a" : "#ffe08a");
       px(x + 1, y + 2, 1, 1, "#fff6d0");
       px(x, y + 4, 3, 1, "#3a2414");
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -5198,11 +6324,11 @@
     shadeEaves(cpos);
     lightCtx.globalCompositeOperation = "lighter";
     lightCtx.globalAlpha = 1;
-    for (let i = 0; i < windowLights.length; i++) {
-      stampGlow(glowWindow, windowLights[i].x, windowLights[i].y, cpos);
-    }
-    if (lamps > 0.04) {
+    if (lamps > 0.004) {
       lightCtx.globalAlpha = lamps;
+      for (let i = 0; i < windowLights.length; i++) {
+        stampGlow(glowWindow, windowLights[i].x, windowLights[i].y, cpos);
+      }
       for (let i = 0; i < dockLamps.length; i++) {
         const bob = (Math.sin(t * 7 + i * 1.7) * 1.2) | 0;
         stampGlow(glowLamp, dockLamps[i].x + 1, dockLamps[i].y + bob, cpos);
@@ -5234,20 +6360,286 @@
     const g = lightCtx;
     g.globalCompositeOperation = "source-over";
     g.globalAlpha = 1;
-    const r = Math.max(226, (248 * 0.82 + sun.r * 0.18) | 0);
-    const gg = Math.max(200, (220 * 0.82 + sun.g * 0.18) | 0);
-    const b = Math.max(150, (168 * 0.82 + sun.b * 0.18) | 0);
-    g.fillStyle = "rgb(" + r + "," + gg + "," + b + ")";
+    const base = indoorLitBase(sun);
+    g.fillStyle = "rgb(" + base.r + "," + base.g + "," + base.b + ")";
     g.fillRect(0, 0, lightCanvas.width, lightCanvas.height);
     g.globalCompositeOperation = "lighter";
-    const lx = (scene === "fish" ? FISH_W : SHOP_W) / 2;
-    stampGlow(glowWindow, lx, 22, cpos);
-    stampGlow(glowFeet, lx, scene === "fish" ? 50 : 64, cpos);
+    const lamp = indoorGlowAnchor();
+    g.globalAlpha = base.pulse;
+    stampGlow(glowWindow, lamp.x, lamp.y, cpos);
+    stampGlow(glowFeet, lamp.x, lamp.feet, cpos);
+    if (scene === "cabin" && glowChest) {
+      const chest = cabinChestGlow();
+      if (chest > 0.02) {
+        g.globalAlpha = chest;
+        stampGlow(glowChest, cabinChestX + 8, cabinChestY + 5, cpos);
+        g.globalAlpha = chest * 0.75;
+        stampGlow(glowChestPool, cabinChestX + 8, cabinChestY + 16, cpos);
+        g.globalAlpha = chest * 0.4;
+        stampGlow(glowChestPool, cabinChestX + 8, cabinChestY + 28, cpos);
+      }
+    }
+    g.globalAlpha = 1;
     g.globalCompositeOperation = "source-over";
     ctx.save();
     ctx.globalCompositeOperation = "multiply";
     ctx.drawImage(lightCanvas, 0, 0);
     ctx.restore();
+  }
+
+  function indoorGlowAnchor() {
+    if (scene === "cabin") return { x: CABIN_W / 2, y: 22, feet: 72 };
+    if (scene === "fish") return { x: FISH_W / 2, y: 22, feet: 50 };
+    return { x: SHOP_W / 2, y: 22, feet: 64 };
+  }
+
+  function cabinMix(a, b, t) {
+    return (a + (b - a) * t) | 0;
+  }
+
+  function drawCabinSea(cpos, t) {
+    const day = fishDaytime(t);
+    const k = day ? 0 : nightMix(t);
+    const wr = cabinMix(26, 7, k);
+    const wg = cabinMix(104, 14, k);
+    const wb = cabinMix(150, 22, k);
+    const water = "rgb(" + wr + "," + wg + "," + wb + ")";
+    const hi = day ? "#3a8ab4" : "#121820";
+    for (let i = 0; i < cabinPanes.length; i++) {
+      const pane = cabinPanes[i];
+      const x = pane.x - cpos.x;
+      const y = pane.y - cpos.y;
+      px(x, y, pane.w, pane.h, water);
+      if (!day) continue;
+      const s = (t * 8) | 0;
+      for (let ix = 0; ix < pane.w; ix += 4) {
+        const yy = y + ((ix * 3 + s + i * 5) % pane.h);
+        px(x + ix, yy, 1, 1, hi);
+      }
+    }
+    if (!day) return;
+    for (let i = 0; i < cabinFish.length; i++) {
+      const f = cabinFish[i];
+      const pane = cabinPanes[f.pane];
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pane.x - cpos.x, pane.y - cpos.y, pane.w, pane.h);
+      ctx.clip();
+      if (f.dir < 0) {
+        ctx.save();
+        ctx.translate(((f.x - cpos.x) | 0) + 6, (f.y - cpos.y) | 0);
+        ctx.scale(-1, 1);
+        drawTinyCatch(f.id, 0, 0);
+        ctx.restore();
+      } else {
+        drawTinyCatch(f.id, (f.x - cpos.x) | 0, (f.y - cpos.y) | 0);
+      }
+      ctx.restore();
+    }
+  }
+
+  function cabinChestMotion() {
+    if (!cabinCut.kind) return { lid: 0, jx: 0 };
+    let jx = 0;
+    if (cabinCut.kind === "classic" && cabinCut.mode === "open" && cabinCut.t < 0.5) {
+      jx = Math.sin(cabinCut.t * 54) * 1.5;
+    } else if (cabinCut.kind === "magic" && cabinCut.t < 1.2) {
+      jx = Math.sin(cabinCut.t * 48) * (cabinCut.t < 0.55 ? 1.4 : 0.5);
+    }
+    return { lid: cabinCut.lid, jx };
+  }
+
+  function drawCabinChest(cpos) {
+    const mot = cabinChestMotion();
+    const x = (cabinChestX - cpos.x + mot.jx) | 0;
+    const y = (cabinChestY - cpos.y) | 0;
+    const lift = (mot.lid * 7) | 0;
+    px(x, y - lift, 16, 5, "#a07838");
+    px(x + 1, y + 1 - lift, 14, 2, "#e8c44a");
+    px(x + 6, y + 2 - lift, 4, 2, "#fff3c0");
+    if (mot.lid > 0.4 && cabinCut.kind === "classic") {
+      px(x + 3, y + 3, 10, 2, "#f3d56a");
+      px(x + 5, y + 2, 3, 1, "#fff1a8");
+    }
+    if (cabinCut.kind === "magic") {
+      const g = cabinChestGlow();
+      if (g > 0.08) {
+        px(x + 7, y + 3, 2, 2, g > 0.55 ? "#fff6d4" : "#e8c44a");
+        px(x + 6, y + 4, 1, 1, "#9ee8ff");
+        px(x + 9, y + 4, 1, 1, "#f3d56a");
+        if (g > 0.4) px(x + 7, y + 2, 2, 1, "#fffef8");
+      }
+    }
+    px(x, y + 5, 16, 8, "#6b3f1f");
+    px(x, y + 5, 16, 2, "#8a5a32");
+    px(x + 1, y + 8, 14, 1, "#c9a227");
+    px(x + 7, y + 8, 2, 2, "#e8c44a");
+    px(x, y + 12, 16, 1, "#3a2414");
+  }
+
+  function drawChestSpill(cpos) {
+    const g = cabinChestGlow();
+    if (g < 0.04) return;
+    const cx = (cabinChestX + 8 - cpos.x) | 0;
+    const cy = (cabinChestY + 7 - cpos.y) | 0;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const rx = 24;
+    for (let y = -5; y <= 20; y++) {
+      const ny = y < 0 ? -y / 8 : y / 20;
+      for (let x = -rx; x <= rx; x++) {
+        const d = Math.sqrt((x / rx) * (x / rx) + ny * ny);
+        if (d > 1) continue;
+        const k = (1 - d) * (1 - d) * g;
+        if (k < 0.07) continue;
+        ctx.globalAlpha = k * 0.42;
+        px(cx + x, cy + y, 1, 1, d < 0.22 ? "#fff4d2" : d < 0.5 ? "#e8b45c" : "#c08038");
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawCabinLampFlicker(cpos) {
+    if (scene !== "cabin" || cabinCut.kind !== "magic") return;
+    const p = cabinLampPulse();
+    const hot = p > 0.86;
+    const dim = p < 0.68;
+    const jar = hot ? "#fff6d0" : dim ? "#8a6830" : "#e8c44a";
+    const jx = (170 - cpos.x) | 0;
+    const jy = (45 - cpos.y) | 0;
+    px(jx + 2, jy, 3, 2, jar);
+    px(jx + 3, jy, 1, 1, hot ? "#ffffff" : jar);
+    const lx = ((CABIN_W / 2) - cpos.x) | 0;
+    const ly = (18 - cpos.y) | 0;
+    px(lx - 1, ly, 4, 2, hot ? "#ffe08a" : dim ? "#6a4818" : "#c9a24a");
+    px(lx, ly, 2, 1, hot ? "#fff6d0" : "#a07830");
+  }
+
+  function magicMote(i, u, px0, py0) {
+    const n = 11;
+    const release = 0.62 + (i % 4) * 0.07;
+    if (u < release) return null;
+    const age = u - release;
+    const ang0 = (i / n) * Math.PI * 2 + 0.35;
+    const sx = cabinChestX + 8;
+    const sy = cabinChestY + 4;
+    const burst = 4 + 16 + (i % 5) * 5;
+    if (age < 0.48) {
+      const k = age / 0.48;
+      const e = k * k;
+      const dist = 4 + e * (burst - 4);
+      return {
+        x: sx + Math.cos(ang0) * dist,
+        y: sy - e * 8 + Math.sin(ang0) * dist * 0.55,
+        a: Math.min(1, k * 3),
+      };
+    }
+    const burstX = sx + Math.cos(ang0) * burst;
+    const burstY = sy - 8 + Math.sin(ang0) * burst * 0.55;
+    const roam = age - 0.48;
+    if (roam < 1.15) {
+      const k = roam / 1.15;
+      const roomAng = ang0 + k * Math.PI * 1.9;
+      const rx = 98 + Math.cos(roomAng) * (44 + (i % 3) * 7);
+      const ry = 76 + Math.sin(roomAng) * (20 + (i % 2) * 5);
+      const blend = Math.min(1, k * 1.7);
+      return {
+        x: burstX + (rx - burstX) * blend,
+        y: burstY + (ry - burstY) * blend,
+        a: 1,
+      };
+    }
+    const orbit = roam - 1.15;
+    const roomAng = ang0 + Math.PI * 1.9;
+    const rx = 98 + Math.cos(roomAng) * (44 + (i % 3) * 7);
+    const ry = 76 + Math.sin(roomAng) * (20 + (i % 2) * 5);
+    const orbitAng = ang0 + orbit * 3.6;
+    const rad = 12 + (i % 3) * 4;
+    const tx = px0 + Math.cos(orbitAng) * rad;
+    const ty = py0 - 4 + Math.sin(orbitAng) * rad * 0.72;
+    const gather = Math.min(1, orbit / 0.38);
+    let a = 1;
+    if (orbit > 1.05) a = Math.max(0, 1 - (orbit - 1.05) / 0.45);
+    if (a <= 0.02) return null;
+    return {
+      x: rx + (tx - rx) * gather,
+      y: ry + (ty - ry) * gather,
+      a,
+    };
+  }
+
+  function drawCabinMotes(cpos) {
+    if (cabinCut.kind !== "magic") return;
+    const mid = playerCenter();
+    const u = cabinCut.t;
+    for (let i = 0; i < 11; i++) {
+      const m = magicMote(i, u, mid.x, mid.y);
+      if (!m) continue;
+      ctx.globalAlpha = m.a;
+      px((m.x - cpos.x) | 0, (m.y - cpos.y) | 0, 1, 1, MAGIC_MOTE_COL[i % MAGIC_MOTE_COL.length]);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawWardenMagic(cpos, t) {
+    if (scene !== "cabin" || cabinCut.kind !== "magic" || cabinCut.t < 0.28) return;
+    const n = cabinNpc();
+    if (!n) return;
+    const bob = (Math.sin(t * 2.2 + n.phase) * 1.1) | 0;
+    const nx = (n.x - cpos.x) | 0;
+    const ny = (n.y - cpos.y + bob) | 0;
+    const bx = nx - 2;
+    const by = ny - 32;
+    drawBubbleFrame(bx, by, 16, 12, nx + 2);
+    px(bx + 7, by + 2, 2, 5, "#ffffff");
+    px(bx + 5, by + 4, 6, 1, "#fff6d0");
+    px(bx + 4, by + 6, 2, 2, "#b9f6ff");
+    px(bx + 10, by + 6, 2, 2, "#b9f6ff");
+  }
+
+  function ensureCloakBuf() {
+    if (cloakBuf && cloakBuf.width === canvas.width && cloakBuf.height === canvas.height) return;
+    cloakBuf = document.createElement("canvas");
+    cloakBuf.width = canvas.width;
+    cloakBuf.height = canvas.height;
+    cloakCtx = cloakBuf.getContext("2d");
+    cloakMask = document.createElement("canvas");
+    cloakMask.width = canvas.width;
+    cloakMask.height = canvas.height;
+    cloakMaskCtx = cloakMask.getContext("2d");
+  }
+
+  function applyCloakVision(cpos, jx, jy) {
+    ensureCloakBuf();
+    cloakCtx.setTransform(1, 0, 0, 1, 0, 0);
+    cloakCtx.clearRect(0, 0, canvas.width, canvas.height);
+    cloakCtx.drawImage(canvas, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.filter = "blur(7px)";
+    ctx.drawImage(cloakBuf, 0, 0);
+    ctx.filter = "none";
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "rgba(0,0,0,0.84)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const sx = (player.x + player.w / 2 - cpos.x) * zoom + jx;
+    const sy = (player.y + player.h * 0.35 - cpos.y) * zoom + jy;
+    const inner = TILE * 0.9 * zoom;
+    const outer = TILE * 2.05 * zoom;
+    const m = cloakMaskCtx;
+    m.setTransform(1, 0, 0, 1, 0, 0);
+    m.globalCompositeOperation = "source-over";
+    m.clearRect(0, 0, canvas.width, canvas.height);
+    m.drawImage(cloakBuf, 0, 0);
+    m.globalCompositeOperation = "destination-in";
+    const grad = m.createRadialGradient(sx, sy, inner, sx, sy, outer);
+    grad.addColorStop(0, "rgba(0,0,0,1)");
+    grad.addColorStop(0.42, "rgba(0,0,0,0.9)");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    m.fillStyle = grad;
+    m.fillRect(0, 0, canvas.width, canvas.height);
+    m.globalCompositeOperation = "source-over";
+    ctx.drawImage(cloakMask, 0, 0);
   }
 
   function drawGuide() {
@@ -5300,17 +6692,25 @@
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(zoom, 0, 0, zoom, jx, jy);
     if (isIndoor()) {
-      px(0, 0, viewW, viewH, "#2a1c12");
-      const room = scene === "fish" ? fishCanvas : shopCanvas;
+      px(0, 0, viewW, viewH, scene === "cabin" ? "#071018" : "#2a1c12");
+      if (scene === "cabin") drawCabinSea(cpos, t);
+      const room = scene === "fish" ? fishCanvas : scene === "cabin" ? cabinCanvas : shopCanvas;
       const rw = indoorW();
       const rh = indoorH();
       if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
       drawIndoorLight(cpos);
       if (scene === "shop") drawShopGoldSpark(cpos, t);
+      if (scene === "cabin") {
+        drawCabinChest(cpos);
+        drawChestSpill(cpos);
+        drawCabinLampFlicker(cpos);
+      }
       for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
-      drawShopkeeperBubble(cpos, t);
+      if (scene === "cabin") drawWardenMagic(cpos, t);
+      else drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
+      if (scene === "cabin") drawCabinMotes(cpos);
     } else {
       px(0, 0, viewW, viewH, WATER_BLUE);
       drawLand(cpos);
@@ -5318,6 +6718,7 @@
       drawDockOverFoam(cpos);
       drawRocks(cpos);
       drawTrees(cpos);
+      drawBankReeds(cpos, t);
       drawInsects(cpos, t);
       drawCrabs(cpos);
       drawSandBits(cpos);
@@ -5333,7 +6734,7 @@
         if (player.aboard) drawRodLit(cpos, true);
       }
       for (let i = 0; i < boats.length; i++) {
-        if (boats[i].kind !== "big") drawBoatLit(cpos, boats[i], t);
+        if (boats[i].kind !== "big" && boats[i].kind !== "moored") drawBoatLit(cpos, boats[i], t);
       }
       for (let i = 0; i < boats.length; i++) {
         if (boats[i].kind === "big") drawBoatLit(cpos, boats[i], t);
@@ -5343,6 +6744,7 @@
         drawSkiffPart(cpos, ownedBoat, t, true, false);
         if (!player.aboard) drawSkiffPart(cpos, ownedBoat, t, false, false);
       }
+      drawMooredSailLit(cpos);
       for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
       drawHarborBubble(cpos, t);
       drawLightSources(cpos, t, litFrame ? litFrame.lamps : 0);
@@ -5356,6 +6758,7 @@
         }
       }
     }
+    if (cloakOn) applyCloakVision(cpos, jx, jy);
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
     drawHud();
     drawGuide();
@@ -5405,6 +6808,7 @@
         facing: player.facing,
         aboard: !!player.aboard,
         scene,
+        cloak: cloakOn,
         boat: ownedBoat
           ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
           : null,
@@ -5434,7 +6838,11 @@
     if (typeof data.y === "number") player.y = data.y;
     if (data.facing === -1 || data.facing === 1) player.facing = data.facing;
     player.aboard = !!data.aboard;
-    if (data.scene === "shop" || data.scene === "fish" || data.scene === "island") scene = data.scene;
+    if (data.scene === "shop" || data.scene === "fish" || data.scene === "cabin" || data.scene === "island") {
+      scene = data.scene;
+    }
+    cloakOn = !!data.cloak && inventory.some((s) => s && s.id === "cloak");
+    if (scene === "cabin") player.aboard = false;
     if (data.boat && typeof data.boat.x === "number") {
       ownedBoat = {
         x: data.boat.x,
@@ -5475,6 +6883,8 @@
     updateLoot();
     updateShopTrade(dt);
     updateTradeCoinDrift(dt);
+    updateCabinCut(dt);
+    updateCabinFish(dt);
     updateBoatThrow(dt);
     updateCrabs(dt);
     if (scene === "island") {
@@ -5508,12 +6918,15 @@
       if (!e.repeat) guideOpen = !guideOpen;
       return;
     }
-    if (guideOpen) return;
+    if (guideOpen || cabinCut.kind) return;
     if (e.repeat) {
       if (k === "enter" && isIndoor()) dropHeld();
       return;
     }
-    if (k >= "1" && k <= "8") heldSlot = k.charCodeAt(0) - 49;
+    if (k >= "1" && k <= "8") {
+      if ((k === "1" || k === "2") && nearCabinNpc()) startCabinCut(k === "1" ? "classic" : "magic");
+      else heldSlot = k.charCodeAt(0) - 49;
+    }
     if (k === "enter") onEnter();
     if (k === " ") useHeld();
     if (k === "t") tryTradeKey();
@@ -5534,7 +6947,7 @@
 
   function zoomGoal() {
     const goingShop =
-      fadeMode && fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish");
+      fadeMode && fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish" || fadeNext.scene === "cabin");
     const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
     if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
     return keys.z ? SCALE_FAR : SCALE_DEFAULT;
