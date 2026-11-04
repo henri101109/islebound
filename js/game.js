@@ -217,6 +217,24 @@
   let waveCycle = 0;
   let lastWaveCycle = -1;
   let guideOpen = false;
+  const SPEED_ORDER = ["shark", "jelly_white", "chest", "death", "boat", "full_inv", "shark_cloak"];
+  let playMode = null;
+  let uiScreen = "mode";
+  let srCat = "shark";
+  let srRunning = false;
+  let srTiming = false;
+  let srStartPerf = 0;
+  let srElapsed = 0;
+  let srFinalMs = 0;
+  let srBoughtBoat = false;
+  let srWasDead = false;
+  let srName = "";
+  let srCursor = 0;
+  let srFinishSel = 1;
+  let srBoardRows = [];
+  let srBoardNote = "";
+  let srStatus = "";
+  let srSubmitting = false;
   const dockLamps = [];
   const windowLights = [];
   const eaveShades = [];
@@ -1859,13 +1877,13 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay()) {
       dx = 0;
       dy = 0;
       player.moving = false;
     }
 
-    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind) {
+    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind && !uiBlocksPlay()) {
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
       } else {
@@ -1905,7 +1923,17 @@
     clampCamera();
     shake = Math.max(0, shake - dt * 18);
     if (
+      playMode === "speedrun" &&
+      (uiScreen === "ready" || (uiScreen === null && srRunning)) &&
+      player.moving &&
+      !srTiming
+    ) {
+      maybeStartSpeedTimer();
+    }
+
+    if (
       !guideOpen &&
+      !uiBlocksPlay() &&
       !player.aboard &&
       ownedBoat &&
       ownedBoat.landed &&
@@ -1921,6 +1949,7 @@
         seatPlayerOnBoat();
         player.inWater = false;
         player.submerged = 0;
+        checkBoatSpeedEnd();
       }
     }
   }
@@ -1937,7 +1966,12 @@
   }
 
   function updateDrowning(dt) {
+    if (uiBlocksPlay()) {
+      if (player.hurt > 0) player.hurt -= dt;
+      return;
+    }
     if (player.dead > 0) {
+      srWasDead = true;
       player.dead -= dt;
       if (player.dead <= 0) {
         player.x = spawnX;
@@ -1947,6 +1981,11 @@
         player.drownTick = 0;
         player.hurt = 0;
         player.aboard = false;
+        if (playMode === "speedrun" && srCat === "death" && srTiming && srWasDead) {
+          srWasDead = false;
+          finishSpeedrun();
+        }
+        srWasDead = false;
       }
       return;
     }
@@ -1997,11 +2036,17 @@
     if (existing >= 0) {
       if (inventory[existing].count >= def.max) return false;
       inventory[existing].count += 1;
+      if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
+        finishSpeedrun();
+      }
       return true;
     }
     const empty = inventory.findIndex((s) => !s);
     if (empty < 0) return false;
     inventory[empty] = { id, count: 1 };
+    if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
+      finishSpeedrun();
+    }
     return true;
   }
 
@@ -2146,7 +2191,7 @@
   }
 
   function tryAutoPickup() {
-    if (player.dead > 0) return;
+    if (player.dead > 0 || uiBlocksPlay()) return;
     const mid = playerCenter();
     const rad = pickupRadius();
     for (let i = 0; i < loot.length; i++) {
@@ -2190,6 +2235,9 @@
   }
 
   function promptText() {
+    if (nearCabinNpc()) {
+      return holdingChest() ? "T OPENS YOUR CHEST" : "BRING A TREASURE CHEST";
+    }
     if (chestTalk > 0) return "FIND A TREASURE MASTER TO OPEN";
     if (harborTalk > 0) return "CAN'T AFFORD";
     if (!nearestLoot || nearestLoot.id === "coin") return "";
@@ -2677,6 +2725,31 @@
     return Math.hypot(mid.x - (n.x + 4), mid.y - (n.y - 6)) < 36;
   }
 
+  function holdingChest() {
+    const stack = inventory[heldSlot];
+    return !!(stack && stack.id === "chest" && stack.count > 0);
+  }
+
+  function consumeHeldChest() {
+    const stack = inventory[heldSlot];
+    if (!stack || stack.id !== "chest") return false;
+    stack.count -= 1;
+    if (stack.count <= 0) inventory[heldSlot] = null;
+    return true;
+  }
+
+  /** Trade a held chest with the cabin master: 50/50 classic coins or magic gear. */
+  function tryCabinChestTrade() {
+    if (player.dead > 0 || fadeMode || cabinCut.kind || !nearCabinNpc()) return false;
+    if (!holdingChest()) {
+      chestTalk = 2.4;
+      return true;
+    }
+    if (!consumeHeldChest()) return false;
+    startCabinCut(Math.random() < 0.5 ? "classic" : "magic");
+    return true;
+  }
+
   function spawnCabinCoins(amount, hx, hy, pack) {
     const n = 7;
     const share = Math.floor(amount / n);
@@ -3041,6 +3114,7 @@
       return true;
     }
     player.coins -= BOAT_PRICE;
+    srBoughtBoat = true;
     startBoatThrow();
     return true;
   }
@@ -3076,6 +3150,7 @@
       seatPlayerOnBoat();
       player.inWater = false;
       player.submerged = 0;
+      checkBoatSpeedEnd();
       return true;
     }
     return false;
@@ -3094,6 +3169,7 @@
 
   function tryTradeKey() {
     if (player.dead > 0 || fadeMode) return;
+    if (tryCabinChestTrade()) return;
     const mid = playerCenter();
     if (tryHarborDeal()) return;
     const k = traderNpc();
@@ -3322,9 +3398,11 @@
       rod.t = 0;
       landRodCatch();
     } else if (rod.phase === "reel" && rod.t > 0.5) {
+      const landed = rod.catchId;
       rod.phase = "idle";
       rod.catchId = null;
       rod.tugLeft = 0;
+      if (playMode === "speedrun" && landed) checkCatchSpeedEnd(landed);
     }
   }
 
@@ -3367,6 +3445,7 @@
     const stack = inventory[heldSlot];
     if (!stack) return;
     if (stack.id === "chest") {
+      if (tryCabinChestTrade()) return;
       chestTalk = 2.4;
       return;
     }
@@ -3438,6 +3517,11 @@
     "=": [0, 0, 31, 0, 31, 0, 0],
     "'": [12, 12, 8, 0, 0, 0, 0],
     ".": [0, 0, 0, 0, 0, 12, 12],
+    ":": [0, 12, 12, 0, 12, 12, 0],
+    "-": [0, 0, 0, 31, 0, 0, 0],
+    "%": [25, 26, 4, 8, 16, 21, 19],
+    "/": [1, 2, 4, 4, 8, 16, 16],
+    ",": [0, 0, 0, 0, 12, 12, 8],
     "!": [4, 4, 4, 4, 4, 0, 4],
     "?": [14, 17, 1, 2, 4, 0, 4],
     "+": [0, 4, 4, 31, 4, 4, 0],
@@ -6654,7 +6738,8 @@
       "ENTER DROPS HELD ITEM",
       "SPACE USES HELD ITEM",
       "SHELL BLOWS THE HORN",
-      "CHEST SAYS FIND MASTER",
+      "CHEST NEEDS THE MASTER",
+      "T OPENS CHEST IN CABIN",
       "T TRADES NEAR NPC",
       "C CASTS WHEN BOAT STOPS",
       "CLOSE DOCK GOOD FAR LEGEND",
@@ -6766,6 +6851,8 @@
     drawUseFx();
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
     drawFade();
+    drawSpeedTimer();
+    drawSpeedUI();
   }
 
   function drawUseFx() {
@@ -6789,7 +6876,452 @@
   const SAVE_KEY = "survival-rpg-save";
   let saveAcc = 0;
 
+  function lbApi() {
+    return window.IsleLeaderboard || null;
+  }
+
+  function catLabel(id) {
+    const api = lbApi();
+    if (api && api.CATEGORIES[id]) return api.CATEGORIES[id].label;
+    return String(id || "").toUpperCase();
+  }
+
+  function formatSpeedTime(ms) {
+    const api = lbApi();
+    if (api) return api.formatTime(ms);
+    const t = Math.max(0, ms | 0);
+    const m = (t / 60000) | 0;
+    const s = ((t % 60000) / 1000) | 0;
+    const c = ((t % 1000) / 10) | 0;
+    return m + ":" + String(s).padStart(2, "0") + "." + String(c).padStart(2, "0");
+  }
+
+  function uiBlocksPlay() {
+    return uiScreen === "mode" || uiScreen === "categories" || uiScreen === "finish" || uiScreen === "boards";
+  }
+
+  function speedrunActive() {
+    return playMode === "speedrun" && (srRunning || uiScreen === "ready");
+  }
+
+  function maybeStartSpeedTimer() {
+    if (playMode !== "speedrun" || srTiming || uiScreen === "finish") return;
+    if (uiScreen !== "ready" && !(uiScreen === null && srRunning)) return;
+    uiScreen = null;
+    guideOpen = false;
+    srRunning = true;
+    srTiming = true;
+    srStartPerf = performance.now();
+    srElapsed = 0;
+  }
+
+  function checkCatchSpeedEnd(id) {
+    if (!speedrunActive() || !srTiming) return;
+    if (srCat === "shark" && id === "shark") finishSpeedrun();
+    else if (srCat === "jelly_white" && id === "jelly_white") finishSpeedrun();
+    else if (srCat === "chest" && id === "chest") finishSpeedrun();
+    else if (srCat === "shark_cloak" && id === "shark" && cloakOn) finishSpeedrun();
+  }
+
+  function checkBoatSpeedEnd() {
+    if (!speedrunActive() || !srTiming) return;
+    if (srCat === "boat" && srBoughtBoat && player.aboard) finishSpeedrun();
+  }
+
+  function finishSpeedrun() {
+    if (playMode !== "speedrun" || uiScreen === "finish") return;
+    if (srTiming) srElapsed = Math.max(srElapsed, performance.now() - srStartPerf);
+    srFinalMs = Math.max(0, srElapsed | 0);
+    srTiming = false;
+    srRunning = false;
+    uiScreen = "finish";
+    srFinishSel = 1;
+    srStatus = "";
+    const api = lbApi();
+    if (api && !srName) srName = api.getLastName() || "";
+    refreshSpeedBoard(srCat);
+  }
+
+  function resetSpeedrunWorld() {
+    for (let i = 0; i < inventory.length; i++) inventory[i] = null;
+    heldSlot = 0;
+    player.coins = 0;
+    player.xp = 0;
+    player.level = 1;
+    player.hp = MAX_HP;
+    player.dead = 0;
+    player.aboard = false;
+    player.submerged = 0;
+    player.drownTick = 0;
+    player.hurt = 0;
+    player.moving = false;
+    player.facing = 1;
+    cloakOn = false;
+    ownedBoat = null;
+    boatThrow = null;
+    scene = "island";
+    fade = 0;
+    fadeMode = 0;
+    fadeNext = null;
+    islandHold = null;
+    doorCool = 0.4;
+    guideOpen = false;
+    harborTalk = 0;
+    chestTalk = 0;
+    fishCastT = 0;
+    pickupAnims.length = 0;
+    useFx = null;
+    xpFx = null;
+    shopSales.length = 0;
+    shopTrade.phase = "idle";
+    shopTrade.t = 0;
+    shopTrade.id = null;
+    cabinCut.kind = "";
+    cabinCut.t = 0;
+    cabinCut.mode = "open";
+    rod.phase = "idle";
+    rod.t = 0;
+    rod.catchId = null;
+    rod.bit = false;
+    rod.tugLeft = 0;
+    loot.length = 0;
+    placeSouthBeachLoot();
+    player.x = spawnX;
+    player.y = spawnY;
+    srBoughtBoat = false;
+    srWasDead = false;
+    srTiming = false;
+    srRunning = false;
+    srElapsed = 0;
+    srFinalMs = 0;
+    srStatus = "";
+    srSubmitting = false;
+    camera.x = player.x + player.w / 2 - viewW / 2;
+    camera.y = player.y + player.h / 2 - viewH * 0.36;
+    clampCamera();
+  }
+
+  async function refreshSpeedBoard(cat) {
+    const id = cat || srCat;
+    const api = lbApi();
+    srBoardNote = "LOADING...";
+    if (!api) {
+      srBoardRows = [];
+      srBoardNote = "NO CLIENT";
+      return;
+    }
+    if (!api.configured()) {
+      srBoardRows = api.getCachedBoard(id) || [];
+      srBoardNote = srBoardRows.length ? "CACHED / OFFLINE" : "SET UP SUPABASE";
+      return;
+    }
+    const res = await api.fetchTop(id, 10);
+    srBoardRows = res.rows || [];
+    srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
+  }
+
+  function beginSpeedCategory(cat) {
+    srCat = cat;
+    playMode = "speedrun";
+    resetSpeedrunWorld();
+    uiScreen = "ready";
+    srCursor = 0;
+    srStatus = "";
+    refreshSpeedBoard(srCat);
+  }
+
+  function enterNormalMode() {
+    playMode = "normal";
+    uiScreen = null;
+    loadGame();
+    camera.x = player.x + player.w / 2 - viewW / 2;
+    camera.y = player.y + player.h / 2 - viewH * 0.36;
+    clampCamera();
+  }
+
+  function backToModeMenu() {
+    playMode = null;
+    uiScreen = "mode";
+    srCursor = 0;
+    srRunning = false;
+    srTiming = false;
+    guideOpen = false;
+  }
+
+  function backToCategories() {
+    playMode = "speedrun";
+    uiScreen = "categories";
+    srRunning = false;
+    srTiming = false;
+    srCursor = Math.max(0, SPEED_ORDER.indexOf(srCat));
+    refreshSpeedBoard(SPEED_ORDER[srCursor] || srCat);
+  }
+
+  function drawPanelBox(x, y, w, h, title) {
+    px(x, y, w, h, "#3a2414");
+    px(x + 1, y + 1, w - 2, h - 2, "#8a5a32");
+    px(x + 3, y + 3, w - 6, h - 6, "#c4a574");
+    if (title) {
+      px(x + 3, y + 3, w - 6, 11, "#5c3a21");
+      px(x + 3, y + 13, w - 6, 1, "#c9a227");
+      drawPixText(title, (x + w / 2) | 0, y + 5, "#f3e2c4", "center");
+    }
+  }
+
+  function drawSpeedTimer() {
+    if (playMode !== "speedrun") return;
+    if (!(srTiming || uiScreen === "ready" || uiScreen === "finish")) return;
+    const uiW = canvas.width / SCALE_UI;
+    let ms = srFinalMs;
+    if (srTiming) ms = performance.now() - srStartPerf;
+    else if (uiScreen === "ready") ms = 0;
+    const label = formatSpeedTime(ms);
+    const tw = pixTextWidth(label);
+    const x = uiW - tw - 10;
+    const y = 6;
+    px(x - 4, y - 3, tw + 8, 13, "#3a2414");
+    px(x - 3, y - 2, tw + 6, 11, "#5c3a21");
+    drawPixText(label, x, y, "#f3e2c4");
+  }
+
+  function drawBoardList(x, y, maxRows) {
+    const rows = srBoardRows || [];
+    const n = Math.min(maxRows || 10, rows.length);
+    if (!n) {
+      drawPixText(srBoardNote || "NO SCORES YET", x, y, "#5c3a21");
+      return y + 8;
+    }
+    let yy = y;
+    for (let i = 0; i < n; i++) {
+      const r = rows[i];
+      const rank = String(i + 1).padStart(2, " ");
+      const name = String(r.player_name || "?").slice(0, 12);
+      const timeStr = formatSpeedTime(r.time_ms | 0);
+      drawPixText(rank + " " + name, x, yy, "#3a2414");
+      drawPixText(timeStr, x + 108, yy, "#5c3a21");
+      yy += 8;
+    }
+    if (srBoardNote) {
+      drawPixText(srBoardNote, x, yy + 2, "#8a5a32");
+      yy += 10;
+    }
+    return yy;
+  }
+
+  function drawModeSelect() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 168;
+    const h = 78;
+    const x = ((uiW - w) / 2) | 0;
+    const y = ((uiH - h) / 2) | 0;
+    drawPanelBox(x, y, w, h, "ISLEBOUND");
+    drawPixText("CHOOSE YOUR PATH", (x + w / 2) | 0, y + 20, "#3a2414", "center");
+    const opts = ["NORMAL", "SPEEDRUN"];
+    for (let i = 0; i < opts.length; i++) {
+      const sel = srCursor === i;
+      const oy = y + 36 + i * 14;
+      if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
+      drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+    }
+    drawPixText("ARROWS + ENTER", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+  }
+
+  function drawCategorySelect() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.5;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const leftW = 150;
+    const boardW = 170;
+    const h = Math.min(uiH - 16, 16 + SPEED_ORDER.length * 10 + 28);
+    const totalW = leftW + boardW + 10;
+    const x = ((uiW - totalW) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, leftW, h, "SPEEDRUN");
+    for (let i = 0; i < SPEED_ORDER.length; i++) {
+      const id = SPEED_ORDER[i];
+      const sel = srCursor === i;
+      const oy = y + 20 + i * 10;
+      if (sel) px(x + 5, oy - 2, leftW - 10, 9, "#e8c44a");
+      drawPixText((sel ? ">" : " ") + catLabel(id), x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+    }
+    drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
+    const bx = x + leftW + 10;
+    drawPanelBox(bx, y, boardW, h, "TOP 10");
+    drawBoardList(bx + 8, y + 20, 10);
+  }
+
+  function drawReadyScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const w = 180;
+    const h = 64;
+    const x = ((uiW - w) / 2) | 0;
+    const y = ((uiH - h) / 2 - 20) | 0;
+    drawPanelBox(x, y, w, h, "READY");
+    drawPixText(catLabel(srCat), (x + w / 2) | 0, y + 22, "#3a2414", "center");
+    drawPixText("ENTER PLAY  OR  MOVE", (x + w / 2) | 0, y + 36, "#5c3a21", "center");
+    drawPixText("ESC CATEGORIES", (x + w / 2) | 0, y + 48, "#5c3a21", "center");
+  }
+
+  function drawFinishScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 210;
+    const h = 148;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "RUN COMPLETE");
+    drawPixText(catLabel(srCat), (x + w / 2) | 0, y + 20, "#3a2414", "center");
+    drawPixText(formatSpeedTime(srFinalMs), (x + w / 2) | 0, y + 32, "#2b1c12", "center");
+    drawPixText("NAME", x + 12, y + 48, "#5c3a21");
+    px(x + 48, y + 46, 120, 11, srFinishSel === 0 ? "#e8c44a" : "#8a5a32");
+    px(x + 49, y + 47, 118, 9, "#f3e2c4");
+    drawPixText((srName || "").slice(0, 12), x + 52, y + 48, "#2b1c12");
+    if (srFinishSel === 0 && ((time * 3) | 0) % 2 === 0) {
+      const cx = x + 52 + pixTextWidth((srName || "").slice(0, 12)) + (srName ? 1 : 0);
+      px(cx, y + 48, 5, 7, "#2b1c12");
+    }
+    const btns = ["SUBMIT", "RETRY", "CATEGORIES", "MENU"];
+    for (let i = 0; i < btns.length; i++) {
+      const sel = srFinishSel === i + 1;
+      const bx = x + 12 + (i % 2) * 96;
+      const by = y + 64 + ((i / 2) | 0) * 14;
+      if (sel) px(bx - 2, by - 2, 90, 11, "#e8c44a");
+      drawPixText(btns[i], bx, by, sel ? "#2b1c12" : "#3a2414");
+    }
+    if (srStatus) drawPixText(srStatus, (x + w / 2) | 0, y + 96, "#5c3a21", "center");
+    drawPixText("TOP 10", x + 12, y + 108, "#5c3a21");
+    drawBoardList(x + 12, y + 118, 3);
+  }
+
+  function drawSpeedUI() {
+    if (uiScreen === "mode") drawModeSelect();
+    else if (uiScreen === "categories") drawCategorySelect();
+    else if (uiScreen === "ready") drawReadyScreen();
+    else if (uiScreen === "finish") drawFinishScreen();
+  }
+
+  async function submitSpeedScore() {
+    if (srSubmitting) return;
+    const api = lbApi();
+    if (!api) {
+      srStatus = "NO CLIENT";
+      return;
+    }
+    const name = api.sanitizeName(srName);
+    if (!name) {
+      srStatus = "NAME 3-12";
+      srFinishSel = 0;
+      return;
+    }
+    srName = name;
+    srSubmitting = true;
+    srStatus = "SUBMITTING...";
+    const res = await api.submitScore(srCat, srFinalMs, name);
+    srSubmitting = false;
+    if (res.ok) {
+      srBoardRows = res.rows || [];
+      srStatus = "POSTED";
+      srBoardNote = "";
+    } else {
+      srStatus = (res.error || "FAILED").toUpperCase().slice(0, 22);
+      if (res.rows) srBoardRows = res.rows;
+    }
+  }
+
+  function onSpeedMenuKey(k) {
+    if (uiScreen === "mode") {
+      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor ? 0 : 1;
+      if (k === "enter" || k === " ") {
+        if (srCursor === 0) enterNormalMode();
+        else {
+          playMode = "speedrun";
+          uiScreen = "categories";
+          srCursor = 0;
+          refreshSpeedBoard(SPEED_ORDER[0]);
+        }
+      }
+      return true;
+    }
+    if (uiScreen === "categories") {
+      if (k === "escape") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowup" || k === "w") {
+        srCursor = (srCursor + SPEED_ORDER.length - 1) % SPEED_ORDER.length;
+        refreshSpeedBoard(SPEED_ORDER[srCursor]);
+      }
+      if (k === "arrowdown" || k === "s") {
+        srCursor = (srCursor + 1) % SPEED_ORDER.length;
+        refreshSpeedBoard(SPEED_ORDER[srCursor]);
+      }
+      if (k === "enter" || k === " ") beginSpeedCategory(SPEED_ORDER[srCursor]);
+      return true;
+    }
+    if (uiScreen === "ready") {
+      if (k === "escape") {
+        backToCategories();
+        return true;
+      }
+      if (k === "enter" || k === " ") {
+        maybeStartSpeedTimer();
+        return true;
+      }
+      return false;
+    }
+    if (uiScreen === "finish") {
+      if (srFinishSel === 0) {
+        if (k === "backspace") {
+          srName = srName.slice(0, -1);
+          return true;
+        }
+        if (k === "arrowdown" || k === "enter" || k === "tab") {
+          srFinishSel = 1;
+          return true;
+        }
+        if (k === "escape") {
+          backToCategories();
+          return true;
+        }
+        if (k.length === 1) {
+          const ch = k.toUpperCase();
+          if (/[A-Z0-9 ]/.test(ch) && srName.length < 12) srName += ch === " " ? " " : ch;
+          return true;
+        }
+        return true;
+      }
+      if (k === "arrowup" || k === "w") srFinishSel = srFinishSel <= 1 ? 0 : srFinishSel - 1;
+      if (k === "arrowdown" || k === "s") srFinishSel = Math.min(4, srFinishSel + 1);
+      if (k === "arrowleft" || k === "a") {
+        if (srFinishSel === 2 || srFinishSel === 4) srFinishSel -= 1;
+      }
+      if (k === "arrowright" || k === "d") {
+        if (srFinishSel === 1 || srFinishSel === 3) srFinishSel += 1;
+      }
+      if (k === "enter" || k === " ") {
+        if (srFinishSel === 1) submitSpeedScore();
+        else if (srFinishSel === 2) beginSpeedCategory(srCat);
+        else if (srFinishSel === 3) backToCategories();
+        else if (srFinishSel === 4) backToModeMenu();
+      }
+      if (k === "escape") backToCategories();
+      return true;
+    }
+    return false;
+  }
+
   function saveGame() {
+    if (playMode !== "normal") return;
     try {
       const slots = [];
       for (let i = 0; i < inventory.length; i++) {
@@ -6911,9 +7443,14 @@
     keys[k] = true;
     ensureAudio();
     if (k === "z") e.preventDefault();
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "t", "f", "c", "h"].includes(k)) {
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "t", "f", "c", "h", "escape", "tab", "backspace"].includes(k)) {
       e.preventDefault();
     }
+    if (uiScreen && uiScreen !== null) {
+      if (e.repeat && uiScreen !== "finish") return;
+      if (onSpeedMenuKey(k)) return;
+    }
+    if (uiBlocksPlay()) return;
     if (k === "h") {
       if (!e.repeat) guideOpen = !guideOpen;
       return;
@@ -6923,10 +7460,7 @@
       if (k === "enter" && isIndoor()) dropHeld();
       return;
     }
-    if (k >= "1" && k <= "8") {
-      if ((k === "1" || k === "2") && nearCabinNpc()) startCabinCut(k === "1" ? "classic" : "magic");
-      else heldSlot = k.charCodeAt(0) - 49;
-    }
+    if (k >= "1" && k <= "8") heldSlot = k.charCodeAt(0) - 49;
     if (k === "enter") onEnter();
     if (k === " ") useHeld();
     if (k === "t") tryTradeKey();
@@ -6981,10 +7515,13 @@
   window.addEventListener("beforeunload", saveGame);
 
   buildWorld();
-  loadGame();
   resizeCanvas();
   camera.x = player.x + player.w / 2 - viewW / 2;
   camera.y = player.y + player.h / 2 - viewH * 0.36;
   clampCamera();
+  {
+    const api = lbApi();
+    if (api) srName = api.getLastName() || "";
+  }
   requestAnimationFrame(loop);
 })();
