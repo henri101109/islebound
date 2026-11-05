@@ -3793,9 +3793,10 @@
 
   function fishBand() {
     const tiles = dockDistTiles();
-    const good = { bite: 0.86, legend: 0, rare: 0.24, weak: 0 };
-    const ehhh = { bite: 0.36, legend: 0.012, rare: 0.07, weak: 1 };
-    const far = { bite: 0.62, legend: 0.58, rare: 0.18, weak: 0 };
+    // Distance only changes tier odds (legend/rare/common). Within a tier every fish is equal.
+    const good = { bite: 0.86, legend: 0, rare: 0.24 };
+    const ehhh = { bite: 0.36, legend: 0.012, rare: 0.07 };
+    const far = { bite: 0.62, legend: 0.58, rare: 0.18 };
     if (tiles <= 2) return good;
     if (tiles <= 4) return ehhh;
     if (tiles >= 12) return far;
@@ -3804,7 +3805,6 @@
       bite: ehhh.bite + (far.bite - ehhh.bite) * u,
       legend: ehhh.legend + (far.legend - ehhh.legend) * u,
       rare: ehhh.rare + (far.rare - ehhh.rare) * u,
-      weak: ehhh.weak + (far.weak - ehhh.weak) * u,
     };
   }
 
@@ -3826,7 +3826,12 @@
       legend = (legend / sum) * 0.95;
       rare = (rare / sum) * 0.95;
     }
-    return { bite: band.bite, legend, rare, weak: band.weak };
+    return { bite: band.bite, legend, rare };
+  }
+
+  function pickEqual(list) {
+    if (!list || !list.length) return null;
+    return list[irand(0, list.length - 1)];
   }
 
   function consumeRodBait() {
@@ -3847,14 +3852,18 @@
     }
   }
 
-  /** Independent sequential super-legend rolls; first hit wins. Good bait multiplies odds ×1.10. */
+  /**
+   * Super-legendaries: each species rolls independently at 1/den (×1.10 with good bait).
+   * If several hit the same cast, pick one at random so list order doesn't favor gold jelly.
+   */
   function rollSuperLegend(goodBait) {
     const mult = goodBait ? 1.1 : 1;
+    const hits = [];
     for (let i = 0; i < CATCH_SUPER.length; i++) {
       const row = CATCH_SUPER[i];
-      if (Math.random() < (mult / row.den)) return row.id;
+      if (Math.random() < mult / row.den) hits.push(row.id);
     }
-    return null;
+    return pickEqual(hits);
   }
 
   function rollBandCatch(goodBait) {
@@ -3862,10 +3871,9 @@
     if (goodBait) band = baitBoostBand(band);
     const r = Math.random();
     let id;
-    if (r < band.legend) id = CATCH_LEGEND[irand(0, CATCH_LEGEND.length - 1)];
-    else if (r < band.legend + band.rare) id = CATCH_RARE[irand(0, CATCH_RARE.length - 1)];
-    else if (Math.random() < band.weak) id = Math.random() < 0.67 ? "cod" : "trout";
-    else id = CATCH_COMMON[irand(0, CATCH_COMMON.length - 1)];
+    if (r < band.legend) id = pickEqual(CATCH_LEGEND);
+    else if (r < band.legend + band.rare) id = pickEqual(CATCH_RARE);
+    else id = pickEqual(CATCH_COMMON);
     const superId = rollSuperLegend(goodBait);
     return superId || id;
   }
