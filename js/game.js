@@ -268,6 +268,14 @@
   let chatHoverTip = null; // { x, y, label }
   let chatStatusNote = "";
   let chatSendBusy = false;
+  const CHAT_NOTIFS_KEY = "islebound-chat-notifs";
+  let chatNotifsEnabled = true;
+  let chatToast = null; // { who, isAcc, text, until }
+  let chatNotifSeenId = "";
+  let chatPresenceOffset = 0;
+  let chatPresenceRotAt = 0;
+  const CHAT_PRESENCE_SHOW = 3;
+  const CHAT_PRESENCE_ROT_MS = 3000;
   const dockLamps = [];
   const windowLights = [];
   const eaveShades = [];
@@ -6956,6 +6964,67 @@
     return null;
   }
 
+  function loadChatNotifsPref() {
+    try {
+      const v = localStorage.getItem(CHAT_NOTIFS_KEY);
+      if (v === "0" || v === "off" || v === "false") chatNotifsEnabled = false;
+      else chatNotifsEnabled = true;
+    } catch (e) {
+      chatNotifsEnabled = true;
+    }
+  }
+
+  function setChatNotifsEnabled(on) {
+    chatNotifsEnabled = !!on;
+    if (!chatNotifsEnabled) chatToast = null;
+    try {
+      localStorage.setItem(CHAT_NOTIFS_KEY, chatNotifsEnabled ? "1" : "0");
+    } catch (e) {}
+  }
+
+  function chatMsgIsSelf(m) {
+    if (!m) return false;
+    const api = lbApi();
+    const uid = api && api.currentUser && api.currentUser() ? api.currentUser().id : null;
+    if (uid && m.user_id && String(uid) === String(m.user_id)) return true;
+    const mine = chatPlayerName();
+    if (mine && m.player_name && api && api.namesFuzzyMatch && api.namesFuzzyMatch(mine, m.player_name)) {
+      return true;
+    }
+    return false;
+  }
+
+  function maybePushChatToast(msgs) {
+    if (!msgs || !msgs.length) return;
+    const last = msgs[msgs.length - 1];
+    if (!last || !last.id) return;
+    if (!chatNotifSeenId) {
+      chatNotifSeenId = last.id;
+      return;
+    }
+    if (last.id === chatNotifSeenId) return;
+    // Walk newest → oldest for the freshest non-self toast candidate
+    let toastMsg = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (!m || !m.id) continue;
+      if (m.id === chatNotifSeenId) break;
+      if (chatMsgIsSelf(m)) continue;
+      toastMsg = m;
+      break;
+    }
+    chatNotifSeenId = last.id;
+    if (!toastMsg || !chatNotifsEnabled) return;
+    // Closed: always toast. Open: still toast others' messages.
+    if (chatOpen && chatMsgIsSelf(toastMsg)) return;
+    chatToast = {
+      who: String(toastMsg.player_name || "?").slice(0, 8),
+      isAcc: !!(toastMsg.is_account || toastMsg.user_id),
+      text: String(toastMsg.body || "").slice(0, 28),
+      until: performance.now() + 3500,
+    };
+  }
+
   function markChatRead() {
     const api = lbApi();
     const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
@@ -6964,12 +7033,13 @@
   }
 
   function refreshChatUnread() {
+    const api = lbApi();
+    const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
+    maybePushChatToast(msgs);
     if (chatOpen) {
       markChatRead();
       return;
     }
-    const api = lbApi();
-    const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
     if (!msgs.length) {
       chatUnread = 0;
       return;
@@ -6985,6 +7055,42 @@
       n++;
     }
     chatUnread = n;
+  }
+
+  function presenceCarouselSlice(list) {
+    const arr = Array.isArray(list) ? list : [];
+    if (arr.length <= CHAT_PRESENCE_SHOW) {
+      chatPresenceOffset = 0;
+      return arr;
+    }
+    const now = Date.now();
+    if (!chatPresenceRotAt) chatPresenceRotAt = now;
+    if (now - chatPresenceRotAt >= CHAT_PRESENCE_ROT_MS) {
+      chatPresenceOffset = (chatPresenceOffset + 1) % arr.length;
+      chatPresenceRotAt = now;
+    }
+    if (chatPresenceOffset >= arr.length) chatPresenceOffset = 0;
+    const out = [];
+    for (let i = 0; i < CHAT_PRESENCE_SHOW; i++) {
+      out.push(arr[(chatPresenceOffset + i) % arr.length]);
+    }
+    return out;
+  }
+
+  function chatAuthorWidth(name, isAcc, maxLen) {
+    const n = String(name || "?").slice(0, maxLen == null ? (isAcc ? 7 : 8) : maxLen);
+    if (isAcc) return pixTextWidth(n.toUpperCase()) + 4;
+    return pixTextWidth(n);
+  }
+
+  function clipPixText(text, x, y, color, maxW) {
+    const s = String(text || "").toUpperCase();
+    if (!s || maxW <= 0) return 0;
+    let n = s.length;
+    while (n > 0 && pixTextWidth(s.slice(0, n)) > maxW) n--;
+    if (n <= 0) return 0;
+    drawPixText(s.slice(0, n), x, y, color);
+    return pixTextWidth(s.slice(0, n));
   }
 
   function toggleIslandChat() {
@@ -7113,12 +7219,82 @@
     drawPixText(label, x + 7, y + 3, "#f3e2c4");
   }
 
+  function drawChatToast() {
+    if (!chatToast) return;
+    const now = performance.now();
+    if (now >= chatToast.until) {
+      chatToast = null;
+      return;
+    }
+    const uiW = canvas.width / SCALE_UI;
+    const left = chatToast.until - now;
+    const alpha = left < 700 ? Math.max(0, left / 700) : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Top corner beside logged-in username HUD (or top-left if no chip)
+    let x = 8;
+    let y = 6;
+    const api = lbApi();
+    const showHud =
+      api &&
+      api.isSignedIn &&
+      api.isSignedIn() &&
+      (playMode === "speedrun" || playMode === "normal") &&
+      !(uiBlocksPlay() && uiScreen !== "ready" && uiScreen !== "finish");
+    if (showHud) {
+      const name = (api.displayName && api.displayName()) || "PLAYER";
+      let playMs = 0;
+      if (api.totalPlaytimeMs) playMs = api.totalPlaytimeMs() | 0;
+      else {
+        const p = api.currentProfile && api.currentProfile();
+        playMs = ((p && p.playtime_ms) || 0) + ((p && p.nm_playtime_ms) || 0);
+      }
+      const clock =
+        api.formatPlaytimeClock ? api.formatPlaytimeClock(playMs) : formatSpeedTime(playMs).split(".")[0];
+      let hx = 10;
+      const selfRow = {
+        player_name: name,
+        user_id: api.currentUser && api.currentUser() ? api.currentUser().id : null,
+      };
+      if (boardRowOnline(selfRow)) hx += 4;
+      hx += chatAuthorWidth(name, true, 10) + 3 + pixTextWidth(String(clock)) + 6;
+      x = hx;
+      y = 5;
+    }
+    const who = String(chatToast.who || "?").slice(0, chatToast.isAcc ? 7 : 8);
+    const preview = String(chatToast.text || "").slice(0, 22);
+    const whoW = chatAuthorWidth(who, chatToast.isAcc, chatToast.isAcc ? 7 : 8);
+    const prevW = Math.min(pixTextWidth(preview.toUpperCase()), 96);
+    let boxW = Math.min(uiW - x - 8, whoW + prevW + 14);
+    if (boxW < 40) {
+      // Wrap under HUD if horizontal space is tight (e.g. speedrun timer)
+      x = 8;
+      y = 18;
+      boxW = Math.min(uiW - 16, whoW + prevW + 14);
+    }
+    const boxH = 12;
+    px(x - 2, y - 2, boxW + 4, boxH + 4, "#3a2414");
+    px(x - 1, y - 1, boxW + 2, boxH + 2, "#5c3a21");
+    px(x, y, boxW, boxH, "#c4a574");
+    let cx = x + 2;
+    if (chatToast.isAcc) cx += drawNameTag(who, cx, y + 2, 7);
+    else {
+      clipPixText(who, cx, y + 3, "#3a2414", whoW + 1);
+      cx += whoW;
+    }
+    cx += 3;
+    const remain = x + boxW - cx - 2;
+    clipPixText(preview, cx, y + 3, "#2b1c12", remain);
+    ctx.restore();
+  }
+
   function drawIslandChat() {
     syncPresenceActivity();
     refreshChatUnread();
     clearChatHits();
     chatHoverTip = null;
     drawChatUnreadPip();
+    drawChatToast();
     if (!chatOpen) return;
 
     const api = lbApi();
@@ -7128,28 +7304,35 @@
     const x = uiW - panelW - 3;
     const y = 3;
     const h = uiH - 6;
+    const innerL = x + 5;
+    const innerR = x + panelW - 5;
+    const innerW = innerR - innerL;
 
     // Soft dim on the left so the parchment sidebar reads as overlay
     ctx.globalAlpha = 0.28;
     px(0, 0, x - 1, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
 
+    // Title only — no ONLINE N in chat header (mode select keeps its chip)
     drawPanelBox(x, y, panelW, h, "ISLAND CHAT");
-    const online = onlineLabel();
-    drawPixText(online, x + panelW - 6, y + 5, "#c9a227", "right");
 
-    // Presence strip
+    // Presence strip (slow carousel when >3 online)
     const stripY = y + 16;
     const stripH = 12;
     px(x + 3, stripY, panelW - 6, stripH, "#b8955e");
     px(x + 3, stripY + stripH, panelW - 6, 1, "#8a5a32");
-    const presence = api && api.getOnlinePresence ? api.getOnlinePresence() : [];
-    let pxCursor = x + 5;
-    const stripMax = x + panelW - 5;
+    const presenceAll = api && api.getOnlinePresence ? api.getOnlinePresence() : [];
+    const presence = presenceCarouselSlice(presenceAll);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 3, stripY, panelW - 6, stripH);
+    ctx.clip();
+    let pxCursor = innerL;
+    const stripMax = innerR;
     for (let i = 0; i < presence.length; i++) {
       const p = presence[i];
       const name = (p && p.username) || "?";
-      const isAcc = !!(p && p.user_id);
+      const isAcc = !!(p && (p.user_id || p.is_account));
       const tip =
         api && api.presenceActivityLabel
           ? api.presenceActivityLabel(p)
@@ -7158,20 +7341,20 @@
             : p && p.mode === "speedrun"
               ? String(p.category || "SPEEDRUN").toUpperCase()
               : "LOBBY";
-      const shown = name.slice(0, isAcc ? 6 : 7);
-      const nw = (isAcc ? pixTextWidth(shown) + 4 : pixTextWidth(shown)) + 5;
-      if (pxCursor + nw > stripMax) {
-        drawPixText("…", pxCursor, stripY + 3, "#5c3a21");
-        break;
-      }
+      const maxLen = isAcc ? 6 : 7;
+      const shown = String(name).slice(0, maxLen);
+      const nameW = chatAuthorWidth(shown, isAcc, maxLen);
+      const nw = nameW + 5; // online pip + gap
+      if (pxCursor + nw > stripMax) break;
       drawOnlineDot(pxCursor, stripY + 2);
       const nameX = pxCursor + 4;
-      if (isAcc) drawNameTag(shown, nameX, stripY + 2, 6);
+      if (isAcc) drawNameTag(shown, nameX, stripY + 2, maxLen);
       else drawPixText(shown, nameX, stripY + 3, "#3a2414");
       addChatHit("pres:" + i, pxCursor, stripY, nw, stripH, null, { tip, tipX: nameX, tipY: stripY + 2 });
-      pxCursor += nw + 3;
+      pxCursor += nw + 4;
     }
-    if (!presence.length) drawPixText("NO ONE YET", x + 6, stripY + 3, "#5c3a21");
+    ctx.restore();
+    if (!presenceAll.length) drawPixText("NO ONE YET", innerL + 1, stripY + 3, "#5c3a21");
 
     // Messages
     const composerH = 28;
@@ -7181,22 +7364,36 @@
     px(x + 3, msgTop, panelW - 6, msgH, "#d4b888");
     const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
     const soft = (api && api.getChatStatus && api.getChatStatus()) || chatStatusNote || "";
-    const lineH = 8;
-    const maxChars = Math.max(8, ((panelW - 14) / 6) | 0);
+    const lineH = 9;
+    const fullChars = Math.max(8, (innerW / 6) | 0);
     const viewLines = Math.max(2, ((msgH - 4) / lineH) | 0);
 
-    // Build flattened render lines newest-bottom
+    // Build flattened render lines newest-bottom; wrap using real nametag width
     const render = [];
     for (let i = 0; i < msgs.length; i++) {
       const m = msgs[i];
-      const who = String((m && m.player_name) || "?").slice(0, 8);
       const isAcc = !!(m && (m.is_account || m.user_id));
-      const bodyLines = wrapChatLines(m && m.body, maxChars - Math.min(who.length, 8) - 1);
-      for (let j = 0; j < bodyLines.length; j++) {
+      const whoMax = isAcc ? 7 : 8;
+      const who = String((m && m.player_name) || "?").slice(0, whoMax);
+      const whoW = chatAuthorWidth(who, isAcc, whoMax);
+      const firstChars = Math.max(4, ((innerW - whoW - 3) / 6) | 0);
+      const body = String((m && m.body) || "");
+      const first = body.slice(0, firstChars);
+      const rest = body.slice(firstChars);
+      render.push({
+        who,
+        isAcc,
+        text: first,
+        tipWho: who,
+        modeRow: m,
+      });
+      const cont = wrapChatLines(rest, fullChars);
+      for (let j = 0; j < cont.length; j++) {
+        if (!cont[j]) continue;
         render.push({
-          who: j === 0 ? who : "",
-          isAcc: j === 0 ? isAcc : false,
-          text: bodyLines[j],
+          who: "",
+          isAcc: false,
+          text: cont[j],
           tipWho: who,
           modeRow: m,
         });
@@ -7213,15 +7410,19 @@
     if (chatScroll > maxScroll) chatScroll = maxScroll;
     const start = Math.max(0, render.length - viewLines - chatScroll);
     const end = Math.min(render.length, start + viewLines);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 3, msgTop, panelW - 6, msgH);
+    ctx.clip();
     let my = msgTop + 3;
     for (let i = start; i < end; i++) {
       const row = render[i];
-      let cx = x + 5;
+      let cx = innerL;
       if (row.who) {
         const tip =
           row.modeRow && api && api.presenceActivityLabel
             ? (() => {
-                const list = presence;
+                const list = presenceAll;
                 for (let pi = 0; pi < list.length; pi++) {
                   const pr = list[pi];
                   if (!pr) continue;
@@ -7232,51 +7433,61 @@
                     return api.presenceActivityLabel(pr);
                   }
                 }
-                return row.modeRow.user_id ? "SURVIVAL" : "LOBBY";
+                return row.modeRow.user_id || row.isAcc ? "ONLINE" : "LOBBY";
               })()
             : "";
         if (row.isAcc) {
-          const tw = drawNameTag(row.who, cx, my, 8);
+          const tw = drawNameTag(row.who, cx, my, 7);
           if (tip) addChatHit("msgname:" + i, cx, my, tw, 8, null, { tip, tipX: cx, tipY: my });
-          cx += tw + 2;
+          cx += tw + 3;
         } else {
-          drawPixText(row.who, cx, my, "#5c3a21");
-          const tw = pixTextWidth(row.who);
+          const tw = chatAuthorWidth(row.who, false, 8);
+          clipPixText(row.who, cx, my, "#5c3a21", tw + 1);
           if (tip) addChatHit("msgname:" + i, cx, my, tw, 8, null, { tip, tipX: cx, tipY: my });
-          cx += tw + 2;
+          cx += tw + 3;
         }
       }
-      drawPixText(row.text, cx, my, "#3a2414");
+      clipPixText(row.text, cx, my, "#3a2414", innerR - cx);
       my += lineH;
     }
+    ctx.restore();
 
-    // Composer
+    // Composer — draft clipped so it never stacks under SEND
     const cy = y + h - composerH;
+    const sendW = 30;
+    const sendX = x + panelW - sendW - 6;
+    const draftFieldW = Math.max(20, sendX - (x + 6) - 4);
     px(x + 3, cy, panelW - 6, composerH - 2, "#5c3a21");
-    px(x + 4, cy + 1, panelW - 8, 11, chatFocused ? "#e8c44a" : "#8a5a32");
-    px(x + 5, cy + 2, panelW - 22, 9, "#f3e2c4");
+    px(x + 4, cy + 1, draftFieldW + 2, 11, chatFocused ? "#e8c44a" : "#8a5a32");
+    px(x + 5, cy + 2, draftFieldW, 9, "#f3e2c4");
     const draftShow = (chatDraft || "").slice(0, 80);
-    drawPixText(draftShow || (chatPlayerName() ? "…" : "SET NAME"), x + 7, cy + 3, draftShow ? "#2b1c12" : "#8a5a32");
-    if (chatFocused && ((time * 3) | 0) % 2 === 0) {
-      const cxo = x + 7 + pixTextWidth(draftShow);
-      px(cxo, cy + 3, 5, 7, "#2b1c12");
+    const placeholder = chatPlayerName() ? "…" : "SET NAME";
+    const draftMaxW = draftFieldW - 4;
+    if (draftShow) clipPixText(draftShow, x + 7, cy + 3, "#2b1c12", draftMaxW);
+    else clipPixText(placeholder, x + 7, cy + 3, "#8a5a32", draftMaxW);
+    if (chatFocused && draftShow && ((time * 3) | 0) % 2 === 0) {
+      const shownW = Math.min(pixTextWidth(draftShow.toUpperCase()), draftMaxW);
+      const cxo = x + 7 + shownW;
+      if (cxo + 5 <= x + 5 + draftFieldW) px(cxo, cy + 3, 5, 7, "#2b1c12");
     }
-    addChatHit("composer", x + 4, cy + 1, panelW - 22, 11, () => {
+    addChatHit("composer", x + 4, cy + 1, draftFieldW + 2, 11, () => {
       chatFocused = true;
     });
 
-    const sendX = x + panelW - 36;
-    const sendHover = menuHoverKey === "chat:send" || (pointerUi.x >= sendX && pointerUi.x < sendX + 30 && pointerUi.y >= cy + 1 && pointerUi.y < cy + 12);
-    if (sendHover) px(sendX - 1, cy + 1, 30, 11, "#e8c44a");
-    else px(sendX - 1, cy + 1, 30, 11, "#8a5a32");
+    const sendHover =
+      menuHoverKey === "chat:send" ||
+      (pointerUi.x >= sendX && pointerUi.x < sendX + sendW && pointerUi.y >= cy + 1 && pointerUi.y < cy + 12);
+    if (sendHover) px(sendX - 1, cy + 1, sendW, 11, "#e8c44a");
+    else px(sendX - 1, cy + 1, sendW, 11, "#8a5a32");
     drawPixText("SEND", sendX + 2, cy + 3, sendHover ? "#2b1c12" : "#f3e2c4");
-    addChatHit("chat:send", sendX - 1, cy + 1, 30, 11, () => {
+    addChatHit("chat:send", sendX - 1, cy + 1, sendW, 11, () => {
       chatFocused = true;
       trySendChat();
     });
 
-    if (chatStatusNote) drawPixText(chatStatusNote.slice(0, 18), x + 6, cy + 14, "#c9a227");
-    else drawPixText("TAB CLOSE  ENTER SEND", x + 6, cy + 14, "#c4a574");
+    const hintMax = innerW;
+    if (chatStatusNote) clipPixText(chatStatusNote.slice(0, 18), x + 6, cy + 14, "#c9a227", hintMax);
+    else clipPixText("TAB CLOSE  ENTER SEND", x + 6, cy + 14, "#c4a574", hintMax);
 
     // Hover tip from presence / author hits
     const tipHit = hitChatAt(pointerUi.x, pointerUi.y);
@@ -7990,7 +8201,7 @@
     const api = lbApi();
     const signed = api && api.isSignedIn && api.isSignedIn();
     const w = 220;
-    const h = signed ? 128 : authMode === "menu" ? 100 : authMode === "guest" ? 120 : 148;
+    const h = signed ? 142 : authMode === "menu" ? 112 : authMode === "guest" ? 120 : 148;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, signed ? "PROFILE" : "ACCOUNT");
@@ -8011,16 +8222,18 @@
       for (let i = 0; i < lines.length; i++) {
         drawPixText(lines[i], (x + w / 2) | 0, y + 36 + i * 10, "#3a2414", "center");
       }
-      const opts = ["SIGN OUT", "BACK"];
+      const notifLabel = chatNotifsEnabled ? "CHAT NOTIFS ON" : "CHAT NOTIFS OFF";
+      const opts = [notifLabel, "SIGN OUT", "BACK"];
       for (let i = 0; i < opts.length; i++) {
         const key = "acc:signed:" + i;
         const sel = srCursor === i || menuHovering(key);
-        const oy = y + h - 28 + i * 12;
-        if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
+        const oy = y + h - 40 + i * 12;
+        if (sel) px(x + 24, oy - 2, w - 48, 11, "#e8c44a");
         drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
-        addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
+        addMenuHit(key, x + 24, oy - 2, w - 48, 11, () => {
           srCursor = i;
-          if (i === 0) {
+          if (i === 0) setChatNotifsEnabled(!chatNotifsEnabled);
+          else if (i === 1) {
             api.signOut();
             guestNameLocked = false;
             authStatus = "SIGNED OUT";
@@ -8032,14 +8245,15 @@
       return;
     }
     if (authMode === "menu") {
-      const opts = ["SIGN IN", "SIGN UP", "GUEST", "BACK"];
+      const notifLabel = chatNotifsEnabled ? "CHAT NOTIFS ON" : "CHAT NOTIFS OFF";
+      const opts = ["SIGN IN", "SIGN UP", "GUEST", notifLabel, "BACK"];
       for (let i = 0; i < opts.length; i++) {
         const key = "acc:menu:" + i;
         const sel = srCursor === i || menuHovering(key);
-        const oy = y + 22 + i * 12;
-        if (sel) px(x + 30, oy - 2, w - 60, 11, "#e8c44a");
+        const oy = y + 20 + i * 12;
+        if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
         drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
-        addMenuHit(key, x + 30, oy - 2, w - 60, 11, () => {
+        addMenuHit(key, x + 18, oy - 2, w - 36, 11, () => {
           srCursor = i;
           if (i === 0) {
             authMode = "signin";
@@ -8058,6 +8272,8 @@
             authField = 0;
             authName = (api && api.getLastName && api.getLastName()) || srName || "";
             authStatus = "";
+          } else if (i === 3) {
+            setChatNotifsEnabled(!chatNotifsEnabled);
           } else backToModeMenu();
         }, { hover: true });
       }
@@ -8360,12 +8576,17 @@
       const api = lbApi();
       const signed = api && api.isSignedIn && api.isSignedIn();
       if (signed) {
-        if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor ? 0 : 1;
-        if (k === "escape" || ((k === "enter" || k === " ") && srCursor === 1)) {
+        if (k === "arrowup" || k === "w") srCursor = (srCursor + 2) % 3;
+        if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % 3;
+        if (k === "escape" || ((k === "enter" || k === " ") && srCursor === 2)) {
           backToModeMenu();
           return true;
         }
         if ((k === "enter" || k === " ") && srCursor === 0) {
+          setChatNotifsEnabled(!chatNotifsEnabled);
+          return true;
+        }
+        if ((k === "enter" || k === " ") && srCursor === 1) {
           api.signOut();
           guestNameLocked = false;
           authStatus = "SIGNED OUT";
@@ -8379,8 +8600,8 @@
           backToModeMenu();
           return true;
         }
-        if (k === "arrowup" || k === "w") srCursor = (srCursor + 3) % 4;
-        if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % 4;
+        if (k === "arrowup" || k === "w") srCursor = (srCursor + 4) % 5;
+        if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % 5;
         if (k === "enter" || k === " ") {
           if (srCursor === 0) {
             authMode = "signin";
@@ -8399,6 +8620,8 @@
             authField = 0;
             authName = (api && api.getLastName && api.getLastName()) || srName || "";
             authStatus = "";
+          } else if (srCursor === 3) {
+            setChatNotifsEnabled(!chatNotifsEnabled);
           } else backToModeMenu();
         }
         return true;
@@ -8943,6 +9166,7 @@
   camera.y = player.y + player.h / 2 - viewH * 0.36;
   clampCamera();
   {
+    loadChatNotifsPref();
     const api = lbApi();
     if (api) {
       srName = api.getLastName() || "";
@@ -8954,6 +9178,13 @@
           } else {
             guestNameLocked = false;
           }
+        });
+      }
+      if (api.onChatUpdate) {
+        api.onChatUpdate(() => {
+          try {
+            refreshChatUnread();
+          } catch (e) {}
         });
       }
       if (api.isSignedIn && api.isSignedIn()) {
