@@ -13,7 +13,7 @@
   const PRESENCE = "players_online";
   const CLIENT_ID_KEY = "islebound-client-id";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
-  const PRESENCE_HEARTBEAT_MS = 25000;
+  const PRESENCE_HEARTBEAT_MS = 12000; // keep board dots roughly fresh while menus are open
   const PRESENCE_ONLINE_MS = 75000; // last_seen within this = online
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
@@ -52,7 +52,9 @@
   let identityCache = { at: 0, rows: [] };
   let presenceTimer = null;
   let presenceAvailable = true; // false if table missing / hard fail
+  let presenceHasUserId = true; // false if user_id column missing on players_online
   let onlineCount = null; // null = unknown / unavailable
+  let onlinePresence = []; // [{ client_id, username, user_id }]
   let lastPresenceAt = 0;
 
   function configured() {
@@ -1235,19 +1237,61 @@
     return onlineCount;
   }
 
+  function getOnlinePresence() {
+    return onlinePresence.slice();
+  }
+
   function presenceUsername() {
+    // Prefer signed-in display name so board matching works for accounts.
     const n = displayName() || getLastName() || "";
     const s = sanitizeName(n, true);
     return s || null;
   }
 
+  function presenceUserId() {
+    if (!presenceHasUserId) return null;
+    if (session && session.user && session.user.id) return String(session.user.id);
+    return null;
+  }
+
   function markPresenceUnavailable() {
     presenceAvailable = false;
     onlineCount = null;
+    onlinePresence = [];
     if (presenceTimer) {
       clearInterval(presenceTimer);
       presenceTimer = null;
     }
+  }
+
+  function presenceErrorDetail(res, err) {
+    let detail = "";
+    try {
+      detail = String((err && (err.code || err.message || err.hint)) || "");
+    } catch (e) {}
+    return detail;
+  }
+
+  function presenceLooksMissing(status, detail) {
+    const d = String(detail || "").toLowerCase();
+    return (
+      status === 404 ||
+      String(detail).indexOf("PGRST205") >= 0 ||
+      String(detail).indexOf("PGRST106") >= 0 ||
+      d.indexOf("does not exist") >= 0 ||
+      d.indexOf("could not find the table") >= 0
+    );
+  }
+
+  function presenceLooksMissingUserId(status, detail) {
+    const d = String(detail || "").toLowerCase();
+    return (
+      d.indexOf("user_id") >= 0 &&
+      (d.indexOf("column") >= 0 ||
+        d.indexOf("schema cache") >= 0 ||
+        String(detail).indexOf("PGRST204") >= 0 ||
+        status === 400)
+    );
   }
 
   async function upsertPresence() {
@@ -1257,6 +1301,8 @@
       last_seen: new Date().toISOString(),
       username: presenceUsername(),
     };
+    const uid = presenceUserId();
+    if (uid) body.user_id = uid;
     try {
       const res = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
         method: "POST",
@@ -1264,19 +1310,27 @@
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        // Missing table / schema cache: fail soft (do not break the game)
-        let detail = "";
+        let err = null;
         try {
-          const err = await res.json();
-          detail = String((err && (err.code || err.message)) || "");
+          err = await res.json();
         } catch (e) {}
-        const missing =
-          res.status === 404 ||
-          detail.indexOf("PGRST205") >= 0 ||
-          detail.indexOf("PGRST106") >= 0 ||
-          detail.toLowerCase().indexOf("does not exist") >= 0 ||
-          detail.toLowerCase().indexOf("could not find the table") >= 0;
-        if (missing) {
+        const detail = presenceErrorDetail(res, err);
+        if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
+          presenceHasUserId = false;
+          delete body.user_id;
+          try {
+            const retry = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
+              method: "POST",
+              headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+              body: JSON.stringify(body),
+            });
+            if (retry.ok) {
+              lastPresenceAt = Date.now();
+              return { ok: true, noUserId: true };
+            }
+          } catch (e2) {}
+        }
+        if (presenceLooksMissing(res.status, detail)) {
           markPresenceUnavailable();
           return { ok: false, missing: true };
         }
@@ -1290,38 +1344,83 @@
   }
 
   async function fetchOnlineCount() {
+    return fetchOnlinePresence();
+  }
+
+  async function fetchOnlinePresence() {
     if (!configured() || !presenceAvailable) return null;
     const cutoff = new Date(Date.now() - PRESENCE_ONLINE_MS).toISOString();
+    const cols = presenceHasUserId ? "client_id,username,user_id" : "client_id,username";
     const url =
       restBase() +
       "/" +
       PRESENCE +
-      "?select=client_id&last_seen=gte." +
+      "?select=" +
+      cols +
+      "&last_seen=gte." +
       encodeURIComponent(cutoff) +
       "&limit=200";
     try {
       const res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
-        if (res.status === 404 || res.status === 400 || res.status === 406) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = presenceErrorDetail(res, err);
+        if (presenceHasUserId && presenceLooksMissingUserId(res.status, detail)) {
+          presenceHasUserId = false;
+          return fetchOnlinePresence();
+        }
+        if (res.status === 404 || res.status === 400 || res.status === 406 || presenceLooksMissing(res.status, detail)) {
           markPresenceUnavailable();
           return null;
         }
         return onlineCount;
       }
       const data = await res.json();
-      const n = Array.isArray(data) ? data.length : 0;
-      onlineCount = n;
-      return n;
+      const rows = Array.isArray(data) ? data : [];
+      onlinePresence = rows.map((r) => ({
+        client_id: r && r.client_id ? String(r.client_id) : "",
+        username: r && r.username ? normalizeIdentityName(r.username) : "",
+        user_id: r && r.user_id ? String(r.user_id) : null,
+      }));
+      onlineCount = onlinePresence.length;
+      return onlineCount;
     } catch (e) {
       return onlineCount;
     }
+  }
+
+  /**
+   * True if a board row's player appears in current presence
+   * (user_id match preferred; else fuzzy username vs heartbeat username).
+   * Guest rows with no matchable presence entry → false.
+   */
+  function rowIsOnline(r) {
+    if (!r || !presenceAvailable || !onlinePresence.length) return false;
+    const uid = r.user_id ? String(r.user_id) : "";
+    if (uid) {
+      for (let i = 0; i < onlinePresence.length; i++) {
+        const p = onlinePresence[i];
+        if (p && p.user_id && p.user_id === uid) return true;
+      }
+    }
+    const name = normalizeIdentityName(r.player_name || r.username || "");
+    if (!name) return false;
+    for (let i = 0; i < onlinePresence.length; i++) {
+      const p = onlinePresence[i];
+      if (!p || !p.username) continue;
+      if (namesFuzzyMatch(name, p.username)) return true;
+    }
+    return false;
   }
 
   async function tickPresence() {
     if (!configured() || !presenceAvailable) return;
     await upsertPresence();
     if (!presenceAvailable) return;
-    await fetchOnlineCount();
+    await fetchOnlinePresence();
   }
 
   function startPresence() {
@@ -1378,6 +1477,9 @@
     isNewScoreRow,
     getClientId,
     getOnlineCount,
+    getOnlinePresence,
+    rowIsOnline,
+    fetchOnlinePresence,
     startPresence,
     stopPresence,
     tickPresence,

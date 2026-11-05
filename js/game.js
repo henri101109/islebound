@@ -3626,12 +3626,37 @@
     return drawChipTag(n, x, y);
   }
 
+  /** Small green presence pip (~2–3px) left of a nametag. Returns width used. */
+  function drawOnlineDot(x, y) {
+    px(x, y + 2, 3, 3, "#1a4020");
+    px(x + 1, y + 3, 2, 2, "#3ddc5a");
+    return 4;
+  }
+
   function drawNewTag(x, y) {
     return drawChipTag("NEW", x, y);
   }
 
   function drawMemberTag(x, y) {
     return drawChipTag("ACC", x, y);
+  }
+
+  function boardRowOnline(r) {
+    const api = lbApi();
+    if (!api || typeof api.rowIsOnline !== "function") return false;
+    return !!api.rowIsOnline(r);
+  }
+
+  function nudgePresenceRefresh() {
+    const api = lbApi();
+    if (!api || typeof api.tickPresence !== "function") return;
+    // Debounce so menu redraws / board opens do not spam PostgREST.
+    const now = Date.now();
+    if (nudgePresenceRefresh._at && now - nudgePresenceRefresh._at < 8000) return;
+    nudgePresenceRefresh._at = now;
+    try {
+      api.tickPresence();
+    } catch (e) {}
   }
 
   function clearMenuHits() {
@@ -7325,9 +7350,15 @@
     const x = 10;
     const y = 6;
     // Nametag chip for username (same gold/wood style as board NEW/ACC tags), clock beside it.
-    const nameW = drawNameTag(name, x, y, 10);
+    let hx = x;
+    const selfRow = {
+      player_name: name,
+      user_id: api.currentUser && api.currentUser() ? api.currentUser().id : null,
+    };
+    if (boardRowOnline(selfRow)) hx += drawOnlineDot(hx, y);
+    const nameW = drawNameTag(name, hx, y, 10);
     const clockTw = pixTextWidth(String(clock));
-    const cx = x + nameW + 3;
+    const cx = hx + nameW + 3;
     px(cx - 1, y - 1, clockTw + 3, 9, "#3a2414");
     px(cx, y, clockTw + 1, 7, "#5c3a21");
     drawPixText(String(clock), cx + 1, y, "#f3e2c4");
@@ -7335,6 +7366,7 @@
 
   function drawBoardList(x, y, maxRows) {
     const api = lbApi();
+    nudgePresenceRefresh();
     const rows = applyBoardIdentityMerge(srBoardRows || [], maxRows || 10);
     const n = Math.min(maxRows || 10, rows.length);
     if (!n) {
@@ -7351,10 +7383,12 @@
         api && api.isNewScoreRow
           ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
           : false;
+      const isOnline = boardRowOnline(r);
       // Shorter when ACC/NEW chips sit beside the nametag
       const nameMax = isAcc && isNew ? 6 : isAcc || isNew ? 7 : 9;
       drawPixText(rank + " ", x, yy, "#3a2414");
       let tagX = x + 18;
+      if (isOnline) tagX += drawOnlineDot(tagX, yy);
       tagX += drawNameTag(r.player_name, tagX, yy, nameMax) + 2;
       if (isAcc) tagX += drawMemberTag(tagX, yy) + 2;
       if (isNew) tagX += drawNewTag(tagX, yy) + 2;
@@ -7377,6 +7411,7 @@
   }
 
   function drawOnlineChip(cx, y) {
+    nudgePresenceRefresh();
     const label = onlineLabel();
     const tw = pixTextWidth(label);
     const x = (cx - tw / 2) | 0;
@@ -7724,7 +7759,9 @@
         const r = rows[i];
         const rank = String(i + 1).padStart(2, " ");
         drawPixText(rank + " ", bx + 8, yy, "#3a2414");
-        drawNameTag(r.player_name, bx + 26, yy, 8);
+        let nx = bx + 26;
+        if (boardRowOnline(r)) nx += drawOnlineDot(nx, yy);
+        drawNameTag(r.player_name, nx, yy, 8);
         const val = api && api.formatNmValue ? api.formatNmValue(nmBoardKind, r.value) : String(r.value | 0);
         drawPixText(val, bx + 100, yy, "#5c3a21");
         yy += 8;

@@ -330,8 +330,13 @@ create table if not exists public.players_online (
     check (char_length(client_id) between 8 and 64),
   last_seen timestamptz not null default now(),
   username text
-    check (username is null or char_length(username) between 3 and 12)
+    check (username is null or char_length(username) between 3 and 12),
+  -- optional: signed-in account id for board online-dot matching
+  user_id uuid
 );
+
+-- If the table already exists without user_id:
+-- alter table public.players_online add column if not exists user_id uuid;
 
 create index if not exists players_online_last_seen_idx
   on public.players_online (last_seen desc);
@@ -361,7 +366,7 @@ create policy "Public update players_online"
   with check (char_length(client_id) between 8 and 64);
 ```
 
-Client behavior: upsert every ~25s while the tab is open; rows with `last_seen` within ~75s count as online.
+Client behavior: upsert every ~12s while the tab is open (also nudged when boards redraw); rows with `last_seen` within ~75s count as online. Heartbeat stores `username` (and `user_id` when signed in) so leaderboard nametags can show a green online dot.
 
 ## 5. Verify / how to test
 
