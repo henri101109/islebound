@@ -8792,9 +8792,18 @@
     ];
   }
 
+  /** Cancel in-flight VID fetch and clear the busy latch. */
   function bumpReplayPlayGen() {
     replayPlayGen++;
     srReplayBusy = false;
+  }
+
+  /** If a cancelled/failed load left the world with no UI, return to the board. */
+  function ensureReplayMenuIfIdle() {
+    if (!replayActive && uiScreen == null && playMode === "speedrun") {
+      uiScreen = "categories";
+      replayCutT = 0;
+    }
   }
 
   function boardRowPrefer(cat, rowIndex) {
@@ -8899,44 +8908,58 @@
   async function playBoardReplay(cat, rowIndex) {
     const id = cat || srCat || SPEED_ORDER[srCursor];
     const idx = rowIndex | 0;
-    // Invalidate any prior in-flight VID load so only this selection can start.
+    // Cancel prior fetch + hard-cut current playback immediately so switches never stall.
     const gen = ++replayPlayGen;
+    srReplayBusy = true;
+    if (replayActive) {
+      clearReplayPlayback();
+      replayCutT = 0;
+    }
     const api = lbApi();
     const prefer = boardRowPrefer(id, idx);
     if (!prefer) {
-      srBoardNote = "NO REPLAY";
-      return;
-    }
-    srReplayBusy = true;
-    // Keep any current replay on screen until the new payload is ready, then hard-cut.
-    let payload =
-      srBestReplay && replayMatchesBoardRow(srBestReplay, id, idx) ? srBestReplay : null;
-    if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
-      const res = await api.fetchBestReplay(id, prefer);
-      if (gen !== replayPlayGen) return;
-      if (res && res.replay && replayMatchesPreferLocal(res.replay, prefer)) {
-        if (!res.replay.category || res.replay.category === id) payload = res.replay;
+      if (gen === replayPlayGen) {
+        srReplayBusy = false;
+        srBoardNote = "NO REPLAY";
+        ensureReplayMenuIfIdle();
       }
-    }
-    if (gen !== replayPlayGen) return;
-    srReplayBusy = false;
-    if (!payload || !payload.frames || !payload.frames.length) {
-      srBoardNote = "NO REPLAY";
-      if (srReplayAvail && idx >= 0 && idx < srReplayAvail.length) srReplayAvail[idx] = false;
       return;
     }
-    if (!payload.category) payload.category = id;
-    // Final guard: never start a mismatched run for this row.
-    if (!replayMatchesPreferLocal(payload, prefer)) {
-      srBoardNote = "NO REPLAY";
-      return;
+    try {
+      let payload =
+        srBestReplay && replayMatchesBoardRow(srBestReplay, id, idx) ? srBestReplay : null;
+      if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
+        const res = await api.fetchBestReplay(id, prefer);
+        if (gen !== replayPlayGen) return;
+        if (res && res.replay && replayMatchesPreferLocal(res.replay, prefer)) {
+          if (!res.replay.category || res.replay.category === id) payload = res.replay;
+        }
+      }
+      if (gen !== replayPlayGen) return;
+      if (!payload || !payload.frames || !payload.frames.length) {
+        srBoardNote = "NO REPLAY";
+        if (srReplayAvail && idx >= 0 && idx < srReplayAvail.length) srReplayAvail[idx] = false;
+        ensureReplayMenuIfIdle();
+        return;
+      }
+      if (!payload.category) payload.category = id;
+      // Final guard: never start a mismatched run for this row.
+      if (!replayMatchesPreferLocal(payload, prefer)) {
+        srBoardNote = "NO REPLAY";
+        ensureReplayMenuIfIdle();
+        return;
+      }
+      // Re-check after awaits / sync work so Esc / newer clicks always win.
+      if (gen !== replayPlayGen) return;
+      srBestReplay = payload;
+      if (!srReplayAvail || srReplayAvail.length <= idx) {
+        srReplayAvail = (srBoardRows || []).map(() => false);
+      }
+      srReplayAvail[idx] = true;
+      startReplay(payload);
+    } finally {
+      if (gen === replayPlayGen) srReplayBusy = false;
     }
-    srBestReplay = payload;
-    if (!srReplayAvail || srReplayAvail.length <= idx) {
-      srReplayAvail = (srBoardRows || []).map(() => false);
-    }
-    srReplayAvail[idx] = true;
-    startReplay(payload);
   }
 
   async function playBestReplay(cat) {
@@ -9183,8 +9206,8 @@
   async function refreshSpeedBoard(cat) {
     const id = cat || srCat;
     const boardGen = ++srBoardGen;
-    // Category change cancels any pending VID load for a previous selection.
-    if (!replayActive) bumpReplayPlayGen();
+    // Category / board refresh always cancels any pending VID load.
+    bumpReplayPlayGen();
     const api = lbApi();
     srBoardNote = "LOADING...";
     srBestReplay = null;
@@ -9253,6 +9276,9 @@
 
   function backToModeMenu() {
     if (serpent) endSerpentFight("flee");
+    bumpReplayPlayGen();
+    clearReplayPlayback();
+    replayCutT = 0;
     const restoreCursor = uiScreen === "walkthrough" ? (walkKind === "speedrun" ? 5 : 4) : 0;
     playMode = null;
     uiScreen = "mode";
@@ -9286,6 +9312,9 @@
   }
 
   function backToCategories() {
+    bumpReplayPlayGen();
+    clearReplayPlayback();
+    replayCutT = 0;
     playMode = "speedrun";
     uiScreen = "categories";
     srRunning = false;
