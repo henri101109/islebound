@@ -206,10 +206,15 @@
   let presenceAvailable = true; // false if table missing / hard fail
   let presenceHasUserId = true; // false if user_id column missing on players_online
   let presenceHasMode = true; // false if mode/category columns missing
+  let presenceHasHub = true; // false if hub pose columns missing
   let onlineCount = null; // null = unknown / unavailable
-  let onlinePresence = []; // [{ client_id, username, user_id, mode, category }]
+  let onlinePresence = []; // [{ client_id, username, user_id, mode, category, hub_* }]
   let lastPresenceAt = 0;
   let presenceActivity = { mode: "menu", category: null }; // set by game
+  let hubPresencePose = null; // { x,y,face,face_id,back_id,emote } while in hub
+  let dailyClaimsAvailable = true;
+  const DAILY_CLAIMS = "daily_claims";
+  const DAILY_CLAIM_KEY = "islebound-daily-claim";
   let chatAvailable = true; // false if table missing / hard fail
   let chatMessages = []; // newest last
   let chatPollTimer = null;
@@ -2242,9 +2247,52 @@
   function setPresenceActivity(mode, category) {
     const m = String(mode || "menu").toLowerCase();
     presenceActivity = {
-      mode: m === "normal" || m === "speedrun" || m === "menu" ? m : "menu",
+      mode: m === "normal" || m === "speedrun" || m === "menu" || m === "hub" ? m : "menu",
       category: category ? String(category).toLowerCase().slice(0, 24) : null,
     };
+  }
+
+  function setHubPresence(pose) {
+    if (!pose) {
+      hubPresencePose = null;
+      return;
+    }
+    hubPresencePose = {
+      x: pose.x | 0,
+      y: pose.y | 0,
+      face: pose.face === -1 ? -1 : 1,
+      face_id: pose.face_id ? String(pose.face_id).slice(0, 24) : null,
+      back_id: pose.back_id ? String(pose.back_id).slice(0, 24) : null,
+      emote: pose.emote ? String(pose.emote).slice(0, 8) : "",
+    };
+  }
+
+  function hubPresenceSupported() {
+    return !!(presenceAvailable && presenceHasHub);
+  }
+
+  function presenceLooksMissingHub(status, detail) {
+    const raw = String(detail || "");
+    const d = raw.toLowerCase();
+    if (
+      (d.indexOf("hub_x") >= 0 ||
+        d.indexOf("hub_y") >= 0 ||
+        d.indexOf("hub_face") >= 0 ||
+        d.indexOf("face_id") >= 0 ||
+        d.indexOf("back_id") >= 0 ||
+        d.indexOf("emote") >= 0 ||
+        d.indexOf("in_hub") >= 0) &&
+      (raw.indexOf("PGRST204") >= 0 ||
+        d.indexOf("pgrst204") >= 0 ||
+        d.indexOf("42703") >= 0 ||
+        d.indexOf("column") >= 0 ||
+        d.indexOf("schema cache") >= 0 ||
+        d.indexOf("does not exist") >= 0 ||
+        status === 400)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   function getPresenceActivity() {
@@ -2262,6 +2310,7 @@
       return "SPEEDRUN";
     }
     if (m === "normal") return "SURVIVAL";
+    if (m === "hub") return "HUB";
     return "LOBBY";
   }
 
@@ -2301,15 +2350,44 @@
       body.mode = presenceActivity.mode || "menu";
       body.category = presenceActivity.mode === "speedrun" ? presenceActivity.category : null;
     }
+    if (presenceHasHub) {
+      if (hubPresencePose) {
+        body.in_hub = true;
+        body.hub_x = hubPresencePose.x;
+        body.hub_y = hubPresencePose.y;
+        body.hub_face = hubPresencePose.face;
+        body.face_id = hubPresencePose.face_id;
+        body.back_id = hubPresencePose.back_id;
+        body.emote = hubPresencePose.emote || "";
+      } else {
+        body.in_hub = false;
+        body.hub_x = null;
+        body.hub_y = null;
+        body.hub_face = null;
+        body.face_id = null;
+        body.back_id = null;
+        body.emote = "";
+      }
+    }
     try {
       let { res, detail } = await postPresenceBody(body);
       // Soft-drop missing optional columns and retry.
-      for (let attempt = 0; attempt < 3 && !res.ok; attempt++) {
+      for (let attempt = 0; attempt < 5 && !res.ok; attempt++) {
         let retried = false;
         if (body.mode != null && presenceLooksMissingMode(res.status, detail)) {
           presenceHasMode = false;
           delete body.mode;
           delete body.category;
+          retried = true;
+        } else if (presenceHasHub && presenceLooksMissingHub(res.status, detail)) {
+          presenceHasHub = false;
+          delete body.in_hub;
+          delete body.hub_x;
+          delete body.hub_y;
+          delete body.hub_face;
+          delete body.face_id;
+          delete body.back_id;
+          delete body.emote;
           retried = true;
         } else if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
           presenceHasUserId = false;
@@ -2320,6 +2398,16 @@
           presenceHasMode = false;
           delete body.mode;
           delete body.category;
+          retried = true;
+        } else if (presenceHasHub && (res.status === 400 || String(detail).indexOf("PGRST204") >= 0)) {
+          presenceHasHub = false;
+          delete body.in_hub;
+          delete body.hub_x;
+          delete body.hub_y;
+          delete body.hub_face;
+          delete body.face_id;
+          delete body.back_id;
+          delete body.emote;
           retried = true;
         }
         if (!retried) break;
@@ -2347,6 +2435,7 @@
     let cols = "client_id,username";
     if (presenceHasUserId) cols += ",user_id";
     if (presenceHasMode) cols += ",mode,category";
+    if (presenceHasHub) cols += ",in_hub,hub_x,hub_y,hub_face,face_id,back_id,emote";
     return cols;
   }
 
@@ -2375,6 +2464,10 @@
           presenceHasMode = false;
           return fetchOnlinePresence();
         }
+        if (presenceHasHub && (presenceLooksMissingHub(res.status, detail) || res.status === 400)) {
+          presenceHasHub = false;
+          return fetchOnlinePresence();
+        }
         if (presenceHasUserId && (presenceLooksMissingUserId(res.status, detail) || res.status === 400)) {
           presenceHasUserId = false;
           return fetchOnlinePresence();
@@ -2393,6 +2486,13 @@
         user_id: r && r.user_id ? String(r.user_id) : null,
         mode: r && r.mode ? String(r.mode).toLowerCase() : null,
         category: r && r.category ? String(r.category).toLowerCase() : null,
+        in_hub: r && r.in_hub != null ? !!r.in_hub : r && r.mode === "hub",
+        hub_x: r && typeof r.hub_x === "number" ? r.hub_x : null,
+        hub_y: r && typeof r.hub_y === "number" ? r.hub_y : null,
+        hub_face: r && r.hub_face === -1 ? -1 : 1,
+        face_id: r && r.face_id ? String(r.face_id) : null,
+        back_id: r && r.back_id ? String(r.back_id) : null,
+        emote: r && r.emote ? String(r.emote) : "",
       }));
       onlineCount = onlinePresence.length;
       return onlineCount;
@@ -2711,6 +2811,53 @@
     tickPresence();
   });
 
+  function getDailyClaimLocal() {
+    try {
+      return localStorage.getItem(DAILY_CLAIM_KEY) || "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  async function claimDailyIdol(dayKey) {
+    const day = String(dayKey || "").slice(0, 16);
+    if (!day) return { ok: false };
+    try {
+      localStorage.setItem(DAILY_CLAIM_KEY, day);
+    } catch (e) {}
+    if (!configured() || !dailyClaimsAvailable) return { ok: true, local: true };
+    const uid = session && session.user && session.user.id ? session.user.id : null;
+    if (!uid) return { ok: true, guest: true };
+    const body = {
+      user_id: uid,
+      day_utc: day,
+      item_id: "sun_idol",
+      claimed_at: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch(restBase() + "/" + DAILY_CLAIMS + "?on_conflict=user_id,day_utc", {
+        method: "POST",
+        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        // Soft-fail if table missing
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String((err && (err.message || err.code)) || res.status);
+        if (res.status === 404 || detail.indexOf("PGRST") >= 0 || detail.toLowerCase().indexOf("does not exist") >= 0) {
+          dailyClaimsAvailable = false;
+        }
+        return { ok: true, local: true };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: true, local: true };
+    }
+  }
+
   window.IsleLeaderboard = {
     CATEGORIES,
     NM_BOARD_DEFS,
@@ -2764,6 +2911,10 @@
     setPresenceActivity,
     getPresenceActivity,
     presenceActivityLabel,
+    setHubPresence,
+    hubPresenceSupported,
+    claimDailyIdol,
+    getDailyClaimLocal,
     startPresence,
     stopPresence,
     tickPresence,

@@ -650,3 +650,13 @@ Guests keep the same counters in `localStorage` (`islebound-nm-stats`) until the
 - Normal mode still uses `survival-rpg-save` for world state and never writes speedrun scores
 - Old email/magic-link sessions in `localStorage` are ignored / cleared on load
 - Speedrun timer does **not** pause while chat is open
+
+## Cosmetics / hub / daily idol
+
+Optional SQL: `COSMETICS_HUB_SETUP.sql` (also appended to `SETUP_ALL.sql`).
+
+- **Cosmetic slots**: bag stays 1–8; keys **9** (face) and **0** (back) select side HUD slots. Enter equips a held cosmetic (or unequips when a cosmetic slot is selected). Cosmetics do not count toward Full Inv%.
+- **Temple**: Mayan temple inland from the dock → short maze → Jade Mask pedestal.
+- **Daily Sun Idol**: UTC calendar day spawn near the temple path. Guests claim once per browser/session day (`islebound-daily-claim`); signed-in accounts also upsert `daily_claims`.
+- **Hub plaza**: gate on the jungle path. Presence may include `hub_x/hub_y/hub_face/face_id/back_id/emote/in_hub` when columns exist. Duels/duos: practice duel works locally; invite/pair are stubs until full netcode.
+- Client remains resilient if hub columns or `daily_claims` are missing.
