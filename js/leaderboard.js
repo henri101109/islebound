@@ -62,16 +62,16 @@
   // floorMs = absolute minimum under normal rules (boat + sail + 15s cast, etc.).
   // ~15.7s fish times are cheated (cast alone is 15s; boat/sail still required).
   const CATEGORIES = {
-    shark: { id: "shark", label: "SHARK%", floorMs: 28000 },
-    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 28000 },
-    chest: { id: "chest", label: "CHEST%", floorMs: 28000 },
+    shark: { id: "shark", label: "SHARK%", floorMs: 21900 },
+    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 21900 },
+    chest: { id: "chest", label: "CHEST%", floorMs: 21900 },
     death: { id: "death", label: "DEATH%", floorMs: 5000 },
     boat: { id: "boat", label: "BOAT%", floorMs: 5000 },
     full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 30000 },
     shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 45000 },
     serpent: { id: "serpent", label: "SERPENT%", floorMs: 40000 },
-    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 28000 },
-    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 28000 },
+    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 21900 },
+    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 21900 },
     coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 5000 },
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 20000 },
