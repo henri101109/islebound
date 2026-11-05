@@ -287,14 +287,17 @@
   let srBlowfishFinishT = -1;
   /** Floating hearts above player after catching a blowfish: { t, dur }. */
   let blowfishHearts = null;
-  /** Dense speedrun replay recording / #1 spectate. */
+  /** Dense speedrun replay recording / top-10 spectate. */
   let srReplayFrames = [];
   let srReplayLastT = -999;
+  /** Last full replay payload loaded for spectate (must still match prefer before play). */
   let srBestReplay = null;
+  /** boolean[] aligned with srBoardRows — which top-10 rows have a matching VID. */
+  let srReplayAvail = [];
   let srReplayBusy = false;
-  /** Bumped to cancel in-flight VID fetch / stale playBestReplay results. */
+  /** Bumped to cancel in-flight VID fetch / stale playBoardReplay results. */
   let replayPlayGen = 0;
-  /** Bumped to ignore stale refreshSpeedBoard / fetchBestReplay results. */
+  /** Bumped to ignore stale refreshSpeedBoard / probe results. */
   let srBoardGen = 0;
   let replayActive = false;
   let replayFrames = [];
@@ -8698,29 +8701,52 @@
     srReplayBusy = false;
   }
 
-  function boardTopPrefer(cat) {
+  function boardRowPrefer(cat, rowIndex) {
     const id = cat || srCat;
-    const top = srBoardRows && srBoardRows[0] ? srBoardRows[0] : null;
-    if (!top) return null;
+    const idx = rowIndex | 0;
+    const row = srBoardRows && srBoardRows[idx] ? srBoardRows[idx] : null;
+    if (!row) return null;
     const api = lbApi();
-    if (api && api.preferFromBoardRow) return api.preferFromBoardRow(top);
+    if (api && api.preferFromBoardRow) return api.preferFromBoardRow(row);
     return {
-      run_id: top.run_id || null,
-      time_ms: top.time_ms | 0,
-      player_name: top.player_name || "",
+      run_id: row.run_id || null,
+      time_ms: row.time_ms | 0,
+      player_name: row.player_name || "",
     };
   }
 
-  function replayMatchesBoardTop(replay, cat) {
-    if (!replay || !replay.frames || !replay.frames.length) return false;
-    const id = cat || srCat;
-    if (replay.category && replay.category !== id) return false;
-    const prefer = boardTopPrefer(id);
-    if (!prefer) return false;
+  function boardTopPrefer(cat) {
+    return boardRowPrefer(cat, 0);
+  }
+
+  function replayMatchesPreferLocal(replay, prefer) {
+    if (!replay || !prefer) return false;
     const api = lbApi();
     if (api && api.replayMatchesPrefer) return api.replayMatchesPrefer(replay, prefer);
     if (prefer.run_id && replay.run_id) return String(prefer.run_id) === String(replay.run_id);
-    return (replay.time_ms | 0) === (prefer.time_ms | 0);
+    if ((replay.time_ms | 0) !== (prefer.time_ms | 0)) return false;
+    if (!prefer.player_name) return true;
+    return String(replay.player_name || "").toUpperCase() === String(prefer.player_name || "").toUpperCase();
+  }
+
+  function replayMatchesBoardRow(replay, cat, rowIndex) {
+    if (!replay || !replay.frames || !replay.frames.length) return false;
+    const id = cat || srCat;
+    if (replay.category && replay.category !== id) return false;
+    const prefer = boardRowPrefer(id, rowIndex);
+    if (!prefer) return false;
+    return replayMatchesPreferLocal(replay, prefer);
+  }
+
+  function replayMatchesBoardTop(replay, cat) {
+    return replayMatchesBoardRow(replay, cat, 0);
+  }
+
+  function rowHasReplayVid(rowIndex) {
+    const idx = rowIndex | 0;
+    if (srReplayAvail && srReplayAvail[idx]) return true;
+    // Fallback: cached full payload already matches this exact board row.
+    return replayMatchesBoardRow(srBestReplay, srCat || SPEED_ORDER[srCursor], idx);
   }
 
   /** Stop playback state without returning to menus (used when swapping VID). */
@@ -8773,31 +8799,52 @@
     return true;
   }
 
-  async function playBestReplay(cat) {
+  /** Spectate the exact top-10 board row at rowIndex (0 = #1). */
+  async function playBoardReplay(cat, rowIndex) {
     const id = cat || srCat || SPEED_ORDER[srCursor];
+    const idx = rowIndex | 0;
     // Invalidate any prior in-flight VID load so only this selection can start.
     const gen = ++replayPlayGen;
     const api = lbApi();
-    const prefer = boardTopPrefer(id);
+    const prefer = boardRowPrefer(id, idx);
+    if (!prefer) {
+      srBoardNote = "NO REPLAY";
+      return;
+    }
     srReplayBusy = true;
     // Keep any current replay on screen until the new payload is ready, then hard-cut.
     let payload =
-      srBestReplay && replayMatchesBoardTop(srBestReplay, id) ? srBestReplay : null;
+      srBestReplay && replayMatchesBoardRow(srBestReplay, id, idx) ? srBestReplay : null;
     if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
       const res = await api.fetchBestReplay(id, prefer);
       if (gen !== replayPlayGen) return;
-      if (res && res.replay && replayMatchesBoardTop(res.replay, id)) payload = res.replay;
+      if (res && res.replay && replayMatchesPreferLocal(res.replay, prefer)) {
+        if (!res.replay.category || res.replay.category === id) payload = res.replay;
+      }
     }
     if (gen !== replayPlayGen) return;
     srReplayBusy = false;
     if (!payload || !payload.frames || !payload.frames.length) {
       srBoardNote = "NO REPLAY";
-      srBestReplay = null;
+      if (srReplayAvail && idx >= 0 && idx < srReplayAvail.length) srReplayAvail[idx] = false;
       return;
     }
     if (!payload.category) payload.category = id;
+    // Final guard: never start a mismatched run for this row.
+    if (!replayMatchesPreferLocal(payload, prefer)) {
+      srBoardNote = "NO REPLAY";
+      return;
+    }
     srBestReplay = payload;
+    if (!srReplayAvail || srReplayAvail.length <= idx) {
+      srReplayAvail = (srBoardRows || []).map(() => false);
+    }
+    srReplayAvail[idx] = true;
     startReplay(payload);
+  }
+
+  async function playBestReplay(cat) {
+    return playBoardReplay(cat, 0);
   }
 
   function updateReplay(dt) {
@@ -9003,6 +9050,40 @@
     return api.mergeBoardIdentities(list, null, lim || 10);
   }
 
+  async function refreshReplayAvailability(cat, boardGen) {
+    const id = cat || srCat;
+    const api = lbApi();
+    const rows = srBoardRows || [];
+    srReplayAvail = rows.map(() => false);
+    if (!rows.length) {
+      srBestReplay = null;
+      return;
+    }
+    // Seed from local cache only when it matches an exact board row.
+    if (api && api.loadLocalReplay) {
+      const local = api.loadLocalReplay(id);
+      if (local && (!local.category || local.category === id)) {
+        for (let i = 0; i < rows.length; i++) {
+          if (replayMatchesBoardRow(local, id, i)) {
+            srBestReplay = local;
+            srReplayAvail[i] = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!api || !api.probeReplayAvailability) return;
+    if (api.configured && !api.configured()) return;
+    try {
+      const avail = await api.probeReplayAvailability(id, rows);
+      if (boardGen != null && boardGen !== srBoardGen) return;
+      if (!Array.isArray(avail)) return;
+      srReplayAvail = rows.map((_, i) => !!(avail[i] || srReplayAvail[i]));
+    } catch (e) {
+      /* keep local seeds */
+    }
+  }
+
   async function refreshSpeedBoard(cat) {
     const id = cat || srCat;
     const boardGen = ++srBoardGen;
@@ -9011,6 +9092,7 @@
     const api = lbApi();
     srBoardNote = "LOADING...";
     srBestReplay = null;
+    srReplayAvail = [];
     if (!api) {
       if (boardGen !== srBoardGen) return;
       srBoardRows = [];
@@ -9027,31 +9109,15 @@
       if (boardGen !== srBoardGen) return;
       srBoardRows = applyBoardIdentityMerge(api.getCachedBoard(id) || [], 10);
       srBoardNote = srBoardRows.length ? "CACHED / OFFLINE" : "SET UP SUPABASE";
-      if (api.loadLocalReplay) {
-        const local = api.loadLocalReplay(id);
-        // Only surface VID when local cache matches the cached #1 row.
-        if (local && replayMatchesBoardTop(local, id)) srBestReplay = local;
-      }
+      await refreshReplayAvailability(id, boardGen);
       return;
     }
     const res = await api.fetchTop(id, 10);
     if (boardGen !== srBoardGen) return;
     srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
-    if (api.fetchBestReplay) {
-      try {
-        const prefer = boardTopPrefer(id);
-        const rr = await api.fetchBestReplay(id, prefer);
-        if (boardGen !== srBoardGen) return;
-        if (rr && rr.replay && replayMatchesBoardTop(rr.replay, id)) {
-          srBestReplay = rr.replay;
-        } else {
-          srBestReplay = null;
-        }
-      } catch (e) {
-        srBestReplay = null;
-      }
-    }
+    // One lightweight meta probe for all top-10 rows (no frames) — VID only when matched.
+    await refreshReplayAvailability(id, boardGen);
   }
 
   function beginSpeedCategory(cat) {
@@ -9223,19 +9289,18 @@
       if (isNew) tagX += drawNewTag(tagX, yy) + 2;
       const timeX = Math.max(tagX + 1, x + 100);
       drawPixText(timeStr, timeX, yy, "#5c3a21");
-      if (i === 0) {
+      {
         const catId = srCat || SPEED_ORDER[srCursor];
-        const hasVid = replayMatchesBoardTop(srBestReplay, catId);
+        const hasVid = rowHasReplayVid(i);
         const vx = timeX + pixTextWidth(timeStr) + 4;
-        const vidSel = menuHovering("vid:1") || hasVid;
+        const vidKey = "vid:" + (i + 1);
         if (hasVid) {
+          const vidSel = menuHovering(vidKey);
           px(vx - 1, yy - 1, 22, 9, vidSel ? "#e8c44a" : "#5c3a21");
           drawPixText("VID", vx + 1, yy, vidSel ? "#2b1c12" : "#f3e2c4");
-          addMenuHit("vid:1", vx - 1, yy - 1, 22, 9, () => playBestReplay(catId), {
+          addMenuHit(vidKey, vx - 1, yy - 1, 22, 9, () => playBoardReplay(catId, i), {
             hover: true,
           });
-        } else {
-          drawPixText("VID", vx + 1, yy, "#8a5a32");
         }
       }
       yy += 8;
@@ -9671,6 +9736,13 @@
       if (replay && api.saveLocalReplay) {
         api.saveLocalReplay(srCat, replay);
         srBestReplay = replay;
+        // Mark VID on the board row that matches this exact run (if present).
+        if (!srReplayAvail || srReplayAvail.length !== (srBoardRows || []).length) {
+          srReplayAvail = (srBoardRows || []).map(() => false);
+        }
+        for (let i = 0; i < (srBoardRows || []).length; i++) {
+          if (replayMatchesBoardRow(replay, srCat, i)) srReplayAvail[i] = true;
+        }
       }
       if (res.pb) {
         srPbPrev = res.pb.prev | 0;

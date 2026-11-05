@@ -1223,12 +1223,15 @@
   }
 
   /**
-   * True when replay identity matches the board #1 prefer row.
+   * True when replay identity matches a board-row prefer.
    * run_id wins when both sides have one; else time_ms + name must agree.
    * With no prefer fields, any replay is accepted (legacy / offline browse).
+   * Meta-only rows (no frames) are allowed for availability probes.
    */
-  function replayMatchesPrefer(replay, prefer) {
-    if (!replay || !Array.isArray(replay.frames) || !replay.frames.length) return false;
+  function replayMatchesPrefer(replay, prefer, opts) {
+    if (!replay) return false;
+    const allowMeta = !!(opts && opts.metaOnly);
+    if (!allowMeta && (!Array.isArray(replay.frames) || !replay.frames.length)) return false;
     const want = prefer || {};
     const hasRun = !!(want.run_id && replay.run_id);
     const hasTime = want.time_ms != null && want.time_ms !== "";
@@ -1255,6 +1258,14 @@
     return !!(hasTime || hasName);
   }
 
+  function preferHasIdentity(prefer) {
+    const want = prefer || {};
+    if (want.run_id) return true;
+    if (want.time_ms != null && want.time_ms !== "") return true;
+    if (want.player_name && String(want.player_name).trim()) return true;
+    return false;
+  }
+
   function preferFromBoardRow(row) {
     if (!row) return null;
     return {
@@ -1264,13 +1275,87 @@
     };
   }
 
-  /** Fetch replay for category #1. prefer = { run_id, time_ms, player_name } from board row. */
+  /** One lightweight (no frames) query for category replay identities. */
+  async function fetchReplayMeta(category, limit) {
+    const id = CATEGORIES[category] ? category : null;
+    if (!id || !configured()) return { ok: false, rows: [] };
+    const lim = Math.max(1, Math.min(80, limit | 0 || 40));
+    try {
+      const url =
+        restBase() +
+        "/" +
+        REPLAY_TABLE +
+        "?category=eq." +
+        encodeURIComponent(id) +
+        "&select=run_id,category,time_ms,player_name,created_at" +
+        "&order=time_ms.asc&limit=" +
+        lim;
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) return { ok: false, rows: [] };
+      const data = await res.json();
+      const rows = (Array.isArray(data) ? data : []).filter(
+        (r) => r && !isBoardHiddenName(r.player_name)
+      );
+      return { ok: true, rows };
+    } catch (e) {
+      return { ok: false, rows: [], error: "network" };
+    }
+  }
+
+  /**
+   * Which board rows have a matching replay (meta or local). One batch meta fetch —
+   * never pulls frames. Returns boolean[] aligned with `rows`.
+   */
+  async function probeReplayAvailability(category, rows) {
+    const id = CATEGORIES[category] ? category : null;
+    const list = Array.isArray(rows) ? rows : [];
+    const out = list.map(() => false);
+    if (!id || !list.length) return out;
+
+    const local = loadLocalReplay(id);
+    const localOk = local && !isBoardHiddenName(local.player_name) ? local : null;
+
+    let meta = [];
+    if (configured()) {
+      const res = await fetchReplayMeta(id, Math.max(40, list.length * 4));
+      meta = res.rows || [];
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || isBoardHiddenName(row.player_name)) {
+        out[i] = false;
+        continue;
+      }
+      const prefer = preferFromBoardRow(row);
+      if (localOk && replayMatchesPrefer(localOk, prefer)) {
+        out[i] = true;
+        continue;
+      }
+      for (let j = 0; j < meta.length; j++) {
+        if (replayMatchesPrefer(meta[j], prefer, { metaOnly: true })) {
+          out[i] = true;
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Fetch full replay for a board row. prefer = { run_id, time_ms, player_name }.
+   * With a prefer identity, never falls through to a different player's replay.
+   * With no prefer, returns fastest visible replay (legacy browse).
+   */
   async function fetchBestReplay(category, prefer) {
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, replay: null };
-    // Drop prefer when #1 is a HARD_BANS name so VID falls through to next visible WR.
-    let want = prefer || {};
-    if (want.player_name && isBoardHiddenName(want.player_name)) want = {};
+    const want = prefer || {};
+    // Hidden/banned names never get a VID — do not fall through to someone else's run.
+    if (want.player_name && isBoardHiddenName(want.player_name)) {
+      return { ok: false, replay: null, hidden: true };
+    }
+    const bound = preferHasIdentity(want);
     const local = loadLocalReplay(id);
     const localOk =
       local && !isBoardHiddenName(local.player_name) && replayMatchesPrefer(local, want)
@@ -1323,8 +1408,8 @@
           )
         );
       }
-      // Unbound fastest visible replay when no #1 identity (or prefer was board-hidden).
-      if (!row && !want.run_id && want.time_ms == null && !want.player_name) {
+      // Unbound fastest visible replay only when caller did not name a board row.
+      if (!row && !bound) {
         row = firstVisible(await query("", 20));
       }
 
@@ -2628,6 +2713,8 @@
     refreshClientIp,
     uploadReplay,
     fetchBestReplay,
+    fetchReplayMeta,
+    probeReplayAvailability,
     replayMatchesPrefer,
     preferFromBoardRow,
     loadLocalReplay,
