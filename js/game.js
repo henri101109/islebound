@@ -6642,98 +6642,145 @@
     }
   }
 
-  function bakeRiverRuins(siteW, siteH, portalLocal) {
+  /** Shared ruin gate metrics so stone, solids, and the portal share one frame. */
+  function ruinsGateLayout(siteW, siteH) {
+    const cx = (siteW / 2) | 0;
+    const cy = 50;
+    const rx = 13;
+    const ry = 15;
+    return {
+      cx,
+      cy,
+      rx,
+      ry,
+      // Axis-aligned mouth used for walk/hit (matches the circle bounds)
+      mouth: { x: cx - rx, y: cy - ry, w: rx * 2, h: ry * 2 },
+      colLI: cx - 22,
+      colLO: cx - 34,
+      colRI: cx + 14,
+      colRO: cx + 26,
+      colY: cy - 28,
+      colH: 58,
+      lintelY: cy - 34,
+      stepsY: cy + ry + 2,
+      siteW,
+      siteH,
+    };
+  }
+
+  function bakeRiverRuins(siteW, siteH) {
+    const L = ruinsGateLayout(siteW, siteH);
     ruinsCanvas = document.createElement("canvas");
     ruinsCanvas.width = siteW;
     ruinsCanvas.height = siteH;
     const g = ruinsCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
-    // Dirt path through the gate
-    for (let y = portalLocal.y + portalLocal.h - 2; y < siteH; y++) {
-      for (let x = portalLocal.x - 6; x < portalLocal.x + portalLocal.w + 6; x++) {
+
+    // Dirt path up the steps and through the gate
+    for (let y = L.cy - 4; y < siteH; y++) {
+      const flare = Math.max(0, ((y - (L.cy + L.ry)) / 10) | 0);
+      for (let x = L.cx - 10 - flare; x < L.cx + 10 + flare; x++) {
         if (x < 0 || x >= siteW) continue;
         const n = hash(x + 2, y + 5);
         pxi(g, x, y, 1, 1, n > 0.7 ? "#6a5438" : "#5a4630");
       }
     }
-    // Side ruined walls (dry-stack, crumbling tops)
+
+    // Side ruined walls — sit outside the column pairs, not over the mouth
     for (let side = 0; side < 2; side++) {
-      const wx = side === 0 ? 4 : siteW - 34;
+      const wx = side === 0 ? 2 : siteW - 28;
       for (let row = 0; row < 5; row++) {
-        const yy = 18 + row * 8;
-        const ww = 26 - row * 2 + ((hash(side * 9 + row, 3) * 4) | 0);
-        const xx = side === 0 ? wx : siteW - 8 - ww;
+        const yy = L.colY + 6 + row * 9;
+        if (yy + 8 > siteH - 12) break;
+        const ww = 22 - row + ((hash(side * 9 + row, 3) * 3) | 0);
+        const xx = side === 0 ? wx : siteW - 4 - ww;
+        // Keep clear of the inner columns
+        if (side === 0 && xx + ww > L.colLO - 2) continue;
+        if (side === 1 && xx < L.colRO + 12) continue;
         paintRuinStone(g, xx, yy, ww, 8, row & 1 ? "#5a564e" : "#4a463e");
         paintRuinMoss(g, xx, yy - 1, ww);
       }
-      paintRuinVines(g, wx, 16, 28, 48, 40 + side * 17);
+      paintRuinVines(g, wx, L.colY + 4, 24, 44, 40 + side * 17);
     }
-    // Twin columns each side of the portal (image 1 / 2 mix)
-    const colL = portalLocal.x - 14;
-    const colR = portalLocal.x + portalLocal.w + 6;
-    const colH = portalLocal.h + 22;
-    const colY = portalLocal.y - 14;
-    paintRuinColumn(g, colL, colY, colH);
-    paintRuinColumn(g, colL - 11, colY + 4, colH - 4);
-    paintRuinColumn(g, colR, colY, colH);
-    paintRuinColumn(g, colR + 11, colY + 4, colH - 4);
-    paintRuinVines(g, colL - 2, colY, 12, colH, 71);
-    paintRuinVines(g, colR - 2, colY, 12, colH, 88);
-    // Lintel + stepped peak stones
-    const lx = colL - 2;
-    const ly = colY - 6;
-    const lw = colR + 10 - lx;
-    paintRuinStone(g, lx, ly, lw, 8, "#5a564e");
-    paintRuinMoss(g, lx, ly - 1, lw);
+
+    // Twin columns framing the circular mouth
+    paintRuinColumn(g, L.colLI, L.colY, L.colH);
+    paintRuinColumn(g, L.colLO, L.colY + 4, L.colH - 6);
+    paintRuinColumn(g, L.colRI, L.colY, L.colH);
+    paintRuinColumn(g, L.colRO, L.colY + 4, L.colH - 6);
+    paintRuinVines(g, L.colLI - 1, L.colY, 10, L.colH - 4, 71);
+    paintRuinVines(g, L.colRI - 1, L.colY, 10, L.colH - 4, 88);
+
+    // Lintel spanning the inner columns
+    const lx = L.colLI - 2;
+    const lw = L.colRI + 10 - lx;
+    paintRuinStone(g, lx, L.lintelY, lw, 7, "#5a564e");
+    paintRuinMoss(g, lx, L.lintelY - 1, lw);
+
+    // Stepped peak stones centered on the lintel (all on-canvas)
+    const midPeak = lx + ((lw / 2) | 0);
     const peak = [
-      [lx + 10, ly - 6, 10, 6],
-      [lx + 20, ly - 10, 12, 8],
-      [lx + 32, ly - 14, 14, 10],
-      [lx + 46, ly - 10, 12, 8],
-      [lx + 56, ly - 6, 10, 6],
+      [midPeak - 28, L.lintelY - 5, 10, 5],
+      [midPeak - 16, L.lintelY - 9, 12, 7],
+      [midPeak - 6, L.lintelY - 13, 14, 9],
+      [midPeak + 6, L.lintelY - 9, 12, 7],
+      [midPeak + 16, L.lintelY - 5, 10, 5],
     ];
     for (let i = 0; i < peak.length; i++) {
       const p = peak[i];
+      if (p[1] < 1) continue;
       paintRuinStone(g, p[0], p[1], p[2], p[3], i === 2 ? "#6a6458" : "#4a463e");
       paintRuinMoss(g, p[0], p[1] - 1, p[2]);
     }
-    // Steps up to the gate
+
+    // Stone ring carved around the portal mouth (circle frame)
+    for (let a = 0; a < 48; a++) {
+      const ang = (a / 48) * Math.PI * 2;
+      const ox = (L.cx + Math.cos(ang) * (L.rx + 2)) | 0;
+      const oy = (L.cy + Math.sin(ang) * (L.ry + 2)) | 0;
+      pxi(g, ox, oy, 2, 2, a & 1 ? "#6a6458" : "#3a3834");
+      const ix = (L.cx + Math.cos(ang) * (L.rx + 0.5)) | 0;
+      const iy = (L.cy + Math.sin(ang) * (L.ry + 0.5)) | 0;
+      pxi(g, ix, iy, 1, 1, "#8a8478");
+    }
+
+    // Steps up to the gate (below the circle)
     for (let s = 0; s < 3; s++) {
-      const sw = portalLocal.w + 16 - s * 4;
-      const sx = portalLocal.x - 8 + s * 2;
-      const sy = portalLocal.y + portalLocal.h + 2 + s * 3;
+      const sw = L.rx * 2 + 14 - s * 4;
+      const sx = L.cx - ((sw / 2) | 0);
+      const sy = L.stepsY + s * 3;
       paintRuinStone(g, sx, sy, sw, 3, s & 1 ? "#4a463e" : "#5a564e");
     }
-    // Engraved debris slabs
-    paintRuinDebris(g, 8, siteH - 14, 3);
-    paintRuinDebris(g, siteW - 36, siteH - 16, 9);
-    // Shrubs / ferns along the base
-    paintRuinShrub(g, 2, siteH - 20);
-    paintRuinShrub(g, 18, siteH - 18);
-    paintRuinShrub(g, siteW - 22, siteH - 20);
-    paintRuinShrub(g, siteW - 12, siteH - 17);
-    paintRuinShrub(g, portalLocal.x - 18, portalLocal.y + portalLocal.h - 2);
-    paintRuinShrub(g, portalLocal.x + portalLocal.w + 6, portalLocal.y + portalLocal.h);
-    // Grass tufts on stones
-    for (let i = 0; i < 18; i++) {
-      const gx = 6 + ((hash(i, 51) * (siteW - 12)) | 0);
-      const gy = 12 + ((hash(i, 57) * (siteH - 28)) | 0);
-      if (gx > portalLocal.x - 2 && gx < portalLocal.x + portalLocal.w + 2 && gy > portalLocal.y && gy < portalLocal.y + portalLocal.h) {
-        continue;
-      }
+
+    // Engraved debris + shrubs at the foot — clear of the path
+    paintRuinDebris(g, 6, siteH - 14, 3);
+    paintRuinDebris(g, siteW - 34, siteH - 16, 9);
+    paintRuinShrub(g, 4, siteH - 22);
+    paintRuinShrub(g, 20, siteH - 20);
+    paintRuinShrub(g, siteW - 24, siteH - 22);
+    paintRuinShrub(g, siteW - 12, siteH - 18);
+    paintRuinShrub(g, L.colLI - 14, L.stepsY + 4);
+    paintRuinShrub(g, L.colRI + 12, L.stepsY + 6);
+
+    for (let i = 0; i < 16; i++) {
+      const gx = 4 + ((hash(i, 51) * (siteW - 8)) | 0);
+      const gy = 10 + ((hash(i, 57) * (siteH - 30)) | 0);
+      const dx = gx - L.cx;
+      const dy = gy - L.cy;
+      if ((dx * dx) / ((L.rx + 6) * (L.rx + 6)) + (dy * dy) / ((L.ry + 6) * (L.ry + 6)) < 1) continue;
       pxi(g, gx, gy, 1, 2, "#3a8a44");
       if (hash(i, 61) > 0.5) pxi(g, gx + 1, gy - 1, 1, 2, "#2a6a34");
     }
   }
 
   function plantRuinsJungle(site, portal) {
-    for (let i = 0; i < 52; i++) {
-      const ang = (i / 52) * Math.PI * 2 + hash(i, 73) * 0.5;
-      const rad = 22 + hash(i * 2, 79) * 40;
+    for (let i = 0; i < 56; i++) {
+      const ang = (i / 56) * Math.PI * 2 + hash(i, 73) * 0.5;
+      const rad = 26 + hash(i * 2, 79) * 42;
       const x = (site.x + site.w / 2 + Math.cos(ang) * rad) | 0;
       const y = (site.y + site.h / 2 + Math.sin(ang) * rad * 0.75) | 0;
-      if (x > portal.x - 10 && x < portal.x + portal.w + 10 && y > portal.y - 4 && y < portal.y + portal.h + 28) continue;
-      if (x > site.x + 8 && x < site.x + site.w - 8 && y > site.y + 8 && y < site.y + site.h - 10) continue;
+      if (x > portal.x - 12 && x < portal.x + portal.w + 12 && y > portal.y - 6 && y < portal.y + portal.h + 30) continue;
+      if (x > site.x + 10 && x < site.x + site.w - 10 && y > site.y + 8 && y < site.y + site.h - 12) continue;
       if (y >= restShoreY(x) - 6) continue;
       if (y <= northCliffY(x) + 8) continue;
       if (inRiverWater(x, y)) continue;
@@ -6756,18 +6803,16 @@
     const templeC = 318;
     const midC = ((dockC + templeC) / 2) | 0;
     let wx = midC * TILE - 48;
-    // Prefer a dry bank beside the west/mid river band around this longitude
     for (let tries = 0; tries < 48; tries++) {
       const tx = wx + ((tries & 1 ? 1 : -1) * ((tries / 2) | 0) * 8);
       const shore = restShoreY(tx);
       const cliff = northCliffY(tx);
-      const ty = shore - 78;
+      const ty = shore - 90;
       if (ty <= cliff + 20) continue;
-      if (inRiverWater(tx + 40, ty + 40)) continue;
-      // Stay close to water — river within ~40px of the site center
+      if (inRiverWater(tx + 64, ty + 50)) continue;
       let nearRiver = false;
-      for (let d = -40; d <= 40; d += 8) {
-        if (inRiverWater(tx + 40 + d, ty + 50) || inRiverWater(tx + 40, ty + 50 + d)) {
+      for (let d = -48; d <= 48; d += 8) {
+        if (inRiverWater(tx + 64 + d, ty + 56) || inRiverWater(tx + 64, ty + 56 + d)) {
           nearRiver = true;
           break;
         }
@@ -6776,42 +6821,48 @@
       wx = tx;
       break;
     }
-    const shore = restShoreY(wx + 50);
-    const cliff = northCliffY(wx + 50);
-    const siteW = 112;
-    const siteH = 86;
-    const sy = Math.max(cliff + 24, Math.min(shore - siteH - 10, shore - 82));
+    const shore = restShoreY(wx + 64);
+    const cliff = northCliffY(wx + 64);
+    const siteW = 128;
+    const siteH = 104;
+    const sy = Math.max(cliff + 22, Math.min(shore - siteH - 8, shore - 96));
     const site = { x: wx, y: sy, w: siteW, h: siteH };
-    const portalLocal = { x: 42, y: 28, w: 28, h: 36 };
+    const L = ruinsGateLayout(siteW, siteH);
     ruinsSite = site;
     ruinsPortal = {
-      x: site.x + portalLocal.x,
-      y: site.y + portalLocal.y,
-      w: portalLocal.w,
-      h: portalLocal.h,
+      x: site.x + L.mouth.x,
+      y: site.y + L.mouth.y,
+      w: L.mouth.w,
+      h: L.mouth.h,
+      cx: site.x + L.cx,
+      cy: site.y + L.cy,
+      rx: L.rx,
+      ry: L.ry,
     };
     ruinsOX = site.x;
     ruinsOY = site.y;
-    bakeRiverRuins(siteW, siteH, portalLocal);
+    bakeRiverRuins(siteW, siteH);
 
-    // Solids: walls and lintel; leave the portal mouth open to walk through
-    islandSolids.push({ x: site.x + 4, y: site.y + 16, w: 30, h: 46 });
-    islandSolids.push({ x: site.x + siteW - 34, y: site.y + 16, w: 30, h: 46 });
-    islandSolids.push({ x: site.x + 28, y: site.y + 10, w: 56, h: 14 });
-    islandSolids.push({ x: site.x + portalLocal.x - 16, y: site.y + portalLocal.y - 2, w: 12, h: portalLocal.h + 8 });
+    // Solids match the painted frame: side walls, lintel, columns — mouth stays open
+    islandSolids.push({ x: site.x + 2, y: site.y + L.colY + 6, w: Math.max(8, L.colLO - 4), h: 48 });
     islandSolids.push({
-      x: site.x + portalLocal.x + portalLocal.w + 4,
-      y: site.y + portalLocal.y - 2,
-      w: 12,
-      h: portalLocal.h + 8,
+      x: site.x + L.colRO + 12,
+      y: site.y + L.colY + 6,
+      w: Math.max(8, siteW - (L.colRO + 14)),
+      h: 48,
     });
+    islandSolids.push({ x: site.x + L.colLI - 2, y: site.y + L.lintelY, w: L.colRI + 12 - (L.colLI - 2), h: 8 });
+    islandSolids.push({ x: site.x + L.colLI - 1, y: site.y + L.colY, w: 12, h: L.colH });
+    islandSolids.push({ x: site.x + L.colLO - 1, y: site.y + L.colY + 4, w: 12, h: L.colH - 6 });
+    islandSolids.push({ x: site.x + L.colRI - 1, y: site.y + L.colY, w: 12, h: L.colH });
+    islandSolids.push({ x: site.x + L.colRO - 1, y: site.y + L.colY + 4, w: 12, h: L.colH - 6 });
     walkPads.push({
-      x: ruinsPortal.x - 4,
+      x: ruinsPortal.x - 6,
       y: ruinsPortal.y,
-      w: ruinsPortal.w + 8,
-      h: ruinsPortal.h + 22,
+      w: ruinsPortal.w + 12,
+      h: ruinsPortal.h + 26,
     });
-    keepouts.push({ x: site.x - 10, y: site.y - 8, w: site.w + 20, h: site.h + 18 });
+    keepouts.push({ x: site.x - 12, y: site.y - 10, w: site.w + 24, h: site.h + 20 });
     plantRuinsJungle(site, ruinsPortal);
   }
 
@@ -6822,38 +6873,84 @@
     if (dx > viewW + 8 || dy > viewH + 8 || dx + ruinsCanvas.width < -8 || dy + ruinsCanvas.height < -8) return;
     ctx.drawImage(ruinsCanvas, dx, dy);
     if (!ruinsPortal) return;
-    // Animated light-blue portal inside the column frame (decorative — no travel yet)
-    const px0 = ruinsPortal.x - cpos.x;
-    const py0 = ruinsPortal.y - cpos.y;
-    const pw = ruinsPortal.w;
-    const ph = ruinsPortal.h;
-    const pulse = 0.55 + 0.45 * Math.sin(t * 2.4);
+
+    // Depth portal: nested ellipses + orbiting particle ring (decorative — no travel)
+    const cx = (ruinsPortal.cx - cpos.x) | 0;
+    const cy = (ruinsPortal.cy - cpos.y) | 0;
+    const rx = ruinsPortal.rx;
+    const ry = ruinsPortal.ry;
+    const pulse = 0.55 + 0.45 * Math.sin(t * 2.6);
+    const spin = t * 1.35;
+
     ink.save();
-    ink.globalAlpha = 0.35 + pulse * 0.35;
-    px(px0 + 2, py0 + 2, pw - 4, ph - 4, "#4ec8f0");
-    ink.globalAlpha = 0.25 + pulse * 0.4;
-    px(px0 + 5, py0 + 5, pw - 10, ph - 10, "#a8ecff");
-    ink.globalAlpha = 0.5 + pulse * 0.5;
-    px(px0 + 9, py0 + 10, pw - 18, ph - 20, "#e8faff");
-    // Swirl rings
-    for (let r = 0; r < 3; r++) {
-      const u = (t * (0.7 + r * 0.25) + r * 0.4) % 1;
-      const rad = 3 + u * Math.min(pw, ph) * 0.42;
-      ink.globalAlpha = (1 - u) * 0.55;
-      for (let a = 0; a < 14; a++) {
-        const ang = (a / 14) * Math.PI * 2 + t * (1.2 + r * 0.3);
-        const sx = (px0 + pw / 2 + Math.cos(ang) * rad) | 0;
-        const sy = (py0 + ph / 2 + Math.sin(ang) * rad * 0.85) | 0;
-        px(sx, sy, 1, 1, a & 1 ? "#ffffff" : "#7ad8f8");
+    // Soft outer glow
+    for (let g = 4; g >= 1; g--) {
+      ink.globalAlpha = 0.06 * g * pulse;
+      for (let a = 0; a < 28; a++) {
+        const ang = (a / 28) * Math.PI * 2;
+        px(
+          (cx + Math.cos(ang) * (rx + g + 1)) | 0,
+          (cy + Math.sin(ang) * (ry + g + 1)) | 0,
+          1,
+          1,
+          "#4ec8f0"
+        );
       }
     }
-    // Rising motes
-    for (let i = 0; i < 8; i++) {
-      const life = (t * 0.55 + i * 0.13) % 1;
-      const mx = (px0 + 4 + ((hash(i, 3) * (pw - 8)) | 0) + Math.sin(t * 2 + i) * 2) | 0;
-      const my = (py0 + ph - 4 - life * (ph - 6)) | 0;
-      ink.globalAlpha = (1 - life) * 0.85;
-      px(mx, my, 1, 1, i & 1 ? "#d8f4ff" : "#6ec8e8");
+
+    // Tunnel depth: stacked ellipses shrinking toward the core
+    for (let d = 5; d >= 0; d--) {
+      const u = d / 5;
+      const erx = rx * (0.28 + u * 0.72);
+      const ery = ry * (0.28 + u * 0.72);
+      const shift = ((1 - u) * 3 * Math.sin(t * 1.1)) | 0;
+      ink.globalAlpha = 0.18 + (1 - u) * 0.22 * pulse;
+      const col = d === 0 ? "#e8faff" : d < 2 ? "#a8ecff" : d < 4 ? "#5ad0f0" : "#2a90b8";
+      for (let a = 0; a < 36; a++) {
+        const ang = (a / 36) * Math.PI * 2 + spin * (0.15 + (1 - u) * 0.35);
+        px((cx + shift + Math.cos(ang) * erx) | 0, (cy + Math.sin(ang) * ery) | 0, 1, 1, col);
+      }
+    }
+
+    // Bright core
+    ink.globalAlpha = 0.35 + pulse * 0.45;
+    px(cx - 2, cy - 2, 5, 4, "#d8f4ff");
+    ink.globalAlpha = 0.7;
+    px(cx, cy, 2, 2, "#ffffff");
+
+    // Orbiting particle ring (main moving circle)
+    for (let i = 0; i < 22; i++) {
+      const ang = spin * 1.7 + (i / 22) * Math.PI * 2;
+      const wobble = 1 + 0.08 * Math.sin(t * 4.2 + i);
+      const prx = rx * 0.92 * wobble;
+      const pry = ry * 0.92 * wobble;
+      const sx = (cx + Math.cos(ang) * prx) | 0;
+      const sy = (cy + Math.sin(ang) * pry) | 0;
+      ink.globalAlpha = 0.55 + 0.45 * Math.sin(t * 5 + i);
+      px(sx, sy, i % 3 === 0 ? 2 : 1, 1, i & 1 ? "#ffffff" : "#7ad8f8");
+      // Trail particle a bit behind
+      const ang2 = ang - 0.18;
+      ink.globalAlpha = 0.25;
+      px((cx + Math.cos(ang2) * prx * 0.95) | 0, (cy + Math.sin(ang2) * pry * 0.95) | 0, 1, 1, "#4ec8f0");
+    }
+
+    // Inner counter-spin sparks
+    for (let i = 0; i < 12; i++) {
+      const ang = -spin * 2.4 + (i / 12) * Math.PI * 2;
+      const rad = 0.35 + 0.2 * Math.sin(t * 3 + i * 0.7);
+      ink.globalAlpha = 0.4 + 0.4 * ((Math.sin(t * 6 + i) + 1) / 2);
+      px((cx + Math.cos(ang) * rx * rad) | 0, (cy + Math.sin(ang) * ry * rad) | 0, 1, 1, "#e8faff");
+    }
+
+    // Rising / drifting motes that change over time
+    for (let i = 0; i < 14; i++) {
+      const life = (t * 0.45 + i * 0.09) % 1;
+      const ang = hash(i, 3) * Math.PI * 2 + t * 0.6;
+      const rad = (0.2 + life * 0.85) * (0.7 + 0.3 * Math.sin(t + i));
+      const mx = (cx + Math.cos(ang) * rx * rad + Math.sin(t * 2.2 + i) * 1.5) | 0;
+      const my = (cy + Math.sin(ang) * ry * rad - life * 6) | 0;
+      ink.globalAlpha = (1 - life) * 0.9;
+      px(mx, my, life < 0.3 ? 2 : 1, 1, i & 1 ? "#d8f4ff" : "#6ec8e8");
     }
     ink.restore();
   }
