@@ -3626,6 +3626,29 @@
     return drawChipTag(n, x, y);
   }
 
+  /** Classic board name (no chip) — guests only. Returns width used. */
+  function drawClassicBoardName(name, x, y, maxLen) {
+    const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
+    drawPixText(n, x, y, "#3a2414");
+    return pixTextWidth(n);
+  }
+
+  /**
+   * Board player label: account → gold/wood nametag chip; unclaimed guest → classic pixel text.
+   * Optional green online pip when presence matches. Returns width used.
+   */
+  function drawBoardPlayerLabel(name, x, y, opts) {
+    const o = opts || {};
+    const isAcc = !!o.isAccount;
+    const isOnline = !!o.isOnline;
+    const maxLen = o.maxLen == null ? (isAcc ? 7 : 10) : o.maxLen;
+    let cx = x;
+    if (isOnline) cx += drawOnlineDot(cx, y);
+    if (isAcc) cx += drawNameTag(name, cx, y, maxLen);
+    else cx += drawClassicBoardName(name, cx, y, maxLen);
+    return cx - x;
+  }
+
   /** Small green presence pip (~2–3px) left of a nametag. Returns width used. */
   function drawOnlineDot(x, y) {
     px(x, y + 2, 3, 3, "#1a4020");
@@ -7384,12 +7407,15 @@
           ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
           : false;
       const isOnline = boardRowOnline(r);
-      // Shorter when ACC/NEW chips sit beside the nametag
-      const nameMax = isAcc && isNew ? 6 : isAcc || isNew ? 7 : 9;
+      // Accounts use nametag chips (shorter when ACC/NEW sit beside); guests use classic text.
+      const nameMax = isAcc ? (isNew ? 6 : 7) : isNew ? 9 : 10;
       drawPixText(rank + " ", x, yy, "#3a2414");
       let tagX = x + 18;
-      if (isOnline) tagX += drawOnlineDot(tagX, yy);
-      tagX += drawNameTag(r.player_name, tagX, yy, nameMax) + 2;
+      tagX += drawBoardPlayerLabel(r.player_name, tagX, yy, {
+        isAccount: isAcc,
+        isOnline,
+        maxLen: nameMax,
+      }) + 2;
       if (isAcc) tagX += drawMemberTag(tagX, yy) + 2;
       if (isNew) tagX += drawNewTag(tagX, yy) + 2;
       drawPixText(timeStr, Math.max(tagX + 1, x + 108), yy, "#5c3a21");
@@ -7760,8 +7786,12 @@
         const rank = String(i + 1).padStart(2, " ");
         drawPixText(rank + " ", bx + 8, yy, "#3a2414");
         let nx = bx + 26;
-        if (boardRowOnline(r)) nx += drawOnlineDot(nx, yy);
-        drawNameTag(r.player_name, nx, yy, 8);
+        // NM boards are profile rows (accounts) — nametag chip + optional online pip.
+        nx += drawBoardPlayerLabel(r.player_name, nx, yy, {
+          isAccount: true,
+          isOnline: boardRowOnline(r),
+          maxLen: 8,
+        });
         const val = api && api.formatNmValue ? api.formatNmValue(nmBoardKind, r.value) : String(r.value | 0);
         drawPixText(val, bx + 100, yy, "#5c3a21");
         yy += 8;

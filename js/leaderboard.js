@@ -1265,33 +1265,64 @@
   }
 
   function presenceErrorDetail(res, err) {
-    let detail = "";
+    // Prefer code+message together — PostgREST often puts the useful text in
+    // message while code is only PGRST204 / 42703 (which alone hid user_id misses).
     try {
-      detail = String((err && (err.code || err.message || err.hint)) || "");
-    } catch (e) {}
-    return detail;
+      const parts = [];
+      if (err && err.code) parts.push(String(err.code));
+      if (err && err.message) parts.push(String(err.message));
+      if (err && err.hint) parts.push(String(err.hint));
+      if (!parts.length && res && res.status) parts.push("http " + res.status);
+      return parts.join(" ");
+    } catch (e) {
+      return "";
+    }
   }
 
   function presenceLooksMissing(status, detail) {
     const d = String(detail || "").toLowerCase();
+    // Column-missing (user_id) must not be treated as the whole table missing.
+    if (presenceLooksMissingUserId(status, detail)) return false;
     return (
       status === 404 ||
       String(detail).indexOf("PGRST205") >= 0 ||
       String(detail).indexOf("PGRST106") >= 0 ||
-      d.indexOf("does not exist") >= 0 ||
-      d.indexOf("could not find the table") >= 0
+      d.indexOf("could not find the table") >= 0 ||
+      (d.indexOf("does not exist") >= 0 && d.indexOf("column") < 0)
     );
   }
 
   function presenceLooksMissingUserId(status, detail) {
-    const d = String(detail || "").toLowerCase();
-    return (
+    const raw = String(detail || "");
+    const d = raw.toLowerCase();
+    // PGRST204 = missing column in schema cache; 42703 = undefined_column
+    if (raw.indexOf("PGRST204") >= 0 || d.indexOf("pgrst204") >= 0) return true;
+    if (d.indexOf("42703") >= 0) return true;
+    if (
       d.indexOf("user_id") >= 0 &&
       (d.indexOf("column") >= 0 ||
         d.indexOf("schema cache") >= 0 ||
-        String(detail).indexOf("PGRST204") >= 0 ||
+        d.indexOf("does not exist") >= 0 ||
         status === 400)
-    );
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  async function postPresenceBody(body) {
+    const res = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
+      method: "POST",
+      headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+      body: JSON.stringify(body),
+    });
+    let err = null;
+    if (!res.ok) {
+      try {
+        err = await res.json();
+      } catch (e) {}
+    }
+    return { res, err, detail: presenceErrorDetail(res, err) };
   }
 
   async function upsertPresence() {
@@ -1304,32 +1335,17 @@
     const uid = presenceUserId();
     if (uid) body.user_id = uid;
     try {
-      const res = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
-        method: "POST",
-        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let err = null;
-        try {
-          err = await res.json();
-        } catch (e) {}
-        const detail = presenceErrorDetail(res, err);
-        if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
-          presenceHasUserId = false;
-          delete body.user_id;
-          try {
-            const retry = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
-              method: "POST",
-              headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
-              body: JSON.stringify(body),
-            });
-            if (retry.ok) {
-              lastPresenceAt = Date.now();
-              return { ok: true, noUserId: true };
-            }
-          } catch (e2) {}
+      let { res, detail } = await postPresenceBody(body);
+      if (!res.ok && body.user_id && presenceLooksMissingUserId(res.status, detail)) {
+        presenceHasUserId = false;
+        delete body.user_id;
+        ({ res, detail } = await postPresenceBody(body));
+        if (res.ok) {
+          lastPresenceAt = Date.now();
+          return { ok: true, noUserId: true };
         }
+      }
+      if (!res.ok) {
         if (presenceLooksMissing(res.status, detail)) {
           markPresenceUnavailable();
           return { ok: false, missing: true };
@@ -1368,11 +1384,12 @@
           err = await res.json();
         } catch (e) {}
         const detail = presenceErrorDetail(res, err);
-        if (presenceHasUserId && presenceLooksMissingUserId(res.status, detail)) {
+        // Missing user_id column → drop it and retry (do NOT kill presence).
+        if (presenceHasUserId && (presenceLooksMissingUserId(res.status, detail) || res.status === 400)) {
           presenceHasUserId = false;
           return fetchOnlinePresence();
         }
-        if (res.status === 404 || res.status === 400 || res.status === 406 || presenceLooksMissing(res.status, detail)) {
+        if (presenceLooksMissing(res.status, detail) || res.status === 404 || res.status === 406) {
           markPresenceUnavailable();
           return null;
         }
@@ -1446,8 +1463,17 @@
     }
   }
 
-  initAuth();
-  startPresence();
+  // Restore session first so the initial heartbeat includes username + user_id.
+  Promise.resolve(initAuth())
+    .catch(() => {})
+    .then(() => {
+      startPresence();
+    });
+  // Re-heartbeat after sign-in / sign-out so ONLINE dots track the active account.
+  onAuthChange(() => {
+    if (!configured() || !presenceAvailable) return;
+    tickPresence();
+  });
 
   window.IsleLeaderboard = {
     CATEGORIES,
