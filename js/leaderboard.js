@@ -75,6 +75,7 @@
     coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 5000 },
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
+    mask: { id: "mask", label: "MASK%", floorMs: 22000 },
   };
 
   const FISH_STEP_CATS = {
@@ -107,6 +108,8 @@
     let sawFullInv = false;
     let sawHeart = false;
     let firstRodT = -1;
+    let sawTemple = false;
+    let sawMask = false;
 
     for (let i = 0; i < frames.length; i++) {
       const f = frames[i];
@@ -122,6 +125,8 @@
       const rod = f[11] | 0;
       const inv = f[14];
       const serp = f[15];
+      const sceneId = f[12] | 0;
+      if (sceneId === 4) sawTemple = true;
 
       if (bx != null && bx >= 0) sawBoat = true;
       if (aboard) sawAboard = true;
@@ -136,6 +141,7 @@
           const raw = inv[s] || "";
           if (raw) filled++;
           if (String(raw).indexOf("serpent_heart") === 0) sawHeart = true;
+          if (String(raw).indexOf("jade_mask") === 0) sawMask = true;
           if (String(raw).indexOf("cloak") === 0) {
             /* owned cloak at some point */
           }
@@ -183,6 +189,10 @@
 
     if (category === "full_inv" && !sawFullInv) return { ok: false, error: "need full inv" };
     if (category === "death" && minHp > 0) return { ok: false, error: "need death" };
+    if (category === "mask") {
+      if (!sawTemple) return { ok: false, error: "need temple" };
+      if (!sawMask) return { ok: false, error: "need jade mask" };
+    }
 
     return { ok: true };
   }

@@ -82,7 +82,7 @@ Notes:
 - Browser anon clients cannot read the real TCP IP inside RLS. Name + `user_id` bans are enforced in SQL policies; IP bans are enforced by the client (ipify) against `player_bans.ip`.
 - True edge IP blocking needs a Supabase Edge Function that inspects `x-forwarded-for` / `cf-connecting-ip`.
 - Banned players see: *You're temporarily banned from online features.* (submit / chat / sign-in / presence blocked).
-- Speedrun floorMs (client anti-cheat): death/boat/coins_10/coins_25 = 5s, full_inv = 30s, fish cats = 28s, shark_cloak = 45s, serpent = 40s, coins_100 = 20s.
+- Speedrun floorMs (client anti-cheat): death/boat/coins_10/coins_25 = 5s, full_inv = 30s, fish cats = 28s, shark_cloak = 45s, serpent = 40s, coins_100 = 20s, mask = 22s.
 
 ## Auth model (username + 4-digit PIN)
 
@@ -154,7 +154,8 @@ create policy "Public insert speedrun_scores"
       'megalodon',
       'coins_10',
       'coins_25',
-      'coins_100'
+      'coins_100',
+      'mask'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -333,7 +334,8 @@ create policy "Insert speedrun_scores guests or accounts"
       'megalodon',
       'coins_10',
       'coins_25',
-      'coins_100'
+      'coins_100',
+      'mask'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -364,7 +366,8 @@ create table if not exists public.speedrun_prs (
       'megalodon',
       'coins_10',
       'coins_25',
-      'coins_100'
+      'coins_100',
+      'mask'
     )
   )
 );
@@ -574,7 +577,8 @@ create policy "Public insert speedrun_replays"
       'megalodon',
       'coins_10',
       'coins_25',
-      'coins_100'
+      'coins_100',
+      'mask'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -618,6 +622,7 @@ After a submitted run, **VID** appears next to #1 on the category board when a r
 | `coins_10` | 10 Coins% |
 | `coins_25` | 25 Coins% |
 | `coins_100` | 100 Coins% |
+| `mask` | Mask% (jade mask) |
 
 ## Normal-mode profile boards
 

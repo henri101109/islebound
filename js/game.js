@@ -52,6 +52,7 @@
     cape: { name: "Ember Cape", max: 1, xp: 12, cosmetic: "back" },
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
+    sunken_chest: { name: "Sunken chest", max: 1, xp: 50 },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
@@ -146,6 +147,12 @@
   const TEMPLE_H = 720;
   const HUB_W = 260;
   const HUB_H = 180;
+  const SUB_W = 208;
+  const SUB_H = 132;
+  const FLOOR_W = 336;
+  const FLOOR_H = 196;
+  const WRECK_W = 208;
+  const WRECK_H = 240;
   const CABIN_NPC_X = 124;
   const CABIN_NPC_Y = 80;
   const CABIN_TABLE = { x: 146, y: 74, w: 36, h: 12 };
@@ -174,6 +181,9 @@
   const cabinSolids = [];
   const templeSolids = [];
   const hubSolids = [];
+  const subSolids = [];
+  const floorSolids = [];
+  const wreckSolids = [];
   const npcs = [];
   const boats = [];
   const swimFish = [];
@@ -184,6 +194,9 @@
   let cabinCanvas = null;
   let templeCanvas = null;
   let hubCanvas = null;
+  let subCanvas = null;
+  let floorCanvas = null;
+  let wreckCanvas = null;
   let templeWorldCanvas = null;
   let templeWorldOX = 0;
   let templeWorldOY = 0;
@@ -200,8 +213,25 @@
   let templeExit = null;
   let templeIslandExit = null;
   let hubExit = null;
+  let subDoor = null;
+  let subIslandExit = null;
+  let subExit = null;
+  let subHatch = null;
+  let subLever = null;
+  let floorHatch = null;
+  let floorWreckDoor = null;
+  let wreckExit = null;
+  let wreckChest = null;
   let templePedestal = null;
   let templeMaskTaken = false;
+  let divePhase = "docked";
+  let diveT = 0;
+  let diveTip = "";
+  let diveTipT = 0;
+  let diveLeverHeld = false;
+  let sunkenTaken = false;
+  let floorSharks = [];
+  let floorMega = { x: 24, y: 18, dir: 1, speed: 16 };
   let dailyLootId = null;
   let dailyClaimedUtc = "";
   let hubUi = { tip: "", tipT: 0 };
@@ -288,6 +318,7 @@
     "coins_10",
     "coins_25",
     "coins_100",
+    "mask",
   ];
   let playMode = null;
   let uiScreen = "mode";
@@ -336,8 +367,8 @@
   let replayMeta = null;
   /** Brief fade-from-black when starting / switching spectate replay. */
   let replayCutT = 0;
-  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3, temple: 4, hub: 5 };
-  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin", "temple", "hub"];
+  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3, temple: 4, hub: 5, sub: 6, floor: 7, wreck: 8 };
+  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin", "temple", "hub", "sub", "floor", "wreck"];
   const REPLAY_ROD = { idle: 0, wait: 1, reel: 2 };
   const REPLAY_ROD_INV = ["idle", "wait", "reel"];
   let authUser = "";
@@ -408,6 +439,14 @@
       {
         title: "MORE CATS",
         lines: ["DEATH% DIE FAST", "FULL INV% FILL BAG", "COIN% REACH GOAL", "BLOWFISH% CATCH ONE"],
+      },
+      {
+        title: "MASK%",
+        lines: ["MASK% JADE MASK", "TEMPLE MAZE, FAR END", "TOUCH THE PEDESTAL", "BAG SPACE NOT NEEDED"],
+      },
+      {
+        title: "DIVE",
+        lines: ["SHIP EAST OF THE DOCK", "LEVER DIVES ALONE", "HOLD WAND FOR A BUBBLE", "CHEST ON THE TOP DECK"],
       },
       {
         title: "SUBMIT",
@@ -620,7 +659,10 @@
       scene === "fish" ||
       scene === "cabin" ||
       scene === "temple" ||
-      scene === "hub"
+      scene === "hub" ||
+      scene === "sub" ||
+      scene === "floor" ||
+      scene === "wreck"
     );
   }
 
@@ -629,6 +671,9 @@
     if (scene === "cabin") return CABIN_W;
     if (scene === "temple") return TEMPLE_W;
     if (scene === "hub") return HUB_W;
+    if (scene === "sub") return SUB_W;
+    if (scene === "floor") return FLOOR_W;
+    if (scene === "wreck") return WRECK_W;
     return SHOP_W;
   }
 
@@ -637,6 +682,9 @@
     if (scene === "cabin") return CABIN_H;
     if (scene === "temple") return TEMPLE_H;
     if (scene === "hub") return HUB_H;
+    if (scene === "sub") return SUB_H;
+    if (scene === "floor") return FLOOR_H;
+    if (scene === "wreck") return WRECK_H;
     return SHOP_H;
   }
 
@@ -1013,6 +1061,9 @@
     if (scene === "cabin") return !!hitPad(px, py, cabinSolids);
     if (scene === "temple") return !!hitPad(px, py, templeSolids);
     if (scene === "hub") return !!hitPad(px, py, hubSolids);
+    if (scene === "sub") return !!hitPad(px, py, subSolids);
+    if (scene === "floor") return !!hitPad(px, py, floorSolids);
+    if (scene === "wreck") return !!hitPad(px, py, wreckSolids);
     if (hitPad(px, py, islandSolids)) return true;
     for (const rock of rocks) {
       if (px > rock.x && px < rock.x + rock.w && py > rock.y && py < rock.y + rock.h) {
@@ -1038,6 +1089,15 @@
     }
     if (scene === "hub") {
       return px >= 10 && py >= 12 && px < HUB_W - 10 && py < HUB_H - 6;
+    }
+    if (scene === "sub") {
+      return px >= 8 && py >= 52 && px < SUB_W - 8 && py < SUB_H - 6;
+    }
+    if (scene === "floor") {
+      return px >= 6 && py >= 48 && px < FLOOR_W - 6 && py < FLOOR_H - 6;
+    }
+    if (scene === "wreck") {
+      return px >= 8 && py >= 10 && px < WRECK_W - 8 && py < WRECK_H - 6;
     }
     if (hitPad(px, py, walkPads)) return true;
     if (landPresent(px) && py < northCliffY(px)) return false;
@@ -2125,7 +2185,7 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput()) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || diveTransit()) {
       dx = 0;
       dy = 0;
       player.moving = false;
@@ -2687,6 +2747,11 @@
   function holdingShell() {
     const stack = inventory[heldSlot];
     return !!(stack && stack.id === "shell");
+  }
+
+  function holdingWand() {
+    const stack = inventory[heldSlot];
+    return !!(stack && stack.id === "wand");
   }
 
   function killHorn() {
@@ -5969,6 +6034,444 @@
     pxi(g, hatch.x + hatch.w - 3, hatch.y + ((hatch.h / 2) | 0), 1, 1, "#e8c44a");
   }
 
+  const WRECK_AIR = [
+    { x: 16, y: 86, w: 52, h: 40 },
+    { x: 136, y: 96, w: 56, h: 36 },
+  ];
+
+  function diveTransit() {
+    return scene === "sub" && (divePhase === "diving" || divePhase === "rising");
+  }
+
+  function scatterFloorSharks() {
+    floorSharks = [];
+    for (let i = 0; i < 3; i++) {
+      floorSharks.push({
+        x: 78 + i * 36 + irand(0, 14),
+        y: 62 + irand(0, 78),
+        dir: i & 1 ? 1 : -1,
+        speed: 20 + i * 7,
+        w: 16,
+        h: 7,
+      });
+    }
+    floorMega = { x: irand(10, 80), y: 16, dir: 1, speed: 14 + irand(0, 6) };
+  }
+
+  function inWreckAir() {
+    const mid = playerCenter();
+    for (let i = 0; i < WRECK_AIR.length; i++) {
+      const r = WRECK_AIR[i];
+      if (mid.x >= r.x && mid.x < r.x + r.w && mid.y >= r.y && mid.y < r.y + r.h) return true;
+    }
+    return false;
+  }
+
+  function bubbleNeeded() {
+    if (scene === "floor") return true;
+    if (scene !== "wreck") return false;
+    const feet = player.y + player.h;
+    if (feet < 78) return false;
+    if (feet < 158 && inWreckAir()) return false;
+    return true;
+  }
+
+  function bubbleFailing() {
+    return (
+      bubbleNeeded() &&
+      !holdingWand() &&
+      !fadeMode &&
+      doorCool <= 0 &&
+      player.dead <= 0 &&
+      !guideOpen &&
+      !uiBlocksPlay()
+    );
+  }
+
+  function paintMetalHull(g, hull) {
+    const x = hull.x;
+    const y = hull.y;
+    const w = hull.w;
+    const h = hull.h;
+    pxi(g, x + 2, y + 4, w - 4, h - 4, "#3a4654");
+    pxi(g, x + 6, y + 2, w - 14, h - 4, "#5a6878");
+    pxi(g, x + 8, y + 1, w - 20, 3, "#7a8a98");
+    pxi(g, x + w - 10, y + 5, 8, 3, "#2a3440");
+    pxi(g, x + 22, y + 3, 12, 6, "#8ec8e0");
+    pxi(g, x + 24, y + 4, 8, 3, "#d8f4ff");
+    pxi(g, x + w - 6, y + 6, 2, 2, "#c9a227");
+    pxi(g, x + 4, y + h - 3, 3, 2, "#2a3440");
+  }
+
+  function bakeSubInterior() {
+    subCanvas = document.createElement("canvas");
+    subCanvas.width = SUB_W;
+    subCanvas.height = SUB_H;
+    const g = subCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, SUB_W, SUB_H, "#141a22");
+    for (let y = 52; y < SUB_H - 8; y++) {
+      for (let x = 8; x < SUB_W - 8; x++) {
+        const grate = x % 4 === 0 || y % 4 === 0;
+        pxi(g, x, y, 1, 1, grate ? "#2c3846" : "#1a222c");
+      }
+    }
+    pxi(g, 0, 0, SUB_W, 10, "#4a5664");
+    pxi(g, 0, 0, 8, SUB_H, "#3a4654");
+    pxi(g, SUB_W - 8, 0, 8, SUB_H, "#3a4654");
+    pxi(g, 0, SUB_H - 8, SUB_W, 8, "#2a3440");
+    pxi(g, 16, 14, SUB_W - 32, 34, "#0c1824");
+    pxi(g, 16, 14, SUB_W - 32, 2, "#8a98a4");
+    pxi(g, 16, 46, SUB_W - 32, 2, "#5a6874");
+    for (let i = 0; i < 4; i++) pxi(g, 44 + i * 36, 14, 2, 34, "#607080");
+    pxi(g, SUB_W - 64, 70, 48, 30, "#1c2834");
+    pxi(g, SUB_W - 60, 74, 16, 10, "#14384e");
+    pxi(g, SUB_W - 40, 74, 18, 10, "#143828");
+    pxi(g, SUB_W - 60, 88, 38, 6, "#1a3048");
+    pxi(g, SUB_W - 56, 90, 8, 2, "#3ec8e0");
+    pxi(g, SUB_W - 44, 90, 8, 2, "#e8c44a");
+    pxi(g, 30, 88, 14, 8, "#4a4038");
+    pxi(g, 35, 68, 3, 22, "#c9a227");
+    pxi(g, 32, 66, 9, 4, "#e8c44a");
+    pxi(g, 92, 96, 24, 16, "#0e141c");
+    pxi(g, 94, 98, 20, 12, "#243444");
+    pxi(g, 100, 102, 8, 4, "#6ec8e0");
+    const doorX = (SUB_W / 2 - 8) | 0;
+    pxi(g, doorX, SUB_H - 8, 16, 8, "#070c10");
+    subSolids.length = 0;
+    subSolids.push({ x: 0, y: 0, w: SUB_W, h: 50 });
+    subSolids.push({ x: 0, y: 0, w: 8, h: SUB_H });
+    subSolids.push({ x: SUB_W - 8, y: 0, w: 8, h: SUB_H });
+    subSolids.push({ x: 0, y: SUB_H - 8, w: doorX, h: 8 });
+    subSolids.push({ x: doorX + 16, y: SUB_H - 8, w: SUB_W - (doorX + 16), h: 8 });
+    subSolids.push({ x: SUB_W - 66, y: 68, w: 52, h: 34 });
+    subLever = { x: 28, y: 62, w: 16, h: 36 };
+    subHatch = { x: 90, y: 94, w: 28, h: 20 };
+    subExit = { x: doorX, y: SUB_H - 12, w: 16, h: 12 };
+  }
+
+  function bakeFloorInterior() {
+    floorCanvas = document.createElement("canvas");
+    floorCanvas.width = FLOOR_W;
+    floorCanvas.height = FLOOR_H;
+    const g = floorCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    for (let y = 0; y < FLOOR_H; y++) {
+      for (let x = 0; x < FLOOR_W; x++) {
+        const n = hash(x + 2, y + 9);
+        let col = "#6a7c74";
+        if (y < 46) col = y < 18 ? "#0a2030" : "#123044";
+        else if (n > 0.86) col = "#8a9a90";
+        else if (n < 0.08) col = "#4a5c56";
+        else if ((x + y) % 9 === 0) col = "#5e7068";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    for (let i = 0; i < 5; i++) {
+      const kx = 24 + i * 28;
+      pxi(g, kx, 70 + (i % 3) * 8, 2, 36, "#1a4a38");
+      pxi(g, kx - 2, 78 + (i % 2) * 6, 2, 22, "#143828");
+      pxi(g, kx + 2, 84, 2, 18, "#1a4030");
+    }
+    const wx = 196;
+    const wy = 72;
+    pxi(g, wx, wy + 28, 122, 36, "#4a3828");
+    pxi(g, wx + 8, wy + 16, 100, 22, "#5a4632");
+    pxi(g, wx + 16, wy + 8, 78, 16, "#3a2c20");
+    pxi(g, wx + 54, wy - 10, 3, 40, "#2a2018");
+    pxi(g, wx + 78, wy - 4, 2, 28, "#2a2018");
+    pxi(g, wx + 20, wy + 18, 28, 10, "#1a2820");
+    pxi(g, wx + 22, wy + 36, 18, 12, "#6a5438");
+    pxi(g, wx + 26, wy + 40, 8, 4, "#e8c44a");
+    for (let k = 0; k < 6; k++) pxi(g, wx + 14 + k * 16, wy + 12, 2, 8, "#2a6a48");
+    floorHatch = { x: 18, y: FLOOR_H - 36, w: 22, h: 16 };
+    floorWreckDoor = { x: wx + 8, y: wy + 26, w: 22, h: 20 };
+    pxi(g, floorHatch.x, floorHatch.y, floorHatch.w, floorHatch.h, "#1a2834");
+    pxi(g, floorHatch.x + 3, floorHatch.y + 3, floorHatch.w - 6, floorHatch.h - 6, "#6ec8e0");
+    pxi(g, floorWreckDoor.x, floorWreckDoor.y, floorWreckDoor.w, floorWreckDoor.h, "#140e0c");
+    floorSolids.length = 0;
+    floorSolids.push({ x: 0, y: 0, w: FLOOR_W, h: 46 });
+    floorSolids.push({ x: wx, y: wy + 6, w: 124, h: 14 });
+    floorSolids.push({ x: wx + 36, y: wy + 20, w: 88, h: 36 });
+    floorSolids.push({ x: wx, y: wy + 56, w: 124, h: 12 });
+  }
+
+  function bakeWreckInterior() {
+    wreckCanvas = document.createElement("canvas");
+    wreckCanvas.width = WRECK_W;
+    wreckCanvas.height = WRECK_H;
+    const g = wreckCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, WRECK_W, WRECK_H, "#102028");
+    for (let y = 8; y < WRECK_H - 6; y++) {
+      for (let x = 8; x < WRECK_W - 8; x++) {
+        const deck = y < 74 ? 0 : y < 154 ? 1 : 2;
+        const n = hash(x, y + deck * 3);
+        let col = deck === 0 ? "#6a5438" : deck === 1 ? "#4a5a58" : "#2a4450";
+        if (n > 0.9) col = deck === 2 ? "#1a3038" : "#7a6244";
+        if ((x % 8) === 0) col = "#3a2c20";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    for (let i = 0; i < WRECK_AIR.length; i++) {
+      const r = WRECK_AIR[i];
+      pxi(g, r.x, r.y, r.w, r.h, "#6a8a78");
+      pxi(g, r.x + 4, r.y + 4, r.w - 8, 2, "#d8f4ff");
+    }
+    pxi(g, 0, 0, WRECK_W, 8, "#3a2c20");
+    pxi(g, 0, 0, 8, WRECK_H, "#3a2c20");
+    pxi(g, WRECK_W - 8, 0, 8, WRECK_H, "#3a2c20");
+    pxi(g, 0, 74, 96, 8, "#2a2018");
+    pxi(g, 116, 74, WRECK_W - 116, 8, "#2a2018");
+    pxi(g, 0, 154, 96, 8, "#2a2018");
+    pxi(g, 116, 154, WRECK_W - 116, 8, "#2a2018");
+    pxi(g, 96, 70, 20, 16, "#5a4632");
+    pxi(g, 96, 150, 20, 16, "#5a4632");
+    pxi(g, 24, 188, 14, 12, "#6b3f1f");
+    pxi(g, 148, 176, 16, 14, "#5a3418");
+    pxi(g, 156, 28, 22, 14, "#8a5a32");
+    pxi(g, 158, 26, 18, 4, "#c9a227");
+    pxi(g, 164, 30, 4, 4, "#e8c44a");
+    const exitX = (WRECK_W / 2 - 10) | 0;
+    pxi(g, exitX, WRECK_H - 10, 20, 10, "#071018");
+    wreckSolids.length = 0;
+    wreckSolids.push({ x: 0, y: 0, w: WRECK_W, h: 8 });
+    wreckSolids.push({ x: 0, y: 0, w: 8, h: WRECK_H });
+    wreckSolids.push({ x: WRECK_W - 8, y: 0, w: 8, h: WRECK_H });
+    wreckSolids.push({ x: 0, y: 74, w: 96, h: 8 });
+    wreckSolids.push({ x: 116, y: 74, w: WRECK_W - 116, h: 8 });
+    wreckSolids.push({ x: 0, y: 154, w: 96, h: 8 });
+    wreckSolids.push({ x: 116, y: 154, w: WRECK_W - 116, h: 8 });
+    wreckSolids.push({ x: 22, y: 186, w: 16, h: 14 });
+    wreckSolids.push({ x: 146, y: 174, w: 18, h: 16 });
+    wreckChest = { x: 154, y: 24, w: 26, h: 20 };
+    wreckExit = { x: exitX, y: WRECK_H - 14, w: 20, h: 14 };
+  }
+
+  function updateDive(dt) {
+    if (diveTipT > 0) diveTipT = Math.max(0, diveTipT - dt);
+    const onLever = scene === "sub" && subLever && playerHits(subLever);
+    if (onLever && !diveLeverHeld && !fadeMode && doorCool <= 0 && player.dead <= 0 && !diveTransit()) {
+      if (divePhase === "docked") {
+        divePhase = "diving";
+        diveT = 0;
+        diveTip = "DIVING";
+        diveTipT = 1.4;
+      } else if (divePhase === "down") {
+        divePhase = "rising";
+        diveT = 0;
+        diveTip = "RISING";
+        diveTipT = 1.4;
+      }
+    }
+    diveLeverHeld = !!onLever;
+    if (divePhase === "diving") {
+      diveT += dt;
+      if (diveT >= 4.6) {
+        divePhase = "down";
+        diveT = 0;
+        diveTip = "HATCH OPEN";
+        diveTipT = 1.8;
+      }
+    } else if (divePhase === "rising") {
+      diveT += dt;
+      if (diveT >= 3.2) {
+        divePhase = "docked";
+        diveT = 0;
+        diveTip = "SURFACED";
+        diveTipT = 1.6;
+      }
+    }
+    if (scene === "floor") {
+      for (let i = 0; i < floorSharks.length; i++) {
+        const s = floorSharks[i];
+        s.x += s.dir * s.speed * dt;
+        if (s.x < 56) s.dir = 1;
+        if (s.x > 176) s.dir = -1;
+        s.y += Math.sin(time * 1.4 + i) * 8 * dt;
+        if (s.y < 54) s.y = 54;
+        if (s.y > FLOOR_H - 28) s.y = FLOOR_H - 28;
+      }
+      floorMega.x += floorMega.dir * floorMega.speed * dt;
+      if (floorMega.x > FLOOR_W + 30) floorMega.x = -48;
+    }
+    if (
+      scene === "floor" &&
+      !fadeMode &&
+      doorCool <= 0 &&
+      player.dead <= 0 &&
+      !guideOpen &&
+      !uiBlocksPlay()
+    ) {
+      for (let i = 0; i < floorSharks.length; i++) {
+        const s = floorSharks[i];
+        if (playerHits({ x: s.x, y: s.y, w: s.w, h: s.h })) {
+          diveTip = "SHARK";
+          diveTipT = 1.6;
+          beginFade("sub", { x: (SUB_W / 2 - 4) | 0, y: SUB_H - 56 });
+          break;
+        }
+      }
+    }
+    if (scene === "wreck" && !fadeMode && player.dead <= 0) {
+      const ox = 156;
+      const oy = 198;
+      const mid = playerCenter();
+      const dist = Math.hypot(mid.x - ox, mid.y - oy);
+      if (dist < 22 && dist > 0.01) {
+        const push = dist < 12 ? 28 : 10;
+        const nx = player.x + ((mid.x - ox) / dist) * push * dt * 8;
+        const ny = player.y + ((mid.y - oy) / dist) * push * dt * 8;
+        if (canMove(nx, player.y)) player.x = nx;
+        if (canMove(player.x, ny)) player.y = ny;
+      }
+      if (!sunkenTaken && wreckChest && playerHits(wreckChest)) {
+        sunkenTaken = true;
+        loot.push({
+          id: "sunken_chest",
+          x: wreckChest.x + 4,
+          y: wreckChest.y - 2,
+          taken: false,
+          born: waveCycle,
+          life: Infinity,
+          scene: "wreck",
+        });
+        diveTip = "SUNKEN CHEST";
+        diveTipT = 1.8;
+      }
+    }
+  }
+
+  function updateMaskGoal() {
+    if (playMode !== "speedrun" || srCat !== "mask") return;
+    if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
+    if (scene !== "temple" || !templePedestal || templeMaskTaken) return;
+    const mid = playerCenter();
+    if (Math.hypot(mid.x - (templePedestal.x + 8), mid.y - (templePedestal.y + 4)) >= 18) return;
+    templeMaskTaken = true;
+    let has = cosmetics.face === "jade_mask";
+    if (!has) {
+      for (let i = 0; i < inventory.length; i++) {
+        if (inventory[i] && inventory[i].id === "jade_mask") has = true;
+      }
+    }
+    if (!has) {
+      let placed = false;
+      for (let i = 0; i < inventory.length; i++) {
+        if (!inventory[i]) {
+          inventory[i] = { id: "jade_mask", count: 1 };
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) inventory[0] = { id: "jade_mask", count: 1 };
+    }
+    captureReplayFrame(true);
+    finishSpeedrun();
+  }
+
+  function drawAirBubble(cpos) {
+    if (!holdingWand() || !bubbleNeeded()) return;
+    const bob = Math.sin(time * 5) | 0;
+    const x = (player.x - cpos.x + 1) | 0;
+    const y = (player.y - cpos.y - 8 + bob) | 0;
+    px(x + 1, y, 4, 1, "#d8f4ff");
+    px(x, y + 1, 6, 3, "#9ad8f0");
+    px(x + 1, y + 4, 4, 1, "#eefaff");
+    px(x + 2, y - 2, 1, 1, "#ffffff");
+  }
+
+  function drawDiveWorld(cpos, t) {
+    if (scene === "sub") {
+      const win = { x: 18, y: 16, w: SUB_W - 36, h: 28 };
+      const x = (win.x - cpos.x) | 0;
+      const y = (win.y - cpos.y) | 0;
+      let u = 0;
+      if (divePhase === "diving") u = Math.min(1, diveT / 4.6);
+      else if (divePhase === "rising") u = 1 - Math.min(1, diveT / 3.2);
+      else if (divePhase === "down") u = 1;
+      const r = (46 + (8 - 46) * u) | 0;
+      const g = (120 + (28 - 120) * u) | 0;
+      const b = (160 + (42 - 160) * u) | 0;
+      px(x, y, win.w, win.h, "rgb(" + r + "," + g + "," + b + ")");
+      const bands = (t * 10) | 0;
+      for (let i = 0; i < win.w; i += 6) {
+        const yy = y + ((i + bands) % win.h);
+        px(x + i, yy, 2, 1, u > 0.55 ? "#163044" : "#d8f4ff");
+      }
+      if (divePhase === "down") {
+        px(x, y + win.h - 6, win.w, 6, "#5a6e66");
+        px(x + 20, y + 8, 2, 10, "#1a4a38");
+      }
+    }
+    if (scene === "floor") {
+      const rays = (t * 6) | 0;
+      ink.save();
+      ink.globalAlpha = 0.28;
+      for (let i = 0; i < 4; i++) {
+        const rx = (40 + i * 70 - cpos.x + (rays % 8)) | 0;
+        px(rx, (48 - cpos.y) | 0, 2, 90, "#d8f4ff");
+      }
+      ink.restore();
+      const mx = (floorMega.x - cpos.x) | 0;
+      const my = (floorMega.y - cpos.y) | 0;
+      px(mx, my, 40, 8, "#1a2830");
+      px(mx + 32, my - 2, 10, 5, "#243840");
+      px(mx + 8, my - 4, 4, 4, "#2a3844");
+      px(mx + 6, my + 2, 2, 2, "#e8c44a");
+      px(mx + 14, my + 7, 8, 2, "#121c22");
+      for (let i = 0; i < floorSharks.length; i++) {
+        const s = floorSharks[i];
+        const sx = (s.x - cpos.x) | 0;
+        const sy = (s.y - cpos.y) | 0;
+        px(sx, sy + 2, 14, 4, "#3a4e5c");
+        px(sx + (s.dir > 0 ? 12 : -2), sy + 2, 4, 3, "#2a3c48");
+        px(sx + 5, sy - 1, 2, 3, "#4a6270");
+        px(sx + 3, sy + 3, 1, 1, "#d8f4ff");
+      }
+    }
+    if (scene === "wreck") {
+      for (let i = 0; i < 3; i++) {
+        const sx = (28 + i * 60 - cpos.x) | 0;
+        const sy = (10 + i * 78 - cpos.y) | 0;
+        ink.save();
+        ink.globalAlpha = 0.22;
+        px(sx, sy, 3, 48, "#e8f6ff");
+        ink.restore();
+      }
+      const ox = (156 - cpos.x) | 0;
+      const oy = (190 - cpos.y) | 0;
+      px(ox, oy, 10, 8, "#6a3a78");
+      px(ox + 2, oy + 2, 2, 2, "#f4fbff");
+      const mid = playerCenter();
+      if (Math.hypot(mid.x - 160, mid.y - 194) < 36) {
+        const tx = (mid.x - cpos.x) | 0;
+        const ty = (mid.y - cpos.y) | 0;
+        px(ox + 8, oy + 4, Math.max(2, tx - ox), 2, "#4a2860");
+      }
+      if (!sunkenTaken && wreckChest) {
+        const cx = (wreckChest.x - cpos.x) | 0;
+        const cy = (wreckChest.y - cpos.y) | 0;
+        const pulse = 0.55 + Math.sin(t * 4) * 0.25;
+        ink.save();
+        ink.globalAlpha = pulse;
+        px(cx + 4, cy - 4, 10, 2, "#e8c44a");
+        ink.restore();
+      }
+    }
+  }
+
+  function drawDiveHud() {
+    if (scene !== "sub" && scene !== "floor" && scene !== "wreck") return;
+    if (uiBlocksPlay()) return;
+    const uiW = canvas.width / SCALE_UI;
+    if (diveTipT > 0 && diveTip) drawPixText(diveTip, (uiW / 2) | 0, 10, "#f3e2c4", "center");
+    else if (diveTransit()) {
+      drawPixText(divePhase === "diving" ? "DIVING" : "RISING", (uiW / 2) | 0, 10, "#9ad8f0", "center");
+    }
+    if (bubbleNeeded() && holdingWand()) drawPixText("BUBBLE", uiW - 6, 8, "#9ad8f0", "right");
+  }
+
   function buildDockAndShop() {
     const cx = 48 * TILE;
     const rest = restShoreY(cx + 64);
@@ -5997,14 +6500,28 @@
     };
     const moorHull = { x: moorDeck.x - 2, y: moorDeck.y, w: moorDeck.w + 4, h: moorDeck.h + 2 };
     moorSail = { x: moorDeck.x, y: moorDeck.y };
+    const subHull = { x: pier.x + pier.w + 18, y: rest + 28, w: 56, h: 16 };
+    const subNeck = { x: pier.x + pier.w - 8, y: pier.y + 5, w: 16, h: 10 };
+    const subDrop = {
+      x: pier.x + pier.w - 2,
+      y: pier.y + 5,
+      w: 12,
+      h: subHull.y + 6 - (pier.y + 5),
+    };
+    const subLink = {
+      x: subDrop.x,
+      y: subHull.y + 2,
+      w: subHull.x + 8 - subDrop.x,
+      h: 10,
+    };
     dockWood.length = 0;
     dockWood.push(pier, finger);
     deckPads.length = 0;
-    deckPads.push(pier, finger, ramp, moorDeck, moorPlank);
+    deckPads.push(pier, finger, ramp, moorDeck, moorPlank, subHull, subNeck, subDrop, subLink);
     walkPads.length = 0;
     islandSolids.length = 0;
     keepouts.length = 0;
-    walkPads.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorPlank);
+    walkPads.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorPlank, subHull, subNeck, subDrop, subLink);
     walkPads.push({ x: door.x - 4, y: door.y, w: door.w + 8, h: pier.y + pier.h - door.y });
     walkPads.push({ x: hutDoor.x - 3, y: hutDoor.y, w: hutDoor.w + 6, h: pier.y + pier.h - hutDoor.y });
     islandSolids.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h - 10 });
@@ -6031,9 +6548,11 @@
     fishDockExit = { x: hutDoor.x + hutDoor.w + 8, y: pier.y + 4 };
     cabinDoor = { x: moorDoor.x, y: moorDoor.y, w: moorDoor.w, h: moorDoor.h };
     cabinDockExit = { x: moorDeck.x + 8, y: pier.y + 4 };
+    subDoor = { x: subHull.x + 34, y: subHull.y, w: 16, h: subHull.h };
+    subIslandExit = { x: subHull.x + 6, y: subHull.y + 2 };
     foamBlockers.length = 0;
     dockBlit.length = 0;
-    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank);
+    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank, subHull, subNeck, subDrop, subLink);
     foamBlockers.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h });
     foamBlockers.push({ x: hut.x, y: hut.y, w: hut.w, h: hut.h });
     foamBlockers.push({ x: pier.x - 2, y: pier.y + pier.h - 2, w: pier.w + 4, h: 26 });
@@ -6050,6 +6569,7 @@
     padKeep(rowA, 14);
     padKeep(rowB, 14);
     padKeep(moorHull, 10);
+    padKeep(subHull, 8);
     dockBlit.push({ x: ramp.x, y: ramp.y, w: ramp.w + 4, h: ramp.h + 4 });
     dockBlit.push({ x: moorPlank.x - 2, y: moorPlank.y - 2, w: moorPlank.w + 4, h: moorPlank.h + 4 });
     dockBlit.push({ x: moorHull.x - 2, y: moorDeck.y - 2, w: moorHull.w + 4, h: moorHull.h + 6 });
@@ -6068,6 +6588,10 @@
       pxi(g, moorPlank.x, moorPlank.y, 1, moorPlank.h, "#3a2414");
       pxi(g, moorPlank.x + moorPlank.w - 1, moorPlank.y, 1, moorPlank.h, "#3a2414");
       paintMooredBoat(g, moorDeck, moorDoor);
+      paintPlanks(g, subNeck.x, subNeck.y, subNeck.w, subNeck.h, true);
+      paintPlanks(g, subDrop.x, subDrop.y, subDrop.w, subDrop.h, true);
+      paintPlanks(g, subLink.x, subLink.y, subLink.w, subLink.h, false);
+      paintMetalHull(g, subHull);
     }
     const g = landCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
@@ -6081,8 +6605,8 @@
     dockLamps.push({ x: finger.x + 15, y: rest + 81 });
     const deckLeft = Math.min(ramp.x, pier.x, finger.x, moorHull.x) - 2;
     const deckTop = Math.min(ramp.y, pier.y, finger.y, moorHull.y) - 2;
-    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w, moorHull.x + moorHull.w) + 4;
-    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102, moorHull.y + moorHull.h) + 2;
+    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w, moorHull.x + moorHull.w, subHull.x + subHull.w) + 4;
+    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102, moorHull.y + moorHull.h, subHull.y + subHull.h) + 2;
     dockOX = deckLeft;
     dockOY = deckTop;
     dockOverlay = document.createElement("canvas");
@@ -6149,6 +6673,9 @@
     bakeShopInterior();
     bakeFishInterior();
     bakeCabinInterior();
+    bakeSubInterior();
+    bakeFloorInterior();
+    bakeWreckInterior();
     placeTemple(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
@@ -6228,10 +6755,23 @@
       next.scene === "fish" ||
       next.scene === "cabin" ||
       next.scene === "temple" ||
-      next.scene === "hub"
+      next.scene === "hub" ||
+      next.scene === "sub" ||
+      next.scene === "floor" ||
+      next.scene === "wreck"
         ? 1
         : -1;
-    if (next.scene === "cabin" || next.scene === "temple" || next.scene === "hub") player.aboard = false;
+    if (
+      next.scene === "cabin" ||
+      next.scene === "temple" ||
+      next.scene === "hub" ||
+      next.scene === "sub" ||
+      next.scene === "floor" ||
+      next.scene === "wreck"
+    ) {
+      player.aboard = false;
+    }
+    if (next.scene === "floor") scatterFloorSharks();
     doorCool = 0.85;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
@@ -6267,6 +6807,12 @@
 
   function updateDoors(dt) {
     if (doorCool > 0) doorCool = Math.max(0, doorCool - dt);
+    if (bubbleFailing()) {
+      diveTip = "BUBBLE POPPED";
+      diveTipT = 1.6;
+      beginFade("sub", { x: (SUB_W / 2 - 4) | 0, y: SUB_H - 56 });
+      return;
+    }
     if (fadeMode || player.dead > 0 || doorCool > 0 || player.aboard || cabinCut.kind) return;
     if (scene === "island" && shopDoor && playerHits(shopDoor)) {
       beginFade("shop", { x: (SHOP_W / 2 - 4) | 0, y: SHOP_H - 48 });
@@ -6295,6 +6841,31 @@
     }
     if (scene === "hub" && hubExit && playerHits(hubExit) && playMode === "hub") {
       leaveHubMode();
+    }
+    if (scene === "island" && subDoor && playerHits(subDoor)) {
+      beginFade("sub", { x: (SUB_W / 2 - 4) | 0, y: SUB_H - 44 });
+    }
+    if (scene === "sub" && divePhase === "docked" && subExit && playerHits(subExit)) {
+      beginFade("island", { x: subIslandExit.x, y: subIslandExit.y });
+    }
+    if (scene === "sub" && divePhase === "down" && subHatch && playerHits(subHatch)) {
+      if (!holdingWand()) {
+        diveTip = "NEED WAND";
+        diveTipT = 1.6;
+      } else beginFade("floor", { x: 48, y: 100 });
+    }
+    if (scene === "floor" && floorHatch && playerHits(floorHatch)) {
+      beginFade("sub", { x: (SUB_W / 2 - 4) | 0, y: SUB_H - 56 });
+    }
+    if (scene === "floor" && floorWreckDoor && playerHits(floorWreckDoor)) {
+      if (!holdingWand()) {
+        diveTip = "NEED WAND";
+        diveTipT = 1.6;
+      } else beginFade("wreck", { x: 96, y: WRECK_H - 36 });
+    }
+    if (scene === "wreck" && wreckExit && playerHits(wreckExit)) {
+      const back = floorWreckDoor || { x: 40, y: 120 };
+      beginFade("floor", { x: 148, y: 108 });
     }
   }
 
@@ -6632,11 +7203,13 @@
       px(x + 5, y + 1, 1, 2, "#8a3018");
       return true;
     }
-    if (id === "chest") {
-      px(x, y + 2, 8, 5, "#8a5a32");
-      px(x + 1, y + 1, 6, 2, "#c9a227");
+    if (id === "chest" || id === "sunken_chest") {
+      const wood = id === "sunken_chest" ? "#5a6a62" : "#8a5a32";
+      const band = id === "sunken_chest" ? "#7ec8b0" : "#c9a227";
+      px(x, y + 2, 8, 5, wood);
+      px(x + 1, y + 1, 6, 2, band);
       px(x + 3, y + 3, 2, 2, "#e8c44a");
-      px(x, y + 6, 8, 1, "#4a2e16");
+      px(x, y + 6, 8, 1, "#243830");
       return true;
     }
     if (id === "wand") {
@@ -8403,6 +8976,9 @@
   function indoorGlowAnchor() {
     if (scene === "cabin") return { x: CABIN_W / 2, y: 22, feet: 72 };
     if (scene === "fish") return { x: FISH_W / 2, y: 22, feet: 50 };
+    if (scene === "sub") return { x: SUB_W / 2, y: 28, feet: 90 };
+    if (scene === "floor") return { x: FLOOR_W / 2, y: 20, feet: 80 };
+    if (scene === "wreck") return { x: WRECK_W / 2, y: 16, feet: 70 };
     return { x: SHOP_W / 2, y: 22, feet: 64 };
   }
 
@@ -9525,6 +10101,9 @@
       "SHELL BLOWS THE HORN",
       "FAR HORN WAKES SERPENT",
       "WAND HITS BREACHING SERPENT",
+      "METAL SHIP EAST OF DOCK",
+      "LEVER DIVES, WAND TO EXIT",
+      "MASK% TAKE THE JADE MASK",
       "HOLD BAIT TO CAST BETTER",
       "T OPENS CHEST IN CABIN",
       "T TRADES NEAR NPC",
@@ -9568,7 +10147,17 @@
         0,
         viewW,
         viewH,
-        scene === "cabin" ? "#071018" : scene === "temple" ? "#12100c" : scene === "hub" ? "#1a1810" : "#2a1c12"
+        scene === "cabin"
+          ? "#071018"
+          : scene === "temple"
+            ? "#12100c"
+            : scene === "hub"
+              ? "#1a1810"
+              : scene === "sub"
+                ? "#101820"
+                : scene === "floor" || scene === "wreck"
+                  ? "#061018"
+                  : "#2a1c12"
       );
       if (scene === "cabin") drawCabinSea(cpos, t);
       const room =
@@ -9580,11 +10169,18 @@
               ? templeCanvas
               : scene === "hub"
                 ? hubCanvas
-                : shopCanvas;
+                : scene === "sub"
+                  ? subCanvas
+                  : scene === "floor"
+                    ? floorCanvas
+                    : scene === "wreck"
+                      ? wreckCanvas
+                      : shopCanvas;
       const rw = indoorW();
       const rh = indoorH();
       if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
-      drawIndoorLight(cpos);
+      if (scene === "sub" || scene === "floor" || scene === "wreck") drawDiveWorld(cpos, t);
+      if (scene !== "sub" && scene !== "floor" && scene !== "wreck") drawIndoorLight(cpos);
       if (scene === "shop") drawShopGoldSpark(cpos, t);
       if (scene === "cabin") {
         drawCabinChest(cpos);
@@ -9600,6 +10196,7 @@
       else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
+      if (scene === "floor" || scene === "wreck") drawAirBubble(cpos);
       if (scene === "cabin") drawCabinMotes(cpos);
       if (scene === "hub") {
         drawHubNametags(cpos);
@@ -9663,6 +10260,7 @@
     drawHud();
     drawSerpentBossBar();
     drawHubOverlay();
+    drawDiveHud();
     drawGuide();
     drawBlowfishHearts();
     drawPickupFx();
@@ -9981,6 +10579,7 @@
     if (sc !== scene) {
       scene = sc;
       doorCool = 0;
+      if (sc === "floor") scatterFloorSharks();
     }
     heldSlot = Math.max(0, Math.min(MAX_SLOTS - 1, f[13] | 0));
     applyReplayInv(f[14]);
@@ -10416,6 +11015,12 @@
     cosmetics.back = null;
     cosSelect = null;
     templeMaskTaken = false;
+    sunkenTaken = false;
+    divePhase = "docked";
+    diveT = 0;
+    diveTip = "";
+    diveTipT = 0;
+    diveLeverHeld = false;
     hubUi.tip = "";
     hubUi.tipT = 0;
     hubEmoteT = 0;
@@ -11641,6 +12246,8 @@
         cloak: cloakOn,
         cosmetics: { face: cosmetics.face, back: cosmetics.back },
         templeMaskTaken: !!templeMaskTaken,
+        sunkenTaken: !!sunkenTaken,
+        divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
         dailyClaimedUtc: dailyClaimedUtc || "",
         boat: ownedBoat
           ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
@@ -11676,7 +12283,10 @@
       data.scene === "fish" ||
       data.scene === "cabin" ||
       data.scene === "island" ||
-      data.scene === "temple"
+      data.scene === "temple" ||
+      data.scene === "sub" ||
+      data.scene === "floor" ||
+      data.scene === "wreck"
     ) {
       scene = data.scene;
     } else if (data.scene === "hub") {
@@ -11688,9 +12298,14 @@
     cosmetics.face = data.cosmetics && ITEM_DEFS[data.cosmetics.face] ? data.cosmetics.face : null;
     cosmetics.back = data.cosmetics && ITEM_DEFS[data.cosmetics.back] ? data.cosmetics.back : null;
     templeMaskTaken = !!data.templeMaskTaken;
+    sunkenTaken = !!data.sunkenTaken;
+    divePhase = data.divePhase === "down" ? "down" : "docked";
+    if (scene === "floor") scatterFloorSharks();
     dailyClaimedUtc = data.dailyClaimedUtc ? String(data.dailyClaimedUtc) : "";
     cloakOn = !!data.cloak && ownsCloak();
-    if (scene === "cabin" || scene === "temple") player.aboard = false;
+    if (scene === "cabin" || scene === "temple" || scene === "sub" || scene === "floor" || scene === "wreck") {
+      player.aboard = false;
+    }
     if (data.boat && typeof data.boat.x === "number") {
       ownedBoat = {
         x: data.boat.x,
@@ -11755,6 +12370,8 @@
     updateRod(dt);
     updateSerpent(dt);
     updateWandBolts(dt);
+    updateDive(dt);
+    updateMaskGoal();
     if (srTiming) captureReplayFrame(false);
     if (fishCastT > 0) fishCastT = Math.max(0, fishCastT - dt);
     nearestLoot = findNearestLoot();
@@ -12076,7 +12693,10 @@
         fadeNext.scene === "fish" ||
         fadeNext.scene === "cabin" ||
         fadeNext.scene === "temple" ||
-        fadeNext.scene === "hub");
+        fadeNext.scene === "hub" ||
+        fadeNext.scene === "sub" ||
+        fadeNext.scene === "floor" ||
+        fadeNext.scene === "wreck");
     const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
     if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
     return keys.z ? SCALE_FAR : SCALE_DEFAULT;
