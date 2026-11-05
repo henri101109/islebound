@@ -405,6 +405,8 @@
   let spinNote = "";
   let spinUsed = 0;
   let spinPeriodKey = "";
+  /** CS:GO-style horizontal reel; outcome is fixed before the strip moves. */
+  let spinReel = null;
   const MODE_WALK = ["SURVIVAL", "SPEEDRUN", "HUB"];
   /** Title-screen cursor across play modes + walkthroughs. */
   let modeOpts = MODE_PLAY.concat(MODE_WALK);
@@ -2772,6 +2774,7 @@
     uiScreen = "spin";
     spinCursor = 0;
     spinNote = "";
+    spinReel = null;
     spinPeriodKey = period.key;
     spinUsed = 0;
     const api = lbApi();
@@ -2797,7 +2800,47 @@
     return WEEKLY_SPIN.prizes[WEEKLY_SPIN.prizes.length - 1];
   }
 
+  function spinReelBusy() {
+    return !!(spinReel && performance.now() < spinReel.start + spinReel.dur);
+  }
+
+  function startSpinReel(prize, owned) {
+    const cell = 28;
+    const reelW = 146;
+    const land = 22 + ((Math.random() * 6) | 0);
+    const cells = [];
+    for (let i = 0; i < land + 8; i++) {
+      if (i === land) cells.push(prize);
+      else cells.push(WEEKLY_SPIN.prizes[(Math.random() * WEEKLY_SPIN.prizes.length) | 0]);
+    }
+    const jitter = Math.random() * 8 - 4;
+    spinNote = "";
+    spinReel = {
+      start: performance.now(),
+      dur: 2800,
+      from: 0,
+      to: land * cell + cell / 2 - reelW / 2 + jitter,
+      cells: cells,
+      cell: cell,
+      reelW: reelW,
+      note: owned ? "OWNED" : prize.label,
+      done: false,
+    };
+  }
+
+  function spinReelOffset() {
+    if (!spinReel) return 0;
+    const t = Math.min(1, (performance.now() - spinReel.start) / spinReel.dur);
+    const e = 1 - Math.pow(1 - t, 3);
+    if (t >= 1 && !spinReel.done) {
+      spinReel.done = true;
+      spinNote = spinReel.note;
+    }
+    return spinReel.from + (spinReel.to - spinReel.from) * e;
+  }
+
   function tryWeeklySpin() {
+    if (spinReelBusy()) return;
     const api = lbApi();
     if (!api || !api.isSignedIn || !api.isSignedIn()) {
       spinNote = "SIGN IN";
@@ -2840,8 +2883,8 @@
     } catch (e) {}
     applySurvivalMemory(data);
     spinUsed = Math.min(WEEKLY_SPIN.spins, spinUsed + 1);
-    spinNote = owned ? "OWNED" : prize.label;
     if (api.recordWeeklySpin) api.recordWeeklySpin(period.key, spinUsed);
+    startSpinReel(prize, owned);
   }
 
   function slotIndexFor(id) {
@@ -12373,6 +12416,55 @@
     }
   }
 
+  function drawSpinPrizeTile(x, y, w, h, prize) {
+    px(x, y, w, h, "#5c3a21");
+    px(x + 1, y + 1, w - 2, h - 2, "#c4a574");
+    px(x + 1, y + 1, w - 2, 1, "#e8d4a8");
+    px(x + 1, y + h - 2, w - 2, 1, "#8a5a32");
+    if (prize && prize.id) drawTinyCatch(prize.id, x + ((w - 8) / 2) | 0, y + ((h - 8) / 2) | 0);
+  }
+
+  function drawSpinReelStrip(x, y, w, h) {
+    px(x, y, w, h, "#3a2414");
+    px(x + 1, y + 1, w - 2, h - 2, "#5c3a21");
+    px(x + 2, y + 2, w - 4, h - 4, "#2b1c12");
+    const rx = x + 3;
+    const ry = y + 3;
+    const rw = w - 6;
+    const rh = h - 6;
+    const cx = rx + ((rw / 2) | 0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(rx, ry, rw, rh);
+    ctx.clip();
+    if (spinReel) {
+      const cell = spinReel.cell;
+      const offset = spinReelOffset();
+      const cells = spinReel.cells;
+      const first = Math.floor(offset / cell) - 1;
+      const last = first + ((rw / cell) | 0) + 3;
+      for (let i = first; i <= last; i++) {
+        if (i < 0 || i >= cells.length) continue;
+        const tx = (rx + i * cell - offset) | 0;
+        drawSpinPrizeTile(tx, ry + 1, cell - 2, rh - 2, cells[i]);
+      }
+    } else {
+      const gap = 42;
+      const total = gap * 2 + 30;
+      let tx = rx + (((rw - total) / 2) | 0);
+      for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) {
+        drawSpinPrizeTile(tx, ry + 1, 30, rh - 2, WEEKLY_SPIN.prizes[i]);
+        tx += gap;
+      }
+    }
+    ctx.restore();
+    px(cx - 1, y, 2, 3, "#e8c44a");
+    px(cx - 1, y + h - 3, 2, 3, "#e8c44a");
+    px(cx, ry, 1, rh, "#c9a227");
+    px(x + 2, y + 2, 2, h - 4, "#3a2414");
+    px(x + w - 4, y + 2, 2, h - 4, "#3a2414");
+  }
+
   function drawSpinScreen() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -12383,23 +12475,26 @@
     const api = lbApi();
     const signed = !!(api && api.isSignedIn && api.isSignedIn());
     const left = Math.max(0, WEEKLY_SPIN.spins - spinUsed);
+    const busy = spinReelBusy();
     const w = 168;
-    const h = 118;
+    const h = 140;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, "SPIN");
-    drawPixText(period.label, (x + w / 2) | 0, y + 22, "#5c3a21", "center");
-    drawPixText("SPINS " + left, (x + w / 2) | 0, y + 34, "#3a2414", "center");
-    drawPixText(WEEKLY_SPIN.cost + " COINS", (x + w / 2) | 0, y + 46, "#3a2414", "center");
+    drawPixText(period.label, (x + w / 2) | 0, y + 18, "#5c3a21", "center");
+    drawPixText("SPINS " + left + "  " + WEEKLY_SPIN.cost + " COINS", (x + w / 2) | 0, y + 28, "#3a2414", "center");
+    drawSpinReelStrip(x + 8, y + 38, w - 16, 28);
     let action = "SPIN";
     if (!signed) action = "SIGN IN";
+    else if (busy) action = "...";
     else if (left <= 0) action = "NEXT WEEK";
     else if (survivalCoinCount() < WEEKLY_SPIN.cost) action = "NEED 50";
-    const spinSel = spinCursor === 0 || menuHovering("spin:go");
-    if (spinSel) px(x + 18, y + 58, w - 36, 11, "#e8c44a");
-    drawPixText((spinSel ? "> " : "  ") + action, (x + w / 2) | 0, y + 60, spinSel ? "#2b1c12" : "#3a2414", "center");
-    addMenuHit("spin:go", x + 18, y + 58, w - 36, 11, () => {
+    const spinSel = !busy && (spinCursor === 0 || menuHovering("spin:go"));
+    if (spinSel) px(x + 18, y + 72, w - 36, 11, "#e8c44a");
+    drawPixText((spinSel ? "> " : "  ") + action, (x + w / 2) | 0, y + 74, spinSel ? "#2b1c12" : "#3a2414", "center");
+    addMenuHit("spin:go", x + 18, y + 72, w - 36, 11, () => {
       spinCursor = 0;
+      if (busy) return;
       if (!signed) {
         uiScreen = "account";
         authMode = "menu";
@@ -12413,11 +12508,12 @@
       }
       tryWeeklySpin();
     }, { hover: true });
-    if (spinNote) drawPixText(spinNote, (x + w / 2) | 0, y + 76, "#2b1c12", "center");
+    const status = busy ? "" : spinNote;
+    if (status) drawPixText(status, (x + w / 2) | 0, y + 90, "#2b1c12", "center");
     const backSel = spinCursor === 1 || menuHovering("spin:back");
-    if (backSel) px(x + 18, y + 90, w - 36, 11, "#e8c44a");
-    drawPixText((backSel ? "> " : "  ") + "BACK", (x + w / 2) | 0, y + 92, backSel ? "#2b1c12" : "#5c3a21", "center");
-    addMenuHit("spin:back", x + 18, y + 90, w - 36, 11, () => backToModeMenu(), { hover: true });
+    if (backSel) px(x + 18, y + 108, w - 36, 11, "#e8c44a");
+    drawPixText((backSel ? "> " : "  ") + "BACK", (x + w / 2) | 0, y + 110, backSel ? "#2b1c12" : "#5c3a21", "center");
+    addMenuHit("spin:back", x + 18, y + 108, w - 36, 11, () => backToModeMenu(), { hover: true });
   }
 
   function drawSpeedUI() {
@@ -12605,7 +12701,7 @@
       }
       if (k === "enter" || k === " ") {
         if (spinCursor === 1) backToModeMenu();
-        else {
+        else if (!spinReelBusy()) {
           const api = lbApi();
           const signed = !!(api && api.isSignedIn && api.isSignedIn());
           if (!signed) {
