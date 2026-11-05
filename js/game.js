@@ -13402,6 +13402,8 @@
         kind: "skiff",
         landed: data.boat.landed !== false,
       };
+      // Old saves leave the skiff wherever it was last left — park it in the slip.
+      if (boatBerth) settleBoatInBerth(ownedBoat);
     } else if (player.aboard) {
       player.aboard = false;
     }
