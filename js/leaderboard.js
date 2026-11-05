@@ -1224,8 +1224,10 @@
 
   /**
    * True when replay identity matches a board-row prefer.
-   * run_id wins when both sides have one; else time_ms + name must agree.
-   * With no prefer fields, any replay is accepted (legacy / offline browse).
+   * - Same run_id on both sides → match.
+   * - Different non-null run_ids → reject (never cross-wire two runs).
+   * - Prefer has run_id but replay lacks one → fall through to time_ms + fuzzy name
+   *   (older uploads / board enrich rename).
    * Meta-only rows (no frames) are allowed for availability probes.
    */
   function replayMatchesPrefer(replay, prefer, opts) {
@@ -1233,13 +1235,13 @@
     const allowMeta = !!(opts && opts.metaOnly);
     if (!allowMeta && (!Array.isArray(replay.frames) || !replay.frames.length)) return false;
     const want = prefer || {};
-    const hasRun = !!(want.run_id && replay.run_id);
+    const wantRun = want.run_id ? String(want.run_id) : "";
+    const gotRun = replay.run_id ? String(replay.run_id) : "";
     const hasTime = want.time_ms != null && want.time_ms !== "";
     const hasName = !!(want.player_name && String(want.player_name).trim());
-    if (!hasRun && !hasTime && !hasName) return true;
-    if (hasRun) {
-      if (String(replay.run_id) === String(want.run_id)) return true;
-      // Prefer row named a run_id — do not accept a different run even if time/name collide.
+    if (!wantRun && !hasTime && !hasName) return true;
+    if (wantRun && gotRun) {
+      if (wantRun === gotRun) return true;
       return false;
     }
     if (hasTime && (replay.time_ms | 0) !== (want.time_ms | 0)) return false;
@@ -1398,21 +1400,39 @@
       return !!(err && (err.name === "AbortError" || (signal && signal.aborted)));
     }
 
+    function pickMatchingRow(rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (!c || isBoardHiddenName(c.player_name)) continue;
+        // Match with metaOnly so we can accept before frames sanity; frames checked below.
+        if (
+          replayMatchesPrefer(
+            {
+              run_id: c.run_id || null,
+              time_ms: c.time_ms | 0,
+              player_name: c.player_name || "",
+              frames: c.frames,
+            },
+            want,
+            { metaOnly: true }
+          )
+        ) {
+          return c;
+        }
+      }
+      return null;
+    }
+
     try {
       let row = null;
       if (want.run_id) {
-        row = firstVisible(await query("&run_id=eq." + encodeURIComponent(want.run_id), 1));
+        row = pickMatchingRow(await query("&run_id=eq." + encodeURIComponent(want.run_id), 3));
       }
-      if (!row && want.time_ms != null && want.player_name) {
-        row = firstVisible(
-          await query(
-            "&time_ms=eq." +
-              (want.time_ms | 0) +
-              "&player_name=eq." +
-              encodeURIComponent(String(want.player_name).toUpperCase()),
-            1
-          )
-        );
+      // Probe uses fuzzy JS name match; never use exact player_name=eq SQL here —
+      // board enrich / aliases (HENRI vs HENRI P) made chips show then fetch say NO REPLAY.
+      if (!row && want.time_ms != null && want.time_ms !== "") {
+        row = pickMatchingRow(await query("&time_ms=eq." + (want.time_ms | 0), 25));
       }
       // Unbound fastest visible replay only when caller did not name a board row.
       if (!row && !bound) {
@@ -1420,7 +1440,13 @@
       }
 
       const replay = replayFromRow(row);
-      if (replay && !isBoardHiddenName(replay.player_name) && replayMatchesPrefer(replay, want)) {
+      if (
+        replay &&
+        !isBoardHiddenName(replay.player_name) &&
+        Array.isArray(replay.frames) &&
+        replay.frames.length &&
+        replayMatchesPrefer(replay, want)
+      ) {
         saveLocalReplay(id, replay);
         return { ok: true, replay, source: "online" };
       }

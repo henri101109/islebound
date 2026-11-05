@@ -8845,7 +8845,9 @@
     if (!replay || !prefer) return false;
     const api = lbApi();
     if (api && api.replayMatchesPrefer) return api.replayMatchesPrefer(replay, prefer);
-    if (prefer.run_id && replay.run_id) return String(prefer.run_id) === String(replay.run_id);
+    const wantRun = prefer.run_id ? String(prefer.run_id) : "";
+    const gotRun = replay.run_id ? String(replay.run_id) : "";
+    if (wantRun && gotRun) return wantRun === gotRun;
     if ((replay.time_ms | 0) !== (prefer.time_ms | 0)) return false;
     if (!prefer.player_name) return true;
     return String(replay.player_name || "").toUpperCase() === String(prefer.player_name || "").toUpperCase();
@@ -8986,8 +8988,8 @@
       }
       if (gen !== replayPlayGen) return;
       if (!payload || !payload.frames || !payload.frames.length) {
+        // Keep VID chip if probe marked this row — fetch miss is often name/run_id mismatch, not "no video".
         srBoardNote = "NO REPLAY";
-        if (srReplayAvail && idx >= 0 && idx < srReplayAvail.length) srReplayAvail[idx] = false;
         ensureReplayMenuIfIdle();
         return;
       }
