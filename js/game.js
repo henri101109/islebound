@@ -3611,6 +3611,7 @@
     else drawPixText(n, x, y, "#3a2414", align);
   }
 
+  // Compact gold/wood pixel chip — used for NEW, ACC, and player nametags.
   function drawChipTag(label, x, y) {
     const s = String(label || "").toUpperCase();
     const tw = pixTextWidth(s);
@@ -3618,6 +3619,11 @@
     px(x, y, tw + 1, 7, "#8a5a18");
     drawPixText(s, x + 1, y, "#ffe27a");
     return tw + 4;
+  }
+
+  function drawNameTag(name, x, y, maxLen) {
+    const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
+    return drawChipTag(n, x, y);
   }
 
   function drawNewTag(x, y) {
@@ -7316,13 +7322,15 @@
     }
     const clock =
       api.formatPlaytimeClock ? api.formatPlaytimeClock(playMs) : formatSpeedTime(playMs).split(".")[0];
-    const line = String(name).slice(0, 10) + "  " + clock;
-    const tw = pixTextWidth(line);
     const x = 10;
     const y = 6;
-    px(x - 4, y - 3, tw + 8, 13, "#3a2414");
-    px(x - 3, y - 2, tw + 6, 11, "#5c3a21");
-    drawPixText(line, x, y, "#f3e2c4");
+    // Nametag chip for username (same gold/wood style as board NEW/ACC tags), clock beside it.
+    const nameW = drawNameTag(name, x, y, 10);
+    const clockTw = pixTextWidth(String(clock));
+    const cx = x + nameW + 3;
+    px(cx - 1, y - 1, clockTw + 3, 9, "#3a2414");
+    px(cx, y, clockTw + 1, 7, "#5c3a21");
+    drawPixText(String(clock), cx + 1, y, "#f3e2c4");
   }
 
   function drawBoardList(x, y, maxRows) {
@@ -7343,15 +7351,14 @@
         api && api.isNewScoreRow
           ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
           : false;
-      // Leave room for ACC chip beside name when both tags may show
-      const nameMax = isAcc ? 8 : 10;
-      const name = String(r.player_name || "?").slice(0, nameMax);
+      // Shorter when ACC/NEW chips sit beside the nametag
+      const nameMax = isAcc && isNew ? 6 : isAcc || isNew ? 7 : 9;
       drawPixText(rank + " ", x, yy, "#3a2414");
-      drawAccountName(name, x + 18, yy, isAcc);
-      let tagX = x + 18 + pixTextWidth(name) + 3;
+      let tagX = x + 18;
+      tagX += drawNameTag(r.player_name, tagX, yy, nameMax) + 2;
       if (isAcc) tagX += drawMemberTag(tagX, yy) + 2;
-      drawPixText(timeStr, x + 100, yy, "#5c3a21");
-      if (isNew) drawNewTag(x + 100 + pixTextWidth(timeStr) + 3, yy);
+      if (isNew) tagX += drawNewTag(tagX, yy) + 2;
+      drawPixText(timeStr, Math.max(tagX + 1, x + 108), yy, "#5c3a21");
       yy += 8;
     }
     if (srBoardNote) {
@@ -7717,7 +7724,7 @@
         const r = rows[i];
         const rank = String(i + 1).padStart(2, " ");
         drawPixText(rank + " ", bx + 8, yy, "#3a2414");
-        drawAccountName(String(r.player_name || "?").slice(0, 10), bx + 26, yy, true);
+        drawNameTag(r.player_name, bx + 26, yy, 8);
         const val = api && api.formatNmValue ? api.formatNmValue(nmBoardKind, r.value) : String(r.value | 0);
         drawPixText(val, bx + 100, yy, "#5c3a21");
         yy += 8;
