@@ -2267,6 +2267,10 @@
     };
   }
 
+  function hubPresenceSupported() {
+    return !!(presenceAvailable && presenceHasHub);
+  }
+
   function presenceLooksMissingHub(status, detail) {
     const raw = String(detail || "");
     const d = raw.toLowerCase();
@@ -2908,6 +2912,7 @@
     getPresenceActivity,
     presenceActivityLabel,
     setHubPresence,
+    hubPresenceSupported,
     claimDailyIdol,
     getDailyClaimLocal,
     startPresence,

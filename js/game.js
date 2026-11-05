@@ -200,6 +200,7 @@
   let hubIslandExit = null;
   let templePedestal = null;
   let templeHazards = [];
+  let templeHazardCool = 0;
   let templeMaskTaken = false;
   let dailyLootId = null;
   let dailyClaimedUtc = "";
@@ -486,6 +487,8 @@
   const cosmetics = { face: null, back: null };
   /** null = bag slot heldSlot; "face"/"back" when keys 9/0 select cosmetic slots. */
   let cosSelect = null;
+  let cosTip = "";
+  let cosTipT = 0;
   let useFx = null;
   let audioCtx = null;
   let oceanGain = null;
@@ -2530,6 +2533,7 @@
   }
 
   function promptText() {
+    if (cosTipT > 0 && cosTip) return cosTip;
     if (nearCabinNpc()) {
       return holdingChest() ? "T OPENS YOUR CHEST" : "BRING A TREASURE CHEST";
     }
@@ -3950,7 +3954,14 @@
   function tryEquipHeldCosmetic() {
     if (cosSelect === "face" || cosSelect === "back") {
       if (!cosmetics[cosSelect]) return false;
-      if (!unequipCosmetic(cosSelect)) return false;
+      if (!unequipCosmetic(cosSelect)) {
+        // Bag full — keep equipped; surface a short tip via chestTalk-style prompt
+        harborTalk = 0;
+        chestTalk = 0;
+        cosTip = "BAG FULL";
+        cosTipT = 1.6;
+        return true;
+      }
       cosSelect = null;
       return true;
     }
@@ -8947,7 +8958,8 @@
   }
 
   function updateTempleHazards(dt) {
-    if (scene !== "temple" || player.dead > 0 || player.hurt > 0) return;
+    if (templeHazardCool > 0) templeHazardCool = Math.max(0, templeHazardCool - dt);
+    if (scene !== "temple" || player.dead > 0 || player.hurt > 0 || templeHazardCool > 0) return;
     const fx = player.x + player.w / 2;
     const fy = player.y + player.h - 2;
     for (let i = 0; i < templeHazards.length; i++) {
@@ -8955,6 +8967,7 @@
       if (fx >= hz.x && fx < hz.x + hz.w && fy >= hz.y && fy < hz.y + hz.h) {
         player.hp = Math.max(0, player.hp - 1);
         player.hurt = 0.7;
+        templeHazardCool = 1.1;
         shake = Math.max(shake, 3);
         if (player.hp <= 0) player.dead = 2.2;
         break;
@@ -8962,12 +8975,61 @@
     }
   }
 
-  function drawMiniPlayerAt(sx, sy, face, faceId, backId, name, alpha) {
+  function hubLocalName() {
+    const api = lbApi();
+    if (api && api.displayName) {
+      const d = api.displayName();
+      if (d) return String(d).slice(0, 12);
+    }
+    if (api && api.getLastName) {
+      const g = api.getLastName();
+      if (g) return String(g).slice(0, 12);
+    }
+    if (api && api.chatSenderName) {
+      const c = api.chatSenderName();
+      if (c) return String(c).slice(0, 12);
+    }
+    return "YOU";
+  }
+
+  function hubLocalIsAccount() {
+    const api = lbApi();
+    return !!(api && api.isSignedIn && api.isSignedIn());
+  }
+
+  /**
+   * Hub hangout nametag above a sprite. Accounts → gold/wood chip;
+   * guests → classic pixel text on a dark pad so it stays readable on the plaza.
+   */
+  function drawHubNametagAbove(sx, sy, name, isAccount) {
+    const raw = String(name || "GUEST").trim() || "GUEST";
+    const maxLen = isAccount ? 8 : 10;
+    const label = raw.slice(0, maxLen).toUpperCase();
+    const tagY = sy - 12;
+    const prevInk = ink;
+    ink = ctx;
+    ctx.globalAlpha = 1;
+    if (isAccount) {
+      const tw = pixTextWidth(label) + 4;
+      const tagX = (sx + 4 - tw / 2) | 0;
+      drawNameTag(label, tagX, tagY, maxLen);
+    } else {
+      const tw = pixTextWidth(label);
+      const tagX = (sx + 4 - tw / 2) | 0;
+      px(tagX - 2, tagY - 1, tw + 4, 9, "#1a120c");
+      px(tagX - 1, tagY, tw + 2, 7, "#3a2414");
+      drawPixText(label, tagX, tagY, "#f3e2c4");
+    }
+    ink = prevInk;
+  }
+
+  function drawMiniPlayerAt(sx, sy, face, faceId, backId, alpha) {
+    const prevInk = ink;
+    ink = ctx;
     ink.save();
     ink.globalAlpha = alpha == null ? 1 : alpha;
     ink.translate(sx + 4, sy + 13);
     ink.scale(face || 1, 1);
-    // cape
     if (backId === "cape") {
       px(-5, -6, 3, 8, "#8a2020");
       px(-6, -5, 2, 9, "#c43a28");
@@ -8985,11 +9047,7 @@
     px(-3, 1, 2, 3, "#2a4a78");
     px(0, 1, 2, 3, "#2a4a78");
     ink.restore();
-    if (name) {
-      ctx.globalAlpha = alpha == null ? 0.9 : alpha;
-      drawPixText(String(name).slice(0, 10), sx + 4, sy - 6, "#f3e2c4", "center");
-      ctx.globalAlpha = 1;
-    }
+    ink = prevInk;
   }
 
   function refreshHubPeers() {
@@ -8999,17 +9057,31 @@
     if (!api || !api.getOnlinePresence) return;
     const rows = api.getOnlinePresence() || [];
     const me = api.getClientId ? api.getClientId() : "";
+    const hubAware = !!(api.hubPresenceSupported && api.hubPresenceSupported());
+    let anyHubSignal = false;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       if (!r || r.client_id === me) continue;
-      if (r.in_hub === false) continue;
-      // Prefer hub pose columns; else fan out in plaza by index
-      let hx = r.hub_x;
-      let hy = r.hub_y;
-      if (typeof hx !== "number" || typeof hy !== "number") {
-        hx = 40 + (i % 6) * 28;
-        hy = 36 + ((i / 6) | 0) * 24;
+      if (
+        r.in_hub === true ||
+        r.mode === "hub" ||
+        (typeof r.hub_x === "number" && typeof r.hub_y === "number")
+      ) {
+        anyHubSignal = true;
+        break;
       }
+    }
+    const filterToHub = hubAware || anyHubSignal;
+    let slot = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r.client_id === me) continue;
+      const posed = typeof r.hub_x === "number" && typeof r.hub_y === "number";
+      const inHub = r.in_hub === true || r.mode === "hub" || posed;
+      if (filterToHub && !inHub) continue;
+      const hx = posed ? r.hub_x : 36 + (slot % 5) * 32;
+      const hy = posed ? r.hub_y : 40 + ((slot / 5) | 0) * 28;
+      slot++;
       hubPeers.push({
         x: hx,
         y: hy,
@@ -9017,6 +9089,7 @@
         face: r.face_id || null,
         back: r.back_id || null,
         name: r.username || "GUEST",
+        isAccount: !!(r.user_id),
         emote: r.emote || "",
       });
     }
@@ -9045,17 +9118,39 @@
       const p = hubPeers[i];
       const sx = (p.x - cpos.x) | 0;
       const sy = (p.y - cpos.y) | 0;
-      drawMiniPlayerAt(sx, sy, p.facing, p.face, p.back, p.name, 0.92);
+      if (sx < -24 || sy < -28 || sx > viewW + 24 || sy > viewH + 24) continue;
+      drawMiniPlayerAt(sx, sy, p.facing, p.face, p.back, 0.95);
+    }
+  }
+
+  function drawHubNametags(cpos) {
+    if (scene !== "hub") return;
+    // Peers first, then local on top so your name stays readable when overlapping
+    for (let i = 0; i < hubPeers.length; i++) {
+      const p = hubPeers[i];
+      const sx = (p.x - cpos.x) | 0;
+      const sy = (p.y - cpos.y) | 0;
+      if (sx < -40 || sy < -40 || sx > viewW + 40 || sy > viewH + 40) continue;
+      drawHubNametagAbove(sx, sy, p.name, !!p.isAccount);
       if (p.emote) {
-        drawPixText(p.emote, sx + 4, sy - 14, "#ffe08a", "center");
+        const prevInk = ink;
+        ink = ctx;
+        drawPixText(p.emote, sx + 4, sy - 22, "#ffe08a", "center");
+        ink = prevInk;
       }
     }
+    const lsx = (player.x - cpos.x) | 0;
+    const lsy = (player.y - cpos.y) | 0;
+    drawHubNametagAbove(lsx, lsy, hubLocalName(), hubLocalIsAccount());
   }
 
   function drawHubEmote(cpos) {
     const x = (player.x - cpos.x + 4) | 0;
-    const y = (player.y - cpos.y - 10) | 0;
+    const y = (player.y - cpos.y - 22) | 0;
+    const prevInk = ink;
+    ink = ctx;
     drawPixText(hubEmote || "!", x, y, "#ffe08a", "center");
+    ink = prevInk;
   }
 
   function drawHubPractice(cpos, t) {
@@ -9067,9 +9162,11 @@
       const bob = (Math.sin(t * 6) * 2) | 0;
       px(x, y + bob, 8, 10, "#6a5088");
       px(x + 2, y - 4 + bob, 4, 4, "#c9a227");
+      if (pr.hitCool > 0) return; // drawn; skip hit until cooldown ends
       if (Math.hypot(player.x + 4 - pr.x, player.y + 7 - pr.y) < 14) {
         hubUi.tip = "PRACTICE HIT!";
         hubUi.tipT = 1.2;
+        pr.hitCool = 0.55;
         pr.hp = (pr.hp | 0) - 1;
         pr.x = 30 + Math.random() * 40;
         pr.y = 48 + Math.random() * 30;
@@ -9134,7 +9231,7 @@
     if (k === "enter" || k === " ") {
       const i = hubUi.duelSel;
       if (i === 0) {
-        hubUi.practice = { kind: "duel", x: 44, y: 56, hp: 3 };
+        hubUi.practice = { kind: "duel", x: 44, y: 56, hp: 3, hitCool: 0 };
         hubUi.tip = "WALK INTO THE TARGET";
         hubUi.tipT = 3;
         hubUi.mode = "";
@@ -9256,7 +9353,10 @@
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
       if (scene === "cabin") drawCabinMotes(cpos);
-      if (hubEmoteT > 0 && scene === "hub") drawHubEmote(cpos);
+      if (scene === "hub") {
+        drawHubNametags(cpos);
+        if (hubEmoteT > 0) drawHubEmote(cpos);
+      }
     } else {
       px(0, 0, viewW, viewH, WATER_BLUE);
       drawLand(cpos);
@@ -11294,6 +11394,10 @@
     updateTempleHazards(dt);
     if (hubUi.tipT > 0) hubUi.tipT = Math.max(0, hubUi.tipT - dt);
     if (hubEmoteT > 0) hubEmoteT = Math.max(0, hubEmoteT - dt);
+    if (cosTipT > 0) cosTipT = Math.max(0, cosTipT - dt);
+    if (hubUi.practice && hubUi.practice.hitCool > 0) {
+      hubUi.practice.hitCool = Math.max(0, hubUi.practice.hitCool - dt);
+    }
     if (scene === "hub") {
       syncHubPresencePose();
     } else {
