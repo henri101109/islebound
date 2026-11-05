@@ -10,7 +10,11 @@
   const PROFILES = "profiles";
   const PRS = "speedrun_prs";
   const ACCOUNTS = "player_accounts";
+  const PRESENCE = "players_online";
+  const CLIENT_ID_KEY = "islebound-client-id";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
+  const PRESENCE_HEARTBEAT_MS = 25000;
+  const PRESENCE_ONLINE_MS = 75000; // last_seen within this = online
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
     "HENRI P": "HENRI",
@@ -46,6 +50,10 @@
   let authListeners = [];
   let scoresSchema = "unknown"; // unknown | full | legacy
   let identityCache = { at: 0, rows: [] };
+  let presenceTimer = null;
+  let presenceAvailable = true; // false if table missing / hard fail
+  let onlineCount = null; // null = unknown / unavailable
+  let lastPresenceAt = 0;
 
   function configured() {
     return !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
@@ -385,60 +393,17 @@
   }
 
   /**
-   * Merge board rows that look like the same person. Keeps best time;
-   * prefers account id + account display name when tagging guests.
+   * Enrich board rows with account identity (display name + is_account styling)
+   * via fuzzy name match. Does NOT collapse multiple runs from the same person —
+   * top N is N score entries ordered by time_ms ascending.
    */
   function mergeBoardIdentities(rows, identities, limit) {
     const list = Array.isArray(rows) ? rows : [];
     const ids = identities || identityCache.rows || [];
     const enriched = list.map((r) => enrichRowIdentity(normalizeScoreRow(r), ids));
-    const groups = [];
-
-    function samePerson(a, b) {
-      if (a.user_id && b.user_id && String(a.user_id) === String(b.user_id)) return true;
-      return namesFuzzyMatch(a.player_name, b.player_name);
-    }
-
-    for (let i = 0; i < enriched.length; i++) {
-      const r = enriched[i];
-      let g = null;
-      for (let j = 0; j < groups.length; j++) {
-        if (samePerson(groups[j].rep, r)) {
-          g = groups[j];
-          break;
-        }
-      }
-      if (!g) {
-        groups.push({ rep: r, rows: [r] });
-        continue;
-      }
-      g.rows.push(r);
-      // Prefer faster time as representative payload
-      if ((r.time_ms | 0) < (g.rep.time_ms | 0)) {
-        const keepName = g.rep.is_account || g.rep.user_id ? g.rep.player_name : null;
-        const keepId = g.rep.user_id || r.user_id;
-        const keepAcc = !!(g.rep.is_account || r.is_account || keepId);
-        g.rep = Object.assign({}, r);
-        if (keepId) g.rep.user_id = keepId;
-        if (keepAcc) g.rep.is_account = true;
-        if (keepName) g.rep.player_name = keepName;
-      } else {
-        if (r.user_id && !g.rep.user_id) g.rep.user_id = r.user_id;
-        if (r.is_account || r.user_id) {
-          g.rep.is_account = true;
-          if (r.player_name) g.rep.player_name = r.player_name;
-        }
-      }
-      // Newest created_at among group (for NEW badge)
-      if (r.created_at && (!g.rep.created_at || Date.parse(r.created_at) > Date.parse(g.rep.created_at))) {
-        g.rep.created_at = r.created_at;
-      }
-      if (r.run_id && !g.rep.run_id) g.rep.run_id = r.run_id;
-    }
-
-    groups.sort((a, b) => (a.rep.time_ms | 0) - (b.rep.time_ms | 0));
-    const lim = Math.max(1, Math.min(25, limit | 0 || groups.length));
-    return groups.slice(0, lim).map((g) => g.rep);
+    enriched.sort((a, b) => (a.time_ms | 0) - (b.time_ms | 0));
+    const lim = Math.max(1, Math.min(25, limit | 0 || enriched.length));
+    return enriched.slice(0, lim);
   }
 
   async function resolveSubmitIdentity(playerName) {
@@ -479,8 +444,6 @@
       return { ok: false, rows: cached, error: "not configured", offline: true };
     }
     if (scoresSchema === "legacy") return fetchTopLegacy(id, lim);
-    // Pull a wider window so fuzzy merges still fill the visible top-N
-    const fetchLim = Math.min(25, Math.max(lim * 2, lim + 8));
     const url =
       restBase() +
       "/" +
@@ -490,7 +453,7 @@
       "&select=category,time_ms,player_name,created_at,user_id,run_id,is_account" +
       "&order=time_ms.asc" +
       "&limit=" +
-      fetchLim;
+      lim;
     try {
       const res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
@@ -524,7 +487,6 @@
   }
 
   async function fetchTopLegacy(id, lim) {
-    const fetchLim = Math.min(25, Math.max(lim * 2, lim + 8));
     const url =
       restBase() +
       "/" +
@@ -534,7 +496,7 @@
       "&select=category,time_ms,player_name,created_at" +
       "&order=time_ms.asc" +
       "&limit=" +
-      fetchLim;
+      lim;
     try {
       const res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
@@ -1255,7 +1217,138 @@
     emitAuth();
   }
 
+  /* ---------- Presence / players online ---------- */
+
+  function getClientId() {
+    try {
+      let id = localStorage.getItem(CLIENT_ID_KEY);
+      if (id && String(id).length >= 8) return String(id);
+      id = uuid();
+      localStorage.setItem(CLIENT_ID_KEY, id);
+      return id;
+    } catch (e) {
+      return uuid();
+    }
+  }
+
+  function getOnlineCount() {
+    return onlineCount;
+  }
+
+  function presenceUsername() {
+    const n = displayName() || getLastName() || "";
+    const s = sanitizeName(n, true);
+    return s || null;
+  }
+
+  function markPresenceUnavailable() {
+    presenceAvailable = false;
+    onlineCount = null;
+    if (presenceTimer) {
+      clearInterval(presenceTimer);
+      presenceTimer = null;
+    }
+  }
+
+  async function upsertPresence() {
+    if (!configured() || !presenceAvailable) return { ok: false };
+    const body = {
+      client_id: getClientId(),
+      last_seen: new Date().toISOString(),
+      username: presenceUsername(),
+    };
+    try {
+      const res = await fetch(restBase() + "/" + PRESENCE + "?on_conflict=client_id", {
+        method: "POST",
+        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        // Missing table / schema cache: fail soft (do not break the game)
+        let detail = "";
+        try {
+          const err = await res.json();
+          detail = String((err && (err.code || err.message)) || "");
+        } catch (e) {}
+        const missing =
+          res.status === 404 ||
+          detail.indexOf("PGRST205") >= 0 ||
+          detail.indexOf("PGRST106") >= 0 ||
+          detail.toLowerCase().indexOf("does not exist") >= 0 ||
+          detail.toLowerCase().indexOf("could not find the table") >= 0;
+        if (missing) {
+          markPresenceUnavailable();
+          return { ok: false, missing: true };
+        }
+        return { ok: false, error: "http " + res.status };
+      }
+      lastPresenceAt = Date.now();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "network" };
+    }
+  }
+
+  async function fetchOnlineCount() {
+    if (!configured() || !presenceAvailable) return null;
+    const cutoff = new Date(Date.now() - PRESENCE_ONLINE_MS).toISOString();
+    const url =
+      restBase() +
+      "/" +
+      PRESENCE +
+      "?select=client_id&last_seen=gte." +
+      encodeURIComponent(cutoff) +
+      "&limit=200";
+    try {
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 400 || res.status === 406) {
+          markPresenceUnavailable();
+          return null;
+        }
+        return onlineCount;
+      }
+      const data = await res.json();
+      const n = Array.isArray(data) ? data.length : 0;
+      onlineCount = n;
+      return n;
+    } catch (e) {
+      return onlineCount;
+    }
+  }
+
+  async function tickPresence() {
+    if (!configured() || !presenceAvailable) return;
+    await upsertPresence();
+    if (!presenceAvailable) return;
+    await fetchOnlineCount();
+  }
+
+  function startPresence() {
+    if (!configured()) {
+      onlineCount = null;
+      return;
+    }
+    if (presenceTimer) return;
+    tickPresence();
+    presenceTimer = setInterval(tickPresence, PRESENCE_HEARTBEAT_MS);
+    if (typeof document !== "undefined" && !startPresence._vis) {
+      startPresence._vis = true;
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") tickPresence();
+      });
+    }
+  }
+
+  function stopPresence() {
+    if (presenceTimer) {
+      clearInterval(presenceTimer);
+      presenceTimer = null;
+    }
+  }
+
   initAuth();
+  startPresence();
 
   window.IsleLeaderboard = {
     CATEGORIES,
@@ -1283,6 +1376,11 @@
     uuid,
     rowIsAccount,
     isNewScoreRow,
+    getClientId,
+    getOnlineCount,
+    startPresence,
+    stopPresence,
+    tickPresence,
     pbInfo,
     getLocalPr,
     fetchPr,

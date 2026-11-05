@@ -3611,13 +3611,21 @@
     else drawPixText(n, x, y, "#3a2414", align);
   }
 
-  function drawNewTag(x, y) {
-    const label = "NEW";
-    const tw = pixTextWidth(label);
+  function drawChipTag(label, x, y) {
+    const s = String(label || "").toUpperCase();
+    const tw = pixTextWidth(s);
     px(x - 1, y - 1, tw + 3, 9, "#3a2414");
     px(x, y, tw + 1, 7, "#8a5a18");
-    drawPixText(label, x + 1, y, "#ffe27a");
+    drawPixText(s, x + 1, y, "#ffe27a");
     return tw + 4;
+  }
+
+  function drawNewTag(x, y) {
+    return drawChipTag("NEW", x, y);
+  }
+
+  function drawMemberTag(x, y) {
+    return drawChipTag("ACC", x, y);
   }
 
   function clearMenuHits() {
@@ -7329,17 +7337,21 @@
     for (let i = 0; i < n; i++) {
       const r = rows[i];
       const rank = String(i + 1).padStart(2, " ");
-      const name = String(r.player_name || "?").slice(0, 10);
       const timeStr = formatSpeedTime(r.time_ms | 0);
       const isAcc = api && api.rowIsAccount ? api.rowIsAccount(r) : !!(r.is_account || r.user_id);
       const isNew =
         api && api.isNewScoreRow
           ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
           : false;
+      // Leave room for ACC chip beside name when both tags may show
+      const nameMax = isAcc ? 8 : 10;
+      const name = String(r.player_name || "?").slice(0, nameMax);
       drawPixText(rank + " ", x, yy, "#3a2414");
       drawAccountName(name, x + 18, yy, isAcc);
-      drawPixText(timeStr, x + 96, yy, "#5c3a21");
-      if (isNew) drawNewTag(x + 96 + pixTextWidth(timeStr) + 3, yy);
+      let tagX = x + 18 + pixTextWidth(name) + 3;
+      if (isAcc) tagX += drawMemberTag(tagX, yy) + 2;
+      drawPixText(timeStr, x + 100, yy, "#5c3a21");
+      if (isNew) drawNewTag(x + 100 + pixTextWidth(timeStr) + 3, yy);
       yy += 8;
     }
     if (srBoardNote) {
@@ -7349,6 +7361,23 @@
     return yy;
   }
 
+  function onlineLabel() {
+    const api = lbApi();
+    if (!api || typeof api.getOnlineCount !== "function") return "ONLINE —";
+    const n = api.getOnlineCount();
+    if (n == null || n < 0) return "ONLINE —";
+    return "ONLINE " + (n | 0);
+  }
+
+  function drawOnlineChip(cx, y) {
+    const label = onlineLabel();
+    const tw = pixTextWidth(label);
+    const x = (cx - tw / 2) | 0;
+    px(x - 4, y - 2, tw + 8, 11, "#3a2414");
+    px(x - 3, y - 1, tw + 6, 9, "#5c3a21");
+    drawPixText(label, x, y, "#f3e2c4");
+  }
+
   function drawModeSelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -7356,14 +7385,15 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const w = 168;
-    const h = 96;
+    const h = 108;
     const x = ((uiW - w) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
     drawPanelBox(x, y, w, h, "ISLEBOUND");
+    drawOnlineChip((x + w / 2) | 0, y + 18);
     for (let i = 0; i < modeOpts.length; i++) {
       const key = "mode:" + i;
       const sel = srCursor === i || menuHovering(key);
-      const oy = y + 22 + i * 12;
+      const oy = y + 32 + i * 12;
       if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
       drawPixText((sel ? "> " : "  ") + modeOpts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
       addMenuHit(key, x + 18, oy - 2, w - 36, 11, () => {
@@ -7399,7 +7429,7 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const leftW = 150;
-    const boardW = 170;
+    const boardW = 188;
     const h = Math.min(uiH - 16, 16 + SPEED_ORDER.length * 10 + 28);
     const totalW = leftW + boardW + 10;
     const x = ((uiW - totalW) / 2) | 0;

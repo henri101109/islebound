@@ -320,6 +320,49 @@ drop trigger if exists on_auth_user_created on auth.users;
 drop function if exists public.handle_new_user();
 ```
 
+## 4b. Players online (presence heartbeat)
+
+Optional. The mode-select screen shows `ONLINE N` from distinct recent heartbeats. Guests and signed-in players both count via a stable `client_id` in `localStorage`. If this table is missing, the game soft-fails (`ONLINE —`) and never breaks play.
+
+```sql
+create table if not exists public.players_online (
+  client_id text primary key
+    check (char_length(client_id) between 8 and 64),
+  last_seen timestamptz not null default now(),
+  username text
+    check (username is null or char_length(username) between 3 and 12)
+);
+
+create index if not exists players_online_last_seen_idx
+  on public.players_online (last_seen desc);
+
+alter table public.players_online enable row level security;
+
+drop policy if exists "Public read players_online" on public.players_online;
+create policy "Public read players_online"
+  on public.players_online
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Public insert players_online" on public.players_online;
+create policy "Public insert players_online"
+  on public.players_online
+  for insert
+  to anon, authenticated
+  with check (char_length(client_id) between 8 and 64);
+
+drop policy if exists "Public update players_online" on public.players_online;
+create policy "Public update players_online"
+  on public.players_online
+  for update
+  to anon, authenticated
+  using (true)
+  with check (char_length(client_id) between 8 and 64);
+```
+
+Client behavior: upsert every ~25s while the tab is open; rows with `last_seen` within ~75s count as online.
+
 ## 5. Verify / how to test
 
 1. Hard-refresh the game (`index.html` cache-busted scripts)
@@ -328,10 +371,12 @@ drop function if exists public.handle_new_user();
 4. Wrong PIN → `WRONG PIN`; taken username → `USERNAME TAKEN`
 5. Open **SPEEDRUN** — finish a run while signed in → name locked gold → **SUBMIT**
 6. Confirm row in Supabase **speedrun_scores** with `user_id` + `is_account`
-7. Board should show a gold **NEW** tag on that time (also on category TOP 10 within ~3 minutes / matching `run_id`)
-8. While signed in, top-left HUD chip shows username + total playtime (opposite the top-right timer in speedrun)
-9. **GUEST** path still works; guest scores omit `user_id`
-10. Menus: click mode / category / ready / finish / account / stats (hover highlights)
+7. Board should show a gold **NEW** tag on that time (also on category TOP 10 within ~7 days / matching `run_id`)
+8. Account / fuzzy-matched rows show a gold **ACC** chip next to the name; same person can appear multiple times in TOP 10 with different times
+9. Mode select shows **ONLINE N** after running the presence SQL (or **ONLINE —** if the table is missing)
+10. While signed in, top-left HUD chip shows username + total playtime (opposite the top-right timer in speedrun)
+11. **GUEST** path still works; guest scores omit `user_id`
+12. Menus: click mode / category / ready / finish / account / stats (hover highlights)
 
 ## Categories
 
@@ -365,7 +410,10 @@ Guests keep the same counters in `localStorage` (`islebound-nm-stats`) until the
 - The client rejects impossibly low times per category before insert
 - One submit per speedrun attempt via client `run_id` (unique index) + `srSubmitted`
 - Signed-in finish screen locks the display name; account names render bold/gold on boards
-- **NEW** tag: matching just-submitted `run_id`, or `created_at` within the last 3 minutes
+- **NEW** tag: matching just-submitted `run_id`, or `created_at` within the last 7 days
+- **ACC** tag: account rows and fuzzy-matched guest names tagged to an account (does not collapse multiple times)
+- TOP 10 is 10 score entries (same player may appear more than once), ordered by `time_ms` ascending
+- **ONLINE**: `players_online` heartbeat (~25s); count rows with `last_seen` within ~75s
 - **R** resets the current speedrun category from ready or mid-run
 - Normal mode still uses `survival-rpg-save` for world state and never writes speedrun scores
 - Old email/magic-link sessions in `localStorage` are ignored / cleared on load
