@@ -320,7 +320,62 @@
   let nmBoardRows = [];
   let nmBoardNote = "";
   let nmCursor = 0;
-  let modeOpts = ["NORMAL", "SPEEDRUN", "ACCOUNT", "STATS"];
+  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "ACCOUNT", "STATS"];
+  const MODE_WALK = ["SURVIVAL", "SPEEDRUN"];
+  /** Title-screen cursor across play modes (0-3) + walkthroughs (4-5). */
+  let modeOpts = MODE_PLAY.concat(MODE_WALK);
+  let walkKind = "normal";
+  let walkStep = 0;
+  const WALK_PAGES = {
+    normal: [
+      {
+        title: "SURVIVAL",
+        lines: ["OPEN-WORLD PLAY", "PROGRESS AUTOSAVES", "ESC RETURNS HERE", "H OPENS FULL GUIDE"],
+      },
+      {
+        title: "MOVE",
+        lines: ["WASD TO WALK", "HOLD Z TO LOOK FAR", "WALK INTO LOOT", "WALK TO BOARD BOAT"],
+      },
+      {
+        title: "ITEMS",
+        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "SPACE USES HELD", "ENTER DROPS HELD"],
+      },
+      {
+        title: "FISH",
+        lines: ["C OR F CASTS ROD", "HOLD BAIT TO CAST", "HEART / SHARK = SUPER", "REEL WHEN IT BITES"],
+      },
+      {
+        title: "ISLAND",
+        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "CABIN HAS A CHEST", "T OPENS CHEST THERE"],
+      },
+      {
+        title: "GOALS",
+        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "SHELL BLOWS HORN", "WAND HITS SERPENT"],
+      },
+    ],
+    speedrun: [
+      {
+        title: "SPEEDRUN",
+        lines: ["PICK A CATEGORY", "TIMER STARTS ON MOVE", "R RESETS THE RUN", "BEAT YOUR PB"],
+      },
+      {
+        title: "CONTROLS",
+        lines: ["SAME AS SURVIVAL", "WASD MOVE / C CAST", "SPACE USES HELD", "ESC BACK TO MENU"],
+      },
+      {
+        title: "CATEGORIES",
+        lines: ["SHARK% CATCH SHARK", "BOAT% BUY THE BOAT", "CHEST% OPEN CHEST", "SERPENT% GET HEART"],
+      },
+      {
+        title: "MORE CATS",
+        lines: ["DEATH% DIE FAST", "FULL INV% FILL BAG", "COIN% REACH GOAL", "BLOWFISH% CATCH ONE"],
+      },
+      {
+        title: "SUBMIT",
+        lines: ["FINISH LOCKS TIME", "TYPE A NAME", "POST TO TOP 10", "REPLAY MAY SAVE"],
+      },
+    ],
+  };
   let playtimeAcc = 0;
   let playtimeFlush = 0;
   let guestNameLocked = false;
@@ -7677,7 +7732,13 @@
     if (!api || typeof api.setPresenceActivity !== "function") return;
     let mode = "menu";
     let cat = null;
-    if (uiScreen === "mode" || uiScreen === "account" || uiScreen === "nm_boards" || !playMode) {
+    if (
+      uiScreen === "mode" ||
+      uiScreen === "account" ||
+      uiScreen === "nm_boards" ||
+      uiScreen === "walkthrough" ||
+      !playMode
+    ) {
       mode = "menu";
     } else if (playMode === "normal") {
       mode = "normal";
@@ -8476,8 +8537,43 @@
       uiScreen === "finish" ||
       uiScreen === "boards" ||
       uiScreen === "account" ||
-      uiScreen === "nm_boards"
+      uiScreen === "nm_boards" ||
+      uiScreen === "walkthrough"
     );
+  }
+
+  function openWalkthrough(kind) {
+    walkKind = kind === "speedrun" ? "speedrun" : "normal";
+    walkStep = 0;
+    uiScreen = "walkthrough";
+    playMode = null;
+  }
+
+  function walkPages() {
+    return WALK_PAGES[walkKind] || WALK_PAGES.normal;
+  }
+
+  function activateModeOpt(i) {
+    if (i === 0) enterNormalMode();
+    else if (i === 1) {
+      playMode = "speedrun";
+      uiScreen = "categories";
+      srCursor = 0;
+      refreshSpeedBoard(SPEED_ORDER[0]);
+    } else if (i === 2) {
+      uiScreen = "account";
+      authMode = "menu";
+      authStatus = "";
+      srCursor = 0;
+      const api = lbApi();
+      if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
+    } else if (i === 3) {
+      uiScreen = "nm_boards";
+      nmCursor = 0;
+      nmBoardKind = "playtime";
+      refreshNmBoard(nmBoardKind);
+    } else if (i === 4) openWalkthrough("normal");
+    else if (i === 5) openWalkthrough("speedrun");
   }
 
   function speedrunActive() {
@@ -9157,12 +9253,14 @@
 
   function backToModeMenu() {
     if (serpent) endSerpentFight("flee");
+    const restoreCursor = uiScreen === "walkthrough" ? (walkKind === "speedrun" ? 5 : 4) : 0;
     playMode = null;
     uiScreen = "mode";
-    srCursor = 0;
+    srCursor = restoreCursor;
     srRunning = false;
     srTiming = false;
     guideOpen = false;
+    walkStep = 0;
     authMode = "menu";
     authStatus = "";
     authField = 0;
@@ -9336,42 +9434,89 @@
     ctx.globalAlpha = 0.55;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
-    const w = 168;
+    const playW = 148;
+    const walkW = 128;
+    const gap = 10;
     const h = 108;
-    const x = ((uiW - w) / 2) | 0;
+    const totalW = playW + walkW + gap;
+    const x0 = ((uiW - totalW) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
-    drawPanelBox(x, y, w, h, "ISLEBOUND");
-    drawOnlineChip((x + w / 2) | 0, y + 18);
-    for (let i = 0; i < modeOpts.length; i++) {
+    drawPanelBox(x0, y, playW, h, "ISLEBOUND");
+    drawOnlineChip((x0 + playW / 2) | 0, y + 18);
+    for (let i = 0; i < MODE_PLAY.length; i++) {
       const key = "mode:" + i;
       const sel = srCursor === i || menuHovering(key);
       const oy = y + 32 + i * 12;
-      if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
-      drawPixText((sel ? "> " : "  ") + modeOpts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
-      addMenuHit(key, x + 18, oy - 2, w - 36, 11, () => {
+      if (sel) px(x0 + 14, oy - 2, playW - 28, 11, "#e8c44a");
+      drawPixText((sel ? "> " : "  ") + MODE_PLAY[i], (x0 + playW / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+      addMenuHit(key, x0 + 14, oy - 2, playW - 28, 11, () => {
         srCursor = i;
-        if (i === 0) enterNormalMode();
-        else if (i === 1) {
-          playMode = "speedrun";
-          uiScreen = "categories";
-          srCursor = 0;
-          refreshSpeedBoard(SPEED_ORDER[0]);
-        } else if (i === 2) {
-          uiScreen = "account";
-          authMode = "menu";
-          authStatus = "";
-          srCursor = 0;
-          const api = lbApi();
-          if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
-        } else if (i === 3) {
-          uiScreen = "nm_boards";
-          nmCursor = 0;
-          nmBoardKind = "playtime";
-          refreshNmBoard(nmBoardKind);
-        }
+        activateModeOpt(i);
       }, { hover: true });
     }
-    drawPixText("CLICK OR ARROWS", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+    drawPixText("CLICK OR ARROWS", (x0 + playW / 2) | 0, y + h - 12, "#5c3a21", "center");
+
+    const wx = x0 + playW + gap;
+    drawPanelBox(wx, y, walkW, h, "WALKTHROUGH");
+    drawPixText("LEARN A MODE", (wx + walkW / 2) | 0, y + 20, "#5c3a21", "center");
+    for (let i = 0; i < MODE_WALK.length; i++) {
+      const idx = MODE_PLAY.length + i;
+      const key = "mode:" + idx;
+      const sel = srCursor === idx || menuHovering(key);
+      const oy = y + 40 + i * 18;
+      if (sel) px(wx + 12, oy - 2, walkW - 24, 14, "#e8c44a");
+      else px(wx + 12, oy - 2, walkW - 24, 14, "#8a5a32");
+      px(wx + 13, oy - 1, walkW - 26, 12, sel ? "#e8c44a" : "#c4a574");
+      drawPixText((sel ? "> " : "  ") + MODE_WALK[i], (wx + walkW / 2) | 0, oy + 2, sel ? "#2b1c12" : "#3a2414", "center");
+      addMenuHit(key, wx + 12, oy - 2, walkW - 24, 14, () => {
+        srCursor = idx;
+        activateModeOpt(idx);
+      }, { hover: true });
+    }
+    drawPixText("ESC EXITS GUIDE", (wx + walkW / 2) | 0, y + h - 12, "#5c3a21", "center");
+  }
+
+  function drawWalkthrough() {
+    const pages = walkPages();
+    const page = pages[walkStep] || pages[0];
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const lines = page.lines || [];
+    const w = 196;
+    const h = 28 + lines.length * 10 + 36;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, page.title || "WALKTHROUGH");
+    const stepLabel = "STEP " + (walkStep + 1) + "/" + pages.length;
+    drawPixText(stepLabel, (x + w / 2) | 0, y + 18, "#5c3a21", "center");
+    for (let i = 0; i < lines.length; i++) {
+      drawPixText(lines[i], (x + w / 2) | 0, y + 32 + i * 10, "#3a2414", "center");
+    }
+    const by = y + h - 22;
+    const backSel = menuHovering("walk:back");
+    const nextSel = menuHovering("walk:next");
+    const menuSel = menuHovering("walk:menu");
+    if (backSel) px(x + 10, by - 2, 52, 11, "#e8c44a");
+    drawPixText(walkStep > 0 ? "< BACK" : "< MENU", x + 14, by, backSel ? "#2b1c12" : "#5c3a21");
+    addMenuHit("walk:back", x + 10, by - 2, 52, 11, () => {
+      if (walkStep > 0) walkStep -= 1;
+      else backToModeMenu();
+    }, { hover: true });
+    if (walkStep < pages.length - 1) {
+      if (nextSel) px(x + w - 62, by - 2, 52, 11, "#e8c44a");
+      drawPixText("NEXT >", x + w - 58, by, nextSel ? "#2b1c12" : "#5c3a21");
+      addMenuHit("walk:next", x + w - 62, by - 2, 52, 11, () => {
+        walkStep = Math.min(pages.length - 1, walkStep + 1);
+      }, { hover: true });
+    } else {
+      if (menuSel) px(x + w - 62, by - 2, 52, 11, "#e8c44a");
+      drawPixText("DONE", x + w - 52, by, menuSel ? "#2b1c12" : "#5c3a21");
+      addMenuHit("walk:menu", x + w - 62, by - 2, 52, 11, () => backToModeMenu(), { hover: true });
+    }
+    drawPixText("ARROWS  ESC MENU", (x + w / 2) | 0, y + h - 10, "#8a5a32", "center");
   }
 
   function drawCategorySelect() {
@@ -9697,6 +9842,7 @@
     else if (uiScreen === "finish") drawFinishScreen();
     else if (uiScreen === "account") drawAccountScreen();
     else if (uiScreen === "nm_boards") drawNmBoardScreen();
+    else if (uiScreen === "walkthrough") drawWalkthrough();
   }
 
   async function submitSpeedScore() {
@@ -9855,26 +10001,38 @@
     if (uiScreen === "mode") {
       if (k === "arrowup" || k === "w") srCursor = (srCursor + modeOpts.length - 1) % modeOpts.length;
       if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % modeOpts.length;
-      if (k === "enter" || k === " ") {
-        if (srCursor === 0) enterNormalMode();
-        else if (srCursor === 1) {
-          playMode = "speedrun";
-          uiScreen = "categories";
-          srCursor = 0;
-          refreshSpeedBoard(SPEED_ORDER[0]);
-        } else if (srCursor === 2) {
-          uiScreen = "account";
-          authMode = "menu";
-          authStatus = "";
-          srCursor = 0;
-          const api = lbApi();
-          if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
-        } else if (srCursor === 3) {
-          uiScreen = "nm_boards";
-          nmCursor = 0;
-          nmBoardKind = "playtime";
-          refreshNmBoard(nmBoardKind);
-        }
+      if (k === "arrowleft" || k === "a") {
+        if (srCursor >= MODE_PLAY.length) srCursor = Math.min(MODE_PLAY.length - 1, srCursor - MODE_PLAY.length);
+      }
+      if (k === "arrowright" || k === "d") {
+        if (srCursor < MODE_PLAY.length) srCursor = Math.min(modeOpts.length - 1, srCursor + MODE_PLAY.length);
+      }
+      if (k === "enter" || k === " ") activateModeOpt(srCursor);
+      return true;
+    }
+    if (uiScreen === "walkthrough") {
+      const pages = walkPages();
+      if (k === "escape") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowleft" || k === "a" || k === "backspace") {
+        if (walkStep > 0) walkStep -= 1;
+        else backToModeMenu();
+        return true;
+      }
+      if (k === "arrowright" || k === "d" || k === "enter" || k === " ") {
+        if (walkStep < pages.length - 1) walkStep += 1;
+        else backToModeMenu();
+        return true;
+      }
+      if (k === "arrowup" || k === "w") {
+        if (walkStep > 0) walkStep -= 1;
+        return true;
+      }
+      if (k === "arrowdown" || k === "s") {
+        if (walkStep < pages.length - 1) walkStep += 1;
+        return true;
       }
       return true;
     }
