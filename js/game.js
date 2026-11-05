@@ -3123,7 +3123,7 @@
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
     }
-    if (player.aboard && ownedBoat && ownedBoat.docked) return "W UP TO DOCK · WASD SAILS";
+    if (player.aboard && ownedBoat && ownedBoat.docked) return "ENTER EXITS · WASD SAILS";
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
     if (
       !player.aboard &&
@@ -3134,7 +3134,7 @@
       const mid = playerCenter();
       const bx = ownedBoat.x + ownedBoat.w / 2;
       const by = ownedBoat.y + ownedBoat.h / 2;
-      if (Math.hypot(mid.x - bx, mid.y - by) < 34) return "WALK ONTO BOAT";
+      if (Math.hypot(mid.x - bx, mid.y - by) < 34) return "ENTER BOARDS";
     }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return "PORTAL DORMANT";
@@ -4427,28 +4427,38 @@
     b.berthIgnore = Math.max(b.berthIgnore || 0, cool == null ? 1.35 : cool);
   }
 
-  /** Standable spot on the T-head just north of the slip. */
+  /** Standable spot on the T-head / finger just north of the slip. */
   function berthStandSpot() {
     if (!boatBerth) return null;
+    const cx = (boatBerth.x + (boatBerth.w - player.w) / 2) | 0;
     const tries = [
-      [(boatBerth.x + (boatBerth.w - player.w) / 2) | 0, boatBerth.y - player.h - 1],
+      [cx, boatBerth.y - player.h - 1],
       [(boatBerth.x + 2) | 0, boatBerth.y - player.h - 1],
       [(boatBerth.x + boatBerth.w - player.w - 2) | 0, boatBerth.y - player.h - 1],
-      [(boatBerth.x + (boatBerth.w - player.w) / 2) | 0, boatBerth.y - player.h - 6],
-      [(boatBerth.x - 8) | 0, boatBerth.y - 4],
-      [(boatBerth.x + boatBerth.w + 2) | 0, boatBerth.y - 4],
+      [cx, boatBerth.y - player.h - 6],
+      [cx, boatBerth.y - player.h - 12],
+      [cx, boatBerth.y - player.h - 20],
+      [(boatBerth.x - 10) | 0, boatBerth.y - player.h - 4],
+      [(boatBerth.x + boatBerth.w + 4) | 0, boatBerth.y - player.h - 4],
+      [cx, boatBerth.y - player.h - 28],
     ];
     for (let i = 0; i < tries.length; i++) {
       const x = tries[i][0];
       const y = tries[i][1];
-      if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) return { x, y };
+      const fx = x + 4;
+      const fy = y + player.h - 2;
+      // Prefer any dry dock walk pad; skip solids only.
+      if (isSolidPoint(x, y) || isSolidPoint(fx, fy)) continue;
+      if (hitPad(fx, fy, walkPads) || hitPad(fx, fy, deckPads)) return { x, y };
+      if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(fx, fy)) return { x, y };
     }
-    return null;
+    // Last resort: snap onto the T-head center even if collision is fussy.
+    return { x: cx, y: boatBerth.y - player.h - 2 };
   }
 
   function tryStepOffAtBerth() {
     if (!player.aboard || !ownedBoat || !boatBerth) return false;
-    if (!ownedBoat.docked && !boatNearBerth(ownedBoat, 26)) return false;
+    if (!ownedBoat.docked && !boatNearBerth(ownedBoat, 34)) return false;
     const spot = berthStandSpot();
     if (!spot) return false;
     player.aboard = false;
@@ -4456,7 +4466,8 @@
     player.y = spot.y;
     player.inWater = false;
     player.submerged = 0;
-    if (boatNearBerth(ownedBoat, 20)) settleBoatInBerth(ownedBoat);
+    player.moving = false;
+    if (boatNearBerth(ownedBoat, 28)) settleBoatInBerth(ownedBoat);
     return true;
   }
 
@@ -4654,7 +4665,10 @@
     if (scene !== "island" || !ownedBoat || boatThrow) return false;
     const mid = playerCenter();
     if (player.aboard) {
-      if (tryStepOffAtBerth()) return true;
+      // Docked / in the slip: Enter always hops onto the T-head and leaves the skiff parked.
+      if (ownedBoat.docked || boatNearBerth(ownedBoat, 34)) {
+        if (tryStepOffAtBerth()) return true;
+      }
       const spots = [
         [ownedBoat.x - 10, ownedBoat.y - 2],
         [ownedBoat.x + ownedBoat.w + 2, ownedBoat.y - 2],
@@ -4673,7 +4687,7 @@
           return true;
         }
       }
-      return true;
+      return false;
     }
     const bx = ownedBoat.x + ownedBoat.w / 2;
     const by = ownedBoat.y + ownedBoat.h / 2;
@@ -4751,6 +4765,16 @@
 
   function onEnter() {
     if (player.dead > 0) return;
+    // Docked exit first — don't let cosmetics / drop steal Enter at the berth.
+    if (
+      player.aboard &&
+      ownedBoat &&
+      scene === "island" &&
+      (ownedBoat.docked || boatNearBerth(ownedBoat, 34)) &&
+      tryStepOffAtBerth()
+    ) {
+      return;
+    }
     if (tryEquipHeldCosmetic()) return;
     if (isIndoor()) {
       dropHeld();
