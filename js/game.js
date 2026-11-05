@@ -4266,19 +4266,38 @@
     else drawPixText(n, x, y, "#3a2414", align);
   }
 
+  /** Owner (Henri) — red nametag theme on boards / chat / HUD. */
+  function isOwnerName(name) {
+    const n = String(name || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!n) return false;
+    if (n === "HENRI" || n === "HENRI P") return true;
+    if (n.indexOf("HENRI ") === 0) return true;
+    const api = lbApi();
+    if (api && typeof api.namesFuzzyMatch === "function") {
+      return api.namesFuzzyMatch(n, "HENRI") || api.namesFuzzyMatch(n, "HENRI P");
+    }
+    return false;
+  }
+
   // Compact gold/wood pixel chip — used for NEW and player nametags.
-  function drawChipTag(label, x, y) {
+  // theme "owner" = red (Henri / game owner).
+  function drawChipTag(label, x, y, theme) {
     const s = String(label || "").toUpperCase();
     const tw = pixTextWidth(s);
-    px(x - 1, y - 1, tw + 3, 9, "#3a2414");
-    px(x, y, tw + 1, 7, "#8a5a18");
-    drawPixText(s, x + 1, y, "#ffe27a");
+    const owner = theme === "owner";
+    px(x - 1, y - 1, tw + 3, 9, owner ? "#2a0808" : "#3a2414");
+    px(x, y, tw + 1, 7, owner ? "#9a2420" : "#8a5a18");
+    drawPixText(s, x + 1, y, owner ? "#ffc8b8" : "#ffe27a");
     return tw + 4;
   }
 
   function drawNameTag(name, x, y, maxLen) {
     const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
-    return drawChipTag(n, x, y);
+    return drawChipTag(n, x, y, isOwnerName(n) ? "owner" : null);
   }
 
   /** Classic board name (no chip) — guests only. Returns width used. */
