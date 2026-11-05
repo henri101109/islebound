@@ -314,6 +314,8 @@
   let srBlowfishFinishT = -1;
   /** Floating hearts above player after catching a blowfish: { t, dur }. */
   let blowfishHearts = null;
+  /** Jade/gold sparks orbiting the player after the jade mask is equipped: { t, dur, sparks }. */
+  let jadeMaskFx = null;
   /** Dense speedrun replay recording / top-10 spectate. */
   let srReplayFrames = [];
   let srReplayLastT = -999;
@@ -2558,6 +2560,7 @@
       cosmetics[kind] = id;
       cosTip = kind === "back" ? "CAPE ON" : "MASK ON";
       cosTipT = 1.4;
+      if (id === "jade_mask") startJadeMaskFx();
       return;
     }
   }
@@ -3621,6 +3624,32 @@
     }
   }
 
+  /** Short jade-and-gold celebration. Only the equip paths call this, never a save load. */
+  function startJadeMaskFx() {
+    const sparks = [];
+    const n = 26;
+    for (let i = 0; i < n; i++) {
+      const gold = i % 4 === 0;
+      const wisp = i % 5 === 2;
+      sparks.push({
+        ang: (i / n) * Math.PI * 2,
+        orbit: 0.9 + (i % 5) * 0.22,
+        rad: 5 + (i % 6) * 1.45,
+        rise: 4 + (i % 5) * 2.1,
+        phase: i * 1.31,
+        w: i % 7 === 0 ? 2 : 1,
+        kind: wisp ? 2 : gold ? 1 : 0,
+      });
+    }
+    jadeMaskFx = { t: 0, dur: 2.15, sparks };
+  }
+
+  function updateJadeMaskFx(dt) {
+    if (!jadeMaskFx) return;
+    jadeMaskFx.t += dt;
+    if (jadeMaskFx.t >= jadeMaskFx.dur) jadeMaskFx = null;
+  }
+
   function updateBlowfishSpeedEnd(dt) {
     if (srBlowfishFinishT < 0) return;
     if (playMode !== "speedrun" || srCat !== "blowfish" || uiScreen === "finish") {
@@ -4016,6 +4045,7 @@
       }
     }
     cosmetics[kind] = id;
+    if (id === "jade_mask" && prev !== "jade_mask") startJadeMaskFx();
     return true;
   }
 
@@ -5605,16 +5635,48 @@
     hubExit = { x: doorX, y: HUB_H - 16, w: 28, h: 16 };
   }
 
-  function paintMayanTemple(g, x, y, w, h, door) {
-    // Mesoamerican step pyramid — weathered gray/blue stone, central stairs, top sanctuary
+  /** Shared stair geometry so the painted mouth and the walk-in rect stay the same. */
+  function templeStairMetrics(w, h) {
     const tiers = 9;
     const baseH = h - 18;
     const tierH = Math.max(4, (baseH / tiers) | 0);
     const inset = Math.max(3, ((w / 2 - 18) / tiers) | 0);
-    const stairW = Math.max(12, ((w * 0.22) | 0));
+    const stairW = Math.max(12, (w * 0.22) | 0);
     const mid = (w / 2) | 0;
     const stairL = mid - ((stairW / 2) | 0);
-    const stairR = stairL + stairW;
+    const stairTop = h - 6 - tiers * tierH;
+    const stairBot = h - 6;
+    return {
+      tiers,
+      tierH,
+      inset,
+      stairW,
+      mid,
+      stairL,
+      stairR: stairL + stairW,
+      stairTop,
+      stairBot,
+    };
+  }
+
+  /** Dark opening at the foot of the central stairs, in temple-local pixels. */
+  function templeEntranceLocal(w, h) {
+    const m = templeStairMetrics(w, h);
+    const doorH = 16;
+    return { x: m.stairL, y: m.stairBot - doorH, w: m.stairW, h: doorH };
+  }
+
+  function paintMayanTemple(g, x, y, w, h, door) {
+    // Mesoamerican step pyramid — weathered gray/blue stone, central stairs, top sanctuary
+    const metrics = templeStairMetrics(w, h);
+    const tiers = metrics.tiers;
+    const tierH = metrics.tierH;
+    const inset = metrics.inset;
+    const stairW = metrics.stairW;
+    const stairL = metrics.stairL;
+    const stairR = metrics.stairR;
+    const stairTop = metrics.stairTop;
+    const stairBot = metrics.stairBot;
 
     // Ground strip (grass / soil)
     pxi(g, x - 3, y + h - 3, w + 6, 3, "#2a4a24");
@@ -5649,8 +5711,6 @@
     }
 
     // Central stairway with thin balustrades
-    const stairTop = h - 6 - tiers * tierH;
-    const stairBot = h - 6;
     for (let sy = stairTop; sy < stairBot; sy += 2) {
       const row = ((sy - stairTop) / 2) | 0;
       pxi(g, x + stairL, y + sy, stairW, 2, row & 1 ? "#7a8288" : "#5a6268");
@@ -5703,12 +5763,22 @@
       if (hash(i, 7) > 0.4) pxi(g, vx - 1, vy + 4, 3, 2, "#4a8a38");
     }
 
-    // Entrance at base of stairs (walk-in)
-    const dx = door.x - x;
-    const dy = door.y - y;
-    pxi(g, x + dx - 2, y + dy - 2, door.w + 4, door.h + 2, "#1a140e");
-    pxi(g, x + dx, y + dy, door.w, door.h, "#080604");
-    pxi(g, x + dx + door.w - 3, y + dy + ((door.h / 2) | 0), 1, 1, "#c9a227");
+    // Walk-in mouth matches the rect placeTemple stored on templeDoor.
+    const mouth = door
+      ? { x: door.x - x, y: door.y - y, w: door.w, h: door.h }
+      : templeEntranceLocal(w, h);
+    const dx = mouth.x;
+    const dy = mouth.y;
+    const dw = mouth.w;
+    const dh = mouth.h;
+    // Stone jambs sit outside the opening; the black rect is the door itself.
+    pxi(g, x + dx - 2, y + dy - 2, 2, dh + 2, "#3a4048");
+    pxi(g, x + dx + dw, y + dy - 2, 2, dh + 2, "#2a3038");
+    pxi(g, x + dx - 2, y + dy - 3, dw + 4, 3, "#5a6268");
+    pxi(g, x + dx, y + dy - 3, dw, 1, "#8a9298");
+    pxi(g, x + dx, y + dy, dw, dh, "#080604");
+    pxi(g, x + dx + 1, y + dy + 1, dw - 2, 1, "#1a1814");
+    pxi(g, x + dx + dw - 4, y + dy + ((dh / 2) | 0), 1, 1, "#c9a227");
   }
 
   function placeTemple(pier) {
@@ -5723,27 +5793,32 @@
     const tx = midX - ((tw / 2) | 0);
     const ty = cliff + Math.max(48, (depth * 0.16) | 0);
     const temple = { x: tx, y: ty, w: tw, h: th };
+    const mouth = templeEntranceLocal(temple.w, temple.h);
     const tDoor = {
-      x: temple.x + ((temple.w / 2) | 0) - 7,
-      y: temple.y + temple.h - 12,
-      w: 14,
-      h: 12,
+      x: temple.x + mouth.x,
+      y: temple.y + mouth.y,
+      w: mouth.w,
+      h: mouth.h,
     };
 
-    islandSolids.push({ x: temple.x, y: temple.y, w: temple.w, h: temple.h - 12 });
-    islandSolids.push({ x: temple.x, y: temple.y + temple.h - 12, w: tDoor.x - temple.x, h: 8 });
+    islandSolids.push({ x: temple.x, y: temple.y, w: temple.w, h: mouth.y });
+    islandSolids.push({ x: temple.x, y: tDoor.y, w: tDoor.x - temple.x, h: tDoor.h });
     islandSolids.push({
       x: tDoor.x + tDoor.w,
-      y: temple.y + temple.h - 12,
+      y: tDoor.y,
       w: temple.x + temple.w - (tDoor.x + tDoor.w),
-      h: 8,
+      h: tDoor.h,
     });
 
-    walkPads.push({ x: tDoor.x - 6, y: tDoor.y, w: tDoor.w + 12, h: 22 });
+    walkPads.push({ x: tDoor.x - 4, y: tDoor.y, w: tDoor.w + 8, h: tDoor.h + 18 });
     keepouts.push({ x: temple.x - 14, y: temple.y - 10, w: temple.w + 28, h: temple.h + 24 });
 
-    templeDoor = { x: tDoor.x, y: tDoor.y, w: tDoor.w, h: tDoor.h + 4 };
-    templeIslandExit = { x: tDoor.x + tDoor.w + 6, y: tDoor.y + 4 };
+    // Hitbox is the same rectangle as the black stair mouth.
+    templeDoor = { x: tDoor.x, y: tDoor.y, w: tDoor.w, h: tDoor.h };
+    templeIslandExit = {
+      x: tDoor.x + (((tDoor.w - 8) / 2) | 0),
+      y: tDoor.y + tDoor.h + 2,
+    };
 
     const pad = 16;
     const nx0 = Math.min(bldgOX, temple.x - pad);
@@ -6980,34 +7055,57 @@
     }
   }
 
-  function drawCapePixels(sway, damp) {
-    const id = cosmetics.back;
-    if (!id) return;
-    const d = damp == null ? 1 : damp;
-    const s = (sway * d) | 0;
-    const s2 = ((sway * 0.55 + Math.sin(time * 3.1) * 0.8) * d) | 0;
+  /**
+   * Cloth behind the sprite. Each row is its own segment: pinned at the
+   * shoulders, then a slower trailing edge so the hem ripples instead of sliding as a block.
+   * +x is forward (facing scale), so the sheet hangs toward -x.
+   */
+  function drawCapeSheet(id, amp, spd, phase) {
+    if (id !== "cape" && id !== "cloak") return;
+    const ember = id === "cape";
+    const body = ember
+      ? ["#f06040", "#e04a32", "#c43a28", "#a82820", "#8a2020", "#6a1410"]
+      : ["#3a5080", "#2a4470", "#243860", "#1e3058", "#1a2848", "#101828"];
+    const edge = ember ? "#4a100c" : "#0c1420";
+    const fold = ember ? "#f0a060" : "#6a88b0";
+    const rows = ember ? 11 : 12;
+    for (let i = 0; i < rows; i++) {
+      const u = i / (rows - 1);
+      const pin = i < 2 ? 0.1 : 0.22 + u * u;
+      const wave = Math.sin(time * spd + phase + i * 0.68) * amp * pin;
+      const wave2 = Math.sin(time * spd * 0.61 + phase * 1.3 + i * 1.15 + 1.8) * amp * u;
+      const drag = -u * amp * 0.85;
+      const ox = (wave + drag) | 0;
+      const y = -6 + i;
+      let w = 3 + ((i * 0.42) | 0);
+      if (wave2 > 0.35) w += 1;
+      const x = -4 - ((u * 2.2) | 0) + ox;
+      const col = body[Math.min(body.length - 1, (u * (body.length - 1)) | 0)];
+      px(x, y, w, 1, col);
+      if ((i & 1) === 0) px(x + 1 + (wave2 > 0 ? 1 : 0), y, 1, 1, fold);
+      if (i > 1) px(x - 1 + (wave2 | 0), y, 1, 1, edge);
+      if (i > rows - 3) {
+        const hx = x + w + ((Math.sin(time * spd * 1.35 + phase + i * 2.0) * amp * 0.55) | 0);
+        px(hx, y, 1, 1, edge);
+      }
+    }
+  }
+
+  /** Collar and shoulder points drawn after the torso so the cape reads as worn. */
+  function drawCapeCollar(id) {
     if (id === "cape") {
-      // Ember cape — hangs off the back, clearly past the body silhouette
-      px(-4, -7, 3, 2, "#c9a227");
-      px(-3, -8, 2, 1, "#e8c44a");
-      px(-8 + s, -6, 5, 3, "#8a2020");
-      px(-9 + s, -4, 5, 8, "#a82820");
-      px(-10 + s2, -2, 4, 8, "#c43a28");
-      px(-8 + s, -3, 4, 9, "#e04a32");
-      px(-7 + s, -5, 2, 3, "#f06040");
-      px(-6 + s, -4, 1, 2, "#f0a060");
-      px(-11 + s2, 5, 5, 2, "#6a1410");
-      px(-9 + s, 6, 4, 2, "#8a2020");
-      px(-10 + s2, 7, 3, 1, "#5a1010");
+      // Nape and shoulder band sit under the chin so they don't cover a mask.
+      px(-5, -7, 2, 2, "#8a2020");
+      px(-3, -7, 5, 1, "#c9a227");
+      px(2, -7, 2, 1, "#a82820");
+      px(-4, -8, 2, 1, "#e8c44a");
+      px(-2, -7, 1, 1, "#f0a060");
     } else if (id === "cloak") {
-      px(-4, -7, 3, 2, "#3a5080");
-      px(-8 + s, -6, 5, 3, "#1a2848");
-      px(-9 + s, -4, 5, 9, "#1e3058");
-      px(-10 + s2, -2, 4, 9, "#243860");
-      px(-8 + s, -3, 4, 10, "#2a4470");
-      px(-7 + s, -5, 2, 3, "#3a5080");
-      px(-11 + s2, 6, 5, 2, "#101828");
-      px(-9 + s, 7, 4, 1, "#141c30");
+      px(-5, -7, 2, 2, "#1a2848");
+      px(-3, -7, 5, 1, "#3a5080");
+      px(2, -7, 2, 1, "#243860");
+      px(-4, -8, 2, 1, "#5a78a0");
+      px(-2, -7, 1, 1, "#8aa4c8");
     }
   }
 
@@ -7048,10 +7146,9 @@
     }
 
     const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
-    const sway =
-      (player.moving ? Math.sin(time * 10 + f) * 1.4 + step * 0.4 : Math.sin(time * 2.2) * 0.7) *
-      boatDamp;
-    drawCapePixels(sway, 1);
+    const gust = (player.moving && !player.aboard ? 2.55 : 0.82) * boatDamp;
+    const gustSpd = player.moving && !player.aboard ? 8.4 : 2.15;
+    drawCapeSheet(cosmetics.back, gust, gustSpd, f * 0.4);
     const hurt = player.hurt > 0;
     const shirt = hurt ? "#8a3a3a" : "#b8c4d4";
     const vest = hurt ? "#6a3038" : "#3a6a9a";
@@ -7070,15 +7167,7 @@
     px(3, -5, 2, 4, vest);
     px(-5, -2, 2, 2, "#e8c39a");
     px(3, -2, 2, 2, "#e8c39a");
-    // Cape clasp on top of shoulders so the wear reads clearly
-    if (cosmetics.back === "cape") {
-      px(-4, -7, 3, 2, "#c9a227");
-      px(-3, -8, 2, 1, "#e8c44a");
-      px(-5, -6, 2, 2, "#8a2020");
-    } else if (cosmetics.back === "cloak") {
-      px(-4, -7, 3, 2, "#3a5080");
-      px(-5, -6, 2, 2, "#1a2848");
-    }
+    drawCapeCollar(cosmetics.back);
     if (player.aboard) {
       px(-3, 1, 2, 1, "#2a4a78");
       px(0, 1, 2, 1, "#2a4a78");
@@ -9276,19 +9365,7 @@
     ink.globalAlpha = alpha == null ? 1 : alpha;
     ink.translate(sx + 4, sy + 13);
     ink.scale(face || 1, 1);
-    if (backId === "cape") {
-      px(-4, -7, 3, 2, "#c9a227");
-      px(-8, -6, 5, 3, "#8a2020");
-      px(-9, -4, 5, 8, "#c43a28");
-      px(-8, -3, 4, 9, "#e04a32");
-      px(-10, 5, 5, 2, "#6a1410");
-    } else if (backId === "cloak") {
-      px(-4, -7, 3, 2, "#3a5080");
-      px(-8, -6, 5, 3, "#1a2848");
-      px(-9, -4, 5, 9, "#243860");
-      px(-8, -3, 4, 10, "#2a4470");
-      px(-10, 6, 5, 2, "#101828");
-    }
+    drawCapeSheet(backId, 0.7, 2.1, (sx || 0) * 0.17);
     px(-3, -13, 6, 2, "#c43a28");
     px(-2, -11, 5, 5, "#e8c39a");
     if (faceId === "jade_mask") {
@@ -9296,6 +9373,7 @@
       px(-1, -10, 3, 2, "#3ec86a");
     }
     px(-3, -6, 6, 6, "#3a6a9a");
+    drawCapeCollar(backId);
     px(-3, 1, 2, 3, "#2a4a78");
     px(0, 1, 2, 3, "#2a4a78");
     ink.restore();
@@ -9579,6 +9657,7 @@
       if (serpent && serpent.phase === "breach") drawSerpent(cpos);
       drawWandBolts(cpos);
     }
+    drawJadeMaskFx();
     if (cloakOn) applyCloakVision(cpos, jx, jy);
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
     drawHud();
@@ -9595,6 +9674,52 @@
     drawSpeedUI();
     drawIslandChat();
     drawReplayHud();
+  }
+
+  /** Jade, antique gold, and soft moss wisps orbiting the player. Positions are recomputed from the sprite each frame. */
+  function drawJadeMaskFx() {
+    if (!jadeMaskFx) return;
+    const fx = jadeMaskFx;
+    const t = fx.t;
+    const dur = fx.dur;
+    const cpos = cam();
+    const cx = player.x + player.w / 2 - cpos.x;
+    const cy = player.y + player.h * 0.4 - cpos.y;
+    const fade = t < 0.14 ? t / 0.14 : t > dur - 0.42 ? Math.max(0, (dur - t) / 0.42) : 1;
+    ctx.save();
+    const ringU = Math.min(1, t / 0.65);
+    const ringA = fade * (1 - ringU);
+    if (ringA > 0.04) {
+      ctx.globalAlpha = ringA;
+      const rr = 3 + ringU * 13;
+      for (let k = 0; k < 14; k++) {
+        const a = (k / 14) * Math.PI * 2 + t;
+        const col = k % 3 === 0 ? "#e8c44a" : k % 3 === 1 ? "#2a6b40" : "#c5d6b0";
+        px((cx + Math.cos(a) * rr) | 0, (cy + Math.sin(a) * rr * 0.72) | 0, 1, 1, col);
+      }
+    }
+    for (let i = 0; i < fx.sparks.length; i++) {
+      const s = fx.sparks[i];
+      const spin = s.ang + t * s.orbit;
+      const breathe = Math.sin(t * 3.1 + s.phase) * 1.3;
+      const open = Math.sin(Math.min(1, t / 0.32) * Math.PI * 0.5);
+      const rad = s.rad * (0.5 + open * 0.65) + breathe;
+      const rise = t * s.rise * (s.kind === 2 ? 1.15 : 0.32);
+      const x = cx + Math.cos(spin) * rad;
+      const y = cy + Math.sin(spin) * rad * 0.62 - rise;
+      const flick = 0.5 + 0.5 * Math.sin(t * 9 + s.phase);
+      ctx.globalAlpha = fade * (0.45 + 0.55 * flick) * (s.kind === 2 ? 0.75 : 1);
+      let col = "#2a6b40";
+      if (s.kind === 1) col = i & 1 ? "#e8c44a" : "#c9a227";
+      else if (s.kind === 2) col = "rgba(210, 206, 170, 0.88)";
+      else col = i % 3 === 0 ? "#1a4a30" : i % 3 === 1 ? "#3a8f52" : "#c5d6b0";
+      px(x | 0, y | 0, s.w, s.w, col);
+      if (s.kind === 1 && flick > 0.72) {
+        ctx.globalAlpha = fade * 0.85;
+        px((x | 0) + 1, y | 0, 1, 1, "#f3e2c4");
+      }
+    }
+    ctx.restore();
   }
 
   function drawUseFx() {
@@ -10346,6 +10471,7 @@
     srPbLabel = "";
     srBlowfishFinishT = -1;
     blowfishHearts = null;
+    jadeMaskFx = null;
     clearReplayBuffer();
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
@@ -11618,6 +11744,7 @@
     updateTradeCoinDrift(dt);
     updateCabinCut(dt);
     updateBlowfishHearts(dt);
+    updateJadeMaskFx(dt);
     updateBlowfishSpeedEnd(dt);
     updateCabinFish(dt);
     updateBoatThrow(dt);
