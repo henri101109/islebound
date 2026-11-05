@@ -1,15 +1,34 @@
 -- Islebound: ONE paste for Supabase SQL Editor (safe to re-run).
 -- Covers scores, accounts, PRs, presence, chat, replays, category allowlists.
 
--- Wipe known impossible Matteus fish WRs (~15s = cast-only cheats)
-delete from public.speedrun_scores
-where player_name = 'MATTEUS'
-  and category in ('shark', 'jelly_white', 'chest', 'shark_cloak', 'blowfish', 'megalodon', 'serpent')
-  and time_ms < 28000;
+-- ========== Wipe Matteus / Owens from boards + VID (safe to re-run) ==========
+-- Case-insensitive names: MATTEUS, MATTEUS O, MATTEUS OWENS, OWENS, and "MATTEUS …".
+-- Also deletes any speedrun_replays tied by run_id to those score rows.
+
+delete from public.speedrun_replays r
+using public.speedrun_scores s
+where s.run_id is not null
+  and r.run_id = s.run_id
+  and (
+    upper(trim(s.player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+    or upper(trim(s.player_name)) like 'MATTEUS %'
+  );
+
 delete from public.speedrun_replays
-where player_name = 'MATTEUS'
-  and category in ('shark', 'jelly_white', 'chest', 'shark_cloak', 'blowfish', 'megalodon', 'serpent')
-  and time_ms < 28000;
+where upper(trim(player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+   or upper(trim(player_name)) like 'MATTEUS %';
+
+delete from public.speedrun_scores
+where upper(trim(player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+   or upper(trim(player_name)) like 'MATTEUS %';
+
+delete from public.speedrun_prs pr
+using public.player_accounts a
+where pr.user_id = a.id
+  and (
+    upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) ~ 'MATTEUS'
+    or upper(trim(a.username)) in ('OWENS', 'MATTEUS', 'MATTEUS O', 'MATTEUS OWENS')
+  );
 
 -- ========== scores ==========
 create table if not exists public.speedrun_scores (

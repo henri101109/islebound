@@ -10,6 +10,40 @@ Islebound posts and reads scores over Supabase REST. The game works without this
 
 That one file covers scores, accounts, PRs, online presence, chat, replays (VID), bans, and all speedrun categories.
 
+## Wipe Matteus / Owens scores + VID (run in SQL Editor)
+
+Paste this block alone (or re-run full `SETUP_ALL.sql`) to remove their board times and spectate replays. Does **not** touch other players.
+
+```sql
+-- Wipe Matteus / Owens from boards + VID (safe to re-run)
+delete from public.speedrun_replays r
+using public.speedrun_scores s
+where s.run_id is not null
+  and r.run_id = s.run_id
+  and (
+    upper(trim(s.player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+    or upper(trim(s.player_name)) like 'MATTEUS %'
+  );
+
+delete from public.speedrun_replays
+where upper(trim(player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+   or upper(trim(player_name)) like 'MATTEUS %';
+
+delete from public.speedrun_scores
+where upper(trim(player_name)) in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+   or upper(trim(player_name)) like 'MATTEUS %';
+
+delete from public.speedrun_prs pr
+using public.player_accounts a
+where pr.user_id = a.id
+  and (
+    upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) ~ 'MATTEUS'
+    or upper(trim(a.username)) in ('OWENS', 'MATTEUS', 'MATTEUS O', 'MATTEUS OWENS')
+  );
+```
+
+The client also filters those `HARD_BANS` names out of `fetchTop` / `fetchBestReplay` (VID #1) so they never show even before SQL runs.
+
 ## Bans (name / account / client_id / IP)
 
 `SETUP_ALL.sql` creates `public.player_bans` and seeds a **12-hour Matteus temp ban** (expires `2026-11-05 17:47:00+00`). The client also ships a matching hard-coded fallback so the ban applies on GitHub Pages even before you re-run SQL.

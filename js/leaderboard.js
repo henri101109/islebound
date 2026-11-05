@@ -518,6 +518,17 @@
     return false;
   }
 
+  /** Permanent board/VID hide for HARD_BANS names (ignores ban expiry — SQL wipe may lag). */
+  function isBoardHiddenName(name) {
+    const n = normalizeIdentityName(name);
+    if (!n) return false;
+    for (let i = 0; i < HARD_BANS.length; i++) {
+      const b = HARD_BANS[i];
+      if (b && b.name_norm && nameMatchesBan(n, b)) return true;
+    }
+    return false;
+  }
+
   function banUserMessage(hit) {
     if (!hit || !hit.banned) return "";
     let msg = BAN_USER_MSG;
@@ -907,7 +918,9 @@
   function mergeBoardIdentities(rows, identities, limit) {
     const list = Array.isArray(rows) ? rows : [];
     const ids = identities || identityCache.rows || [];
-    const enriched = list.map((r) => enrichRowIdentity(normalizeScoreRow(r), ids));
+    const enriched = list
+      .map((r) => enrichRowIdentity(normalizeScoreRow(r), ids))
+      .filter((r) => !isBoardHiddenName(r.player_name));
     enriched.sort((a, b) => (a.time_ms | 0) - (b.time_ms | 0));
     const lim = Math.max(1, Math.min(25, limit | 0 || enriched.length));
     return enriched.slice(0, lim);
@@ -946,6 +959,8 @@
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, rows: [], error: "bad category" };
     const lim = Math.max(1, Math.min(25, limit | 0 || 10));
+    // Over-fetch so HARD_BANS name filter can still fill TOP N.
+    const fetchLim = Math.min(50, lim + 20);
     if (!configured()) {
       const cached = mergeBoardIdentities(getCachedBoard(id), identityCache.rows || [], lim);
       return { ok: false, rows: cached, error: "not configured", offline: true };
@@ -960,7 +975,7 @@
       "&select=category,time_ms,player_name,created_at,user_id,run_id,is_account" +
       "&order=time_ms.asc" +
       "&limit=" +
-      lim;
+      fetchLim;
     try {
       const res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
@@ -994,6 +1009,7 @@
   }
 
   async function fetchTopLegacy(id, lim) {
+    const fetchLim = Math.min(50, lim + 20);
     const url =
       restBase() +
       "/" +
@@ -1003,7 +1019,7 @@
       "&select=category,time_ms,player_name,created_at" +
       "&order=time_ms.asc" +
       "&limit=" +
-      lim;
+      fetchLim;
     try {
       const res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
@@ -1252,15 +1268,21 @@
   async function fetchBestReplay(category, prefer) {
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, replay: null };
-    const want = prefer || {};
+    // Drop prefer when #1 is a HARD_BANS name so VID falls through to next visible WR.
+    let want = prefer || {};
+    if (want.player_name && isBoardHiddenName(want.player_name)) want = {};
     const local = loadLocalReplay(id);
-    const localOk = local && replayMatchesPrefer(local, want) ? local : null;
+    const localOk =
+      local && !isBoardHiddenName(local.player_name) && replayMatchesPrefer(local, want)
+        ? local
+        : null;
 
     if (!configured()) {
       return { ok: !!localOk, replay: localOk, offline: true };
     }
 
-    async function query(extra) {
+    async function query(extra, limit) {
+      const lim = Math.max(1, Math.min(25, limit | 0 || 1));
       const url =
         restBase() +
         "/" +
@@ -1269,33 +1291,45 @@
         encodeURIComponent(id) +
         "&select=run_id,category,time_ms,player_name,frames,created_at" +
         (extra || "") +
-        "&order=time_ms.asc&limit=1";
+        "&order=time_ms.asc&limit=" +
+        lim;
       const res = await fetch(url, { headers: anonHeaders() });
-      if (!res.ok) return null;
+      if (!res.ok) return [];
       const data = await res.json();
-      return Array.isArray(data) && data[0] ? data[0] : null;
+      return Array.isArray(data) ? data : [];
+    }
+
+    function firstVisible(rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      for (let i = 0; i < list.length; i++) {
+        if (list[i] && !isBoardHiddenName(list[i].player_name)) return list[i];
+      }
+      return null;
     }
 
     try {
       let row = null;
       if (want.run_id) {
-        row = await query("&run_id=eq." + encodeURIComponent(want.run_id));
+        row = firstVisible(await query("&run_id=eq." + encodeURIComponent(want.run_id), 1));
       }
       if (!row && want.time_ms != null && want.player_name) {
-        row = await query(
-          "&time_ms=eq." +
-            (want.time_ms | 0) +
-            "&player_name=eq." +
-            encodeURIComponent(String(want.player_name).toUpperCase())
+        row = firstVisible(
+          await query(
+            "&time_ms=eq." +
+              (want.time_ms | 0) +
+              "&player_name=eq." +
+              encodeURIComponent(String(want.player_name).toUpperCase()),
+            1
+          )
         );
       }
-      // Only use unbound "fastest replay in table" when we have no #1 identity to match.
+      // Unbound fastest visible replay when no #1 identity (or prefer was board-hidden).
       if (!row && !want.run_id && want.time_ms == null && !want.player_name) {
-        row = await query("");
+        row = firstVisible(await query("", 20));
       }
 
       const replay = replayFromRow(row);
-      if (replay && replayMatchesPrefer(replay, want)) {
+      if (replay && !isBoardHiddenName(replay.player_name) && replayMatchesPrefer(replay, want)) {
         saveLocalReplay(id, replay);
         return { ok: true, replay, source: "online" };
       }
