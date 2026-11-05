@@ -292,10 +292,16 @@
   let srReplayLastT = -999;
   let srBestReplay = null;
   let srReplayBusy = false;
+  /** Bumped to cancel in-flight VID fetch / stale playBestReplay results. */
+  let replayPlayGen = 0;
+  /** Bumped to ignore stale refreshSpeedBoard / fetchBestReplay results. */
+  let srBoardGen = 0;
   let replayActive = false;
   let replayFrames = [];
   let replayT = 0;
   let replayMeta = null;
+  /** Brief fade-from-black when starting / switching spectate replay. */
+  let replayCutT = 0;
   const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3 };
   const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin"];
   const REPLAY_ROD = { idle: 0, wait: 1, reel: 2 };
@@ -8687,7 +8693,38 @@
     ];
   }
 
-  function stopReplay() {
+  function bumpReplayPlayGen() {
+    replayPlayGen++;
+    srReplayBusy = false;
+  }
+
+  function boardTopPrefer(cat) {
+    const id = cat || srCat;
+    const top = srBoardRows && srBoardRows[0] ? srBoardRows[0] : null;
+    if (!top) return null;
+    const api = lbApi();
+    if (api && api.preferFromBoardRow) return api.preferFromBoardRow(top);
+    return {
+      run_id: top.run_id || null,
+      time_ms: top.time_ms | 0,
+      player_name: top.player_name || "",
+    };
+  }
+
+  function replayMatchesBoardTop(replay, cat) {
+    if (!replay || !replay.frames || !replay.frames.length) return false;
+    const id = cat || srCat;
+    if (replay.category && replay.category !== id) return false;
+    const prefer = boardTopPrefer(id);
+    if (!prefer) return false;
+    const api = lbApi();
+    if (api && api.replayMatchesPrefer) return api.replayMatchesPrefer(replay, prefer);
+    if (prefer.run_id && replay.run_id) return String(prefer.run_id) === String(replay.run_id);
+    return (replay.time_ms | 0) === (prefer.time_ms | 0);
+  }
+
+  /** Stop playback state without returning to menus (used when swapping VID). */
+  function clearReplayPlayback() {
     replayActive = false;
     replayFrames = [];
     replayT = 0;
@@ -8700,6 +8737,12 @@
     rod.phase = "idle";
     rod.catchId = null;
     cloakOn = false;
+  }
+
+  function stopReplay() {
+    bumpReplayPlayGen();
+    clearReplayPlayback();
+    replayCutT = 0;
     guideOpen = false;
     chatOpen = false;
     uiScreen = "categories";
@@ -8709,7 +8752,8 @@
 
   function startReplay(payload) {
     if (!payload || !Array.isArray(payload.frames) || !payload.frames.length) return false;
-    stopReplay();
+    // Hard-cut any current playback; do not bounce through categories / board refresh.
+    clearReplayPlayback();
     chatOpen = false;
     guideOpen = false;
     resetSpeedrunWorld();
@@ -8725,32 +8769,39 @@
     replayT = replayFrames[0][0] | 0;
     replayActive = true;
     applyReplayFrame(replayFrames[0]);
+    replayCutT = 0.14;
     return true;
   }
 
   async function playBestReplay(cat) {
-    if (srReplayBusy || replayActive) return;
     const id = cat || srCat || SPEED_ORDER[srCursor];
+    // Invalidate any prior in-flight VID load so only this selection can start.
+    const gen = ++replayPlayGen;
     const api = lbApi();
+    const prefer = boardTopPrefer(id);
     srReplayBusy = true;
-    let payload = srBestReplay && srBestReplay.category === id ? srBestReplay : null;
+    // Keep any current replay on screen until the new payload is ready, then hard-cut.
+    let payload =
+      srBestReplay && replayMatchesBoardTop(srBestReplay, id) ? srBestReplay : null;
     if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
-      const res = await api.fetchBestReplay(id);
-      if (res && res.replay) payload = res.replay;
+      const res = await api.fetchBestReplay(id, prefer);
+      if (gen !== replayPlayGen) return;
+      if (res && res.replay && replayMatchesBoardTop(res.replay, id)) payload = res.replay;
     }
-    if ((!payload || !payload.frames) && api && api.loadLocalReplay) {
-      payload = api.loadLocalReplay(id);
-    }
+    if (gen !== replayPlayGen) return;
     srReplayBusy = false;
     if (!payload || !payload.frames || !payload.frames.length) {
       srBoardNote = "NO REPLAY";
+      srBestReplay = null;
       return;
     }
+    if (!payload.category) payload.category = id;
     srBestReplay = payload;
     startReplay(payload);
   }
 
   function updateReplay(dt) {
+    if (replayCutT > 0) replayCutT = Math.max(0, replayCutT - dt);
     if (!replayActive || !replayFrames.length) return;
     replayT += dt * 1000;
     const lastT = replayFrames[replayFrames.length - 1][0] | 0;
@@ -8774,6 +8825,14 @@
     drawPixText(label, 10, 10, "#f3e2c4");
     drawPixText(who + "  " + tim, 10, 20, "#c9a227");
     drawPixText(now + "  ESC EXIT", uiW - 8, 10, "#f3e2c4", "right");
+    if (replayCutT > 0) {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = Math.min(1, replayCutT / 0.14);
+      ctx.fillStyle = "#080406";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
   }
 
   function newSpeedRunId() {
@@ -8946,10 +9005,14 @@
 
   async function refreshSpeedBoard(cat) {
     const id = cat || srCat;
+    const boardGen = ++srBoardGen;
+    // Category change cancels any pending VID load for a previous selection.
+    if (!replayActive) bumpReplayPlayGen();
     const api = lbApi();
     srBoardNote = "LOADING...";
     srBestReplay = null;
     if (!api) {
+      if (boardGen !== srBoardGen) return;
       srBoardRows = [];
       srBoardNote = "NO CLIENT";
       return;
@@ -8959,27 +9022,35 @@
         await api.fetchKnownIdentities();
       } catch (e) {}
     }
+    if (boardGen !== srBoardGen) return;
     if (!api.configured()) {
+      if (boardGen !== srBoardGen) return;
       srBoardRows = applyBoardIdentityMerge(api.getCachedBoard(id) || [], 10);
       srBoardNote = srBoardRows.length ? "CACHED / OFFLINE" : "SET UP SUPABASE";
-      if (api.loadLocalReplay) srBestReplay = api.loadLocalReplay(id);
+      if (api.loadLocalReplay) {
+        const local = api.loadLocalReplay(id);
+        // Only surface VID when local cache matches the cached #1 row.
+        if (local && replayMatchesBoardTop(local, id)) srBestReplay = local;
+      }
       return;
     }
     const res = await api.fetchTop(id, 10);
+    if (boardGen !== srBoardGen) return;
     srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
     if (api.fetchBestReplay) {
       try {
-        const top = srBoardRows && srBoardRows[0] ? srBoardRows[0] : null;
-        const rr = await api.fetchBestReplay(id, top
-          ? {
-              run_id: top.run_id || null,
-              time_ms: top.time_ms | 0,
-              player_name: top.player_name || "",
-            }
-          : null);
-        if (rr && rr.replay && rr.replay.frames && rr.replay.frames.length) srBestReplay = rr.replay;
-      } catch (e) {}
+        const prefer = boardTopPrefer(id);
+        const rr = await api.fetchBestReplay(id, prefer);
+        if (boardGen !== srBoardGen) return;
+        if (rr && rr.replay && replayMatchesBoardTop(rr.replay, id)) {
+          srBestReplay = rr.replay;
+        } else {
+          srBestReplay = null;
+        }
+      } catch (e) {
+        srBestReplay = null;
+      }
     }
   }
 
@@ -9153,13 +9224,14 @@
       const timeX = Math.max(tagX + 1, x + 100);
       drawPixText(timeStr, timeX, yy, "#5c3a21");
       if (i === 0) {
-        const hasVid = !!(srBestReplay && srBestReplay.frames && srBestReplay.frames.length);
+        const catId = srCat || SPEED_ORDER[srCursor];
+        const hasVid = replayMatchesBoardTop(srBestReplay, catId);
         const vx = timeX + pixTextWidth(timeStr) + 4;
         const vidSel = menuHovering("vid:1") || hasVid;
         if (hasVid) {
           px(vx - 1, yy - 1, 22, 9, vidSel ? "#e8c44a" : "#5c3a21");
           drawPixText("VID", vx + 1, yy, vidSel ? "#2b1c12" : "#f3e2c4");
-          addMenuHit("vid:1", vx - 1, yy - 1, 22, 9, () => playBestReplay(srCat || SPEED_ORDER[srCursor]), {
+          addMenuHit("vid:1", vx - 1, yy - 1, 22, 9, () => playBestReplay(catId), {
             hover: true,
           });
         } else {
