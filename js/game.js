@@ -206,6 +206,11 @@
   let templeWorldCanvas = null;
   let templeWorldOX = 0;
   let templeWorldOY = 0;
+  let ruinsCanvas = null;
+  let ruinsOX = 0;
+  let ruinsOY = 0;
+  let ruinsSite = null;
+  let ruinsPortal = null;
   let mazeInfo = null;
   let shopDoor = null;
   let shopExit = null;
@@ -467,7 +472,7 @@
       },
       {
         title: "GOALS",
-        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "JADE MASK IN TEMPLE", "DAILY IDOL NEAR PATH"],
+        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "JADE MASK IN TEMPLE", "RIVER RUINS HALF WAY"],
       },
     ],
     speedrun: [
@@ -3087,6 +3092,9 @@
       return "STEER TO DODGE";
     }
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
+    if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
+      return "PORTAL DORMANT";
+    }
     if (!nearestLoot || nearestLoot.id === "coin") return "";
     const def = ITEM_DEFS[nearestLoot.id];
     if (!def || canTake(nearestLoot.id) || canTakeSatchel(nearestLoot.id)) return "";
@@ -6485,6 +6493,300 @@
     }
   }
 
+  function paintRuinStone(g, x, y, w, h, base) {
+    const lit = "#8a8478";
+    const mid = base || "#5a564e";
+    const shade = "#2e2c28";
+    pxi(g, x, y, w, h, mid);
+    pxi(g, x, y, w, 1, lit);
+    pxi(g, x, y + h - 1, w, 1, shade);
+    pxi(g, x, y, 1, h, lit);
+    pxi(g, x + w - 1, y, 1, h, shade);
+    for (let i = 0; i < w * h; i += 7) {
+      const px0 = x + (i % w);
+      const py0 = y + (((i / w) | 0) % h);
+      if (hash(px0 + 3, py0 + 9) > 0.78) pxi(g, px0, py0, 1, 1, shade);
+      else if (hash(px0, py0) > 0.9) pxi(g, px0, py0, 1, 1, lit);
+    }
+  }
+
+  function paintRuinColumn(g, x, y, h) {
+    // Fluted classical column with square base + carved capital
+    paintRuinStone(g, x - 1, y + h - 6, 10, 6, "#4a463e");
+    paintRuinStone(g, x, y + 8, 8, h - 14, "#6a6458");
+    for (let fy = 10; fy < h - 8; fy += 2) {
+      pxi(g, x + 2, y + fy, 1, 1, "#8a8478");
+      pxi(g, x + 5, y + fy, 1, 1, "#3a3834");
+    }
+    paintRuinStone(g, x - 2, y, 12, 8, "#5a564e");
+    pxi(g, x, y + 2, 8, 1, "#2e2c28");
+    pxi(g, x + 1, y + 4, 6, 1, "#2e2c28");
+    pxi(g, x + 2, y + 1, 1, 5, "#8a8478");
+    pxi(g, x + 5, y + 1, 1, 5, "#3a3834");
+  }
+
+  function paintRuinVines(g, x, y, w, h, seed) {
+    for (let i = 0; i < 10; i++) {
+      const vx = x + ((hash(seed + i, 11) * (w - 2)) | 0);
+      let vy = y + ((hash(seed + i, 17) * 6) | 0);
+      const len = 10 + ((hash(seed + i, 23) * (h - 8)) | 0);
+      for (let k = 0; k < len; k++) {
+        const sway = ((hash(seed + i + k, 29) - 0.5) * 2) | 0;
+        pxi(g, vx + sway, vy + k, 1, 1, k & 1 ? "#3a2818" : "#5a3a20");
+        if (hash(seed + i * 3 + k, 31) > 0.72) {
+          pxi(g, vx + sway + 1, vy + k, 2, 2, k & 2 ? "#2a6a34" : "#3a8a44");
+        }
+      }
+    }
+  }
+
+  function paintRuinMoss(g, x, y, w) {
+    for (let i = 0; i < w; i += 2) {
+      if (hash(x + i, y + 4) < 0.35) continue;
+      pxi(g, x + i, y, 2, 1, "#2a6a34");
+      if (hash(x + i, y) > 0.55) pxi(g, x + i, y - 1, 1, 1, "#4a9a48");
+    }
+  }
+
+  function paintRuinShrub(g, x, y) {
+    pxi(g, x + 1, y + 2, 5, 3, "#2a4a24");
+    pxi(g, x, y, 3, 3, "#3a7a34");
+    pxi(g, x + 3, y - 1, 4, 4, "#2a6a30");
+    pxi(g, x + 2, y + 1, 2, 2, "#5aba48");
+    if (hash(x, y) > 0.5) pxi(g, x + 4, y + 2, 1, 1, "#e04a32");
+    else if (hash(x + 1, y) > 0.6) pxi(g, x + 1, y + 1, 1, 1, "#ffe08a");
+  }
+
+  function paintRuinDebris(g, x, y, seed) {
+    paintRuinStone(g, x, y, 10, 5, "#4a463e");
+    pxi(g, x + 2, y + 1, 3, 1, "#2e2c28");
+    pxi(g, x + 2, y + 2, 2, 1, "#2e2c28");
+    pxi(g, x + 5, y + 1, 2, 2, "#2e2c28");
+    // Maze-like engraving on the slab
+    pxi(g, x + 1, y + 1, 1, 3, "#6a6458");
+    pxi(g, x + 7, y + 1, 1, 3, "#6a6458");
+    if (hash(seed, 7) > 0.4) {
+      paintRuinStone(g, x + 12, y + 1, 7, 4, "#3a3834");
+      pxi(g, x + 13, y + 2, 2, 1, "#2e2c28");
+    }
+  }
+
+  function bakeRiverRuins(siteW, siteH, portalLocal) {
+    ruinsCanvas = document.createElement("canvas");
+    ruinsCanvas.width = siteW;
+    ruinsCanvas.height = siteH;
+    const g = ruinsCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    // Dirt path through the gate
+    for (let y = portalLocal.y + portalLocal.h - 2; y < siteH; y++) {
+      for (let x = portalLocal.x - 6; x < portalLocal.x + portalLocal.w + 6; x++) {
+        if (x < 0 || x >= siteW) continue;
+        const n = hash(x + 2, y + 5);
+        pxi(g, x, y, 1, 1, n > 0.7 ? "#6a5438" : "#5a4630");
+      }
+    }
+    // Side ruined walls (dry-stack, crumbling tops)
+    for (let side = 0; side < 2; side++) {
+      const wx = side === 0 ? 4 : siteW - 34;
+      for (let row = 0; row < 5; row++) {
+        const yy = 18 + row * 8;
+        const ww = 26 - row * 2 + ((hash(side * 9 + row, 3) * 4) | 0);
+        const xx = side === 0 ? wx : siteW - 8 - ww;
+        paintRuinStone(g, xx, yy, ww, 8, row & 1 ? "#5a564e" : "#4a463e");
+        paintRuinMoss(g, xx, yy - 1, ww);
+      }
+      paintRuinVines(g, wx, 16, 28, 48, 40 + side * 17);
+    }
+    // Twin columns each side of the portal (image 1 / 2 mix)
+    const colL = portalLocal.x - 14;
+    const colR = portalLocal.x + portalLocal.w + 6;
+    const colH = portalLocal.h + 22;
+    const colY = portalLocal.y - 14;
+    paintRuinColumn(g, colL, colY, colH);
+    paintRuinColumn(g, colL - 11, colY + 4, colH - 4);
+    paintRuinColumn(g, colR, colY, colH);
+    paintRuinColumn(g, colR + 11, colY + 4, colH - 4);
+    paintRuinVines(g, colL - 2, colY, 12, colH, 71);
+    paintRuinVines(g, colR - 2, colY, 12, colH, 88);
+    // Lintel + stepped peak stones
+    const lx = colL - 2;
+    const ly = colY - 6;
+    const lw = colR + 10 - lx;
+    paintRuinStone(g, lx, ly, lw, 8, "#5a564e");
+    paintRuinMoss(g, lx, ly - 1, lw);
+    const peak = [
+      [lx + 10, ly - 6, 10, 6],
+      [lx + 20, ly - 10, 12, 8],
+      [lx + 32, ly - 14, 14, 10],
+      [lx + 46, ly - 10, 12, 8],
+      [lx + 56, ly - 6, 10, 6],
+    ];
+    for (let i = 0; i < peak.length; i++) {
+      const p = peak[i];
+      paintRuinStone(g, p[0], p[1], p[2], p[3], i === 2 ? "#6a6458" : "#4a463e");
+      paintRuinMoss(g, p[0], p[1] - 1, p[2]);
+    }
+    // Steps up to the gate
+    for (let s = 0; s < 3; s++) {
+      const sw = portalLocal.w + 16 - s * 4;
+      const sx = portalLocal.x - 8 + s * 2;
+      const sy = portalLocal.y + portalLocal.h + 2 + s * 3;
+      paintRuinStone(g, sx, sy, sw, 3, s & 1 ? "#4a463e" : "#5a564e");
+    }
+    // Engraved debris slabs
+    paintRuinDebris(g, 8, siteH - 14, 3);
+    paintRuinDebris(g, siteW - 36, siteH - 16, 9);
+    // Shrubs / ferns along the base
+    paintRuinShrub(g, 2, siteH - 20);
+    paintRuinShrub(g, 18, siteH - 18);
+    paintRuinShrub(g, siteW - 22, siteH - 20);
+    paintRuinShrub(g, siteW - 12, siteH - 17);
+    paintRuinShrub(g, portalLocal.x - 18, portalLocal.y + portalLocal.h - 2);
+    paintRuinShrub(g, portalLocal.x + portalLocal.w + 6, portalLocal.y + portalLocal.h);
+    // Grass tufts on stones
+    for (let i = 0; i < 18; i++) {
+      const gx = 6 + ((hash(i, 51) * (siteW - 12)) | 0);
+      const gy = 12 + ((hash(i, 57) * (siteH - 28)) | 0);
+      if (gx > portalLocal.x - 2 && gx < portalLocal.x + portalLocal.w + 2 && gy > portalLocal.y && gy < portalLocal.y + portalLocal.h) {
+        continue;
+      }
+      pxi(g, gx, gy, 1, 2, "#3a8a44");
+      if (hash(i, 61) > 0.5) pxi(g, gx + 1, gy - 1, 1, 2, "#2a6a34");
+    }
+  }
+
+  function plantRuinsJungle(site, portal) {
+    for (let i = 0; i < 52; i++) {
+      const ang = (i / 52) * Math.PI * 2 + hash(i, 73) * 0.5;
+      const rad = 22 + hash(i * 2, 79) * 40;
+      const x = (site.x + site.w / 2 + Math.cos(ang) * rad) | 0;
+      const y = (site.y + site.h / 2 + Math.sin(ang) * rad * 0.75) | 0;
+      if (x > portal.x - 10 && x < portal.x + portal.w + 10 && y > portal.y - 4 && y < portal.y + portal.h + 28) continue;
+      if (x > site.x + 8 && x < site.x + site.w - 8 && y > site.y + 8 && y < site.y + site.h - 10) continue;
+      if (y >= restShoreY(x) - 6) continue;
+      if (y <= northCliffY(x) + 8) continue;
+      if (inRiverWater(x, y)) continue;
+      if (hash(i, 83) > 0.48) {
+        palms.push({ x, y, s: 0.88 + hash(i, 5) * 0.35 });
+      } else {
+        trees.push({
+          x,
+          y,
+          s: 0.9 + hash(i, 11) * 0.4,
+          kind: hash(i, 19) > 0.55 ? "pine" : "leaf",
+        });
+      }
+    }
+  }
+
+  function placeRiverRuins(pier) {
+    // Halfway dock → temple, tucked beside the river inland of the beach
+    const dockC = (pier.x / TILE) | 0;
+    const templeC = 318;
+    const midC = ((dockC + templeC) / 2) | 0;
+    let wx = midC * TILE - 48;
+    // Prefer a dry bank beside the west/mid river band around this longitude
+    for (let tries = 0; tries < 48; tries++) {
+      const tx = wx + ((tries & 1 ? 1 : -1) * ((tries / 2) | 0) * 8);
+      const shore = restShoreY(tx);
+      const cliff = northCliffY(tx);
+      const ty = shore - 78;
+      if (ty <= cliff + 20) continue;
+      if (inRiverWater(tx + 40, ty + 40)) continue;
+      // Stay close to water — river within ~40px of the site center
+      let nearRiver = false;
+      for (let d = -40; d <= 40; d += 8) {
+        if (inRiverWater(tx + 40 + d, ty + 50) || inRiverWater(tx + 40, ty + 50 + d)) {
+          nearRiver = true;
+          break;
+        }
+      }
+      if (!nearRiver && tries < 30) continue;
+      wx = tx;
+      break;
+    }
+    const shore = restShoreY(wx + 50);
+    const cliff = northCliffY(wx + 50);
+    const siteW = 112;
+    const siteH = 86;
+    const sy = Math.max(cliff + 24, Math.min(shore - siteH - 10, shore - 82));
+    const site = { x: wx, y: sy, w: siteW, h: siteH };
+    const portalLocal = { x: 42, y: 28, w: 28, h: 36 };
+    ruinsSite = site;
+    ruinsPortal = {
+      x: site.x + portalLocal.x,
+      y: site.y + portalLocal.y,
+      w: portalLocal.w,
+      h: portalLocal.h,
+    };
+    ruinsOX = site.x;
+    ruinsOY = site.y;
+    bakeRiverRuins(siteW, siteH, portalLocal);
+
+    // Solids: walls and lintel; leave the portal mouth open to walk through
+    islandSolids.push({ x: site.x + 4, y: site.y + 16, w: 30, h: 46 });
+    islandSolids.push({ x: site.x + siteW - 34, y: site.y + 16, w: 30, h: 46 });
+    islandSolids.push({ x: site.x + 28, y: site.y + 10, w: 56, h: 14 });
+    islandSolids.push({ x: site.x + portalLocal.x - 16, y: site.y + portalLocal.y - 2, w: 12, h: portalLocal.h + 8 });
+    islandSolids.push({
+      x: site.x + portalLocal.x + portalLocal.w + 4,
+      y: site.y + portalLocal.y - 2,
+      w: 12,
+      h: portalLocal.h + 8,
+    });
+    walkPads.push({
+      x: ruinsPortal.x - 4,
+      y: ruinsPortal.y,
+      w: ruinsPortal.w + 8,
+      h: ruinsPortal.h + 22,
+    });
+    keepouts.push({ x: site.x - 10, y: site.y - 8, w: site.w + 20, h: site.h + 18 });
+    plantRuinsJungle(site, ruinsPortal);
+  }
+
+  function drawRuins(cpos, t) {
+    if (!ruinsCanvas || !ruinsSite) return;
+    const dx = ruinsOX - cpos.x;
+    const dy = ruinsOY - cpos.y;
+    if (dx > viewW + 8 || dy > viewH + 8 || dx + ruinsCanvas.width < -8 || dy + ruinsCanvas.height < -8) return;
+    ctx.drawImage(ruinsCanvas, dx, dy);
+    if (!ruinsPortal) return;
+    // Animated light-blue portal inside the column frame (decorative — no travel yet)
+    const px0 = ruinsPortal.x - cpos.x;
+    const py0 = ruinsPortal.y - cpos.y;
+    const pw = ruinsPortal.w;
+    const ph = ruinsPortal.h;
+    const pulse = 0.55 + 0.45 * Math.sin(t * 2.4);
+    ink.save();
+    ink.globalAlpha = 0.35 + pulse * 0.35;
+    px(px0 + 2, py0 + 2, pw - 4, ph - 4, "#4ec8f0");
+    ink.globalAlpha = 0.25 + pulse * 0.4;
+    px(px0 + 5, py0 + 5, pw - 10, ph - 10, "#a8ecff");
+    ink.globalAlpha = 0.5 + pulse * 0.5;
+    px(px0 + 9, py0 + 10, pw - 18, ph - 20, "#e8faff");
+    // Swirl rings
+    for (let r = 0; r < 3; r++) {
+      const u = (t * (0.7 + r * 0.25) + r * 0.4) % 1;
+      const rad = 3 + u * Math.min(pw, ph) * 0.42;
+      ink.globalAlpha = (1 - u) * 0.55;
+      for (let a = 0; a < 14; a++) {
+        const ang = (a / 14) * Math.PI * 2 + t * (1.2 + r * 0.3);
+        const sx = (px0 + pw / 2 + Math.cos(ang) * rad) | 0;
+        const sy = (py0 + ph / 2 + Math.sin(ang) * rad * 0.85) | 0;
+        px(sx, sy, 1, 1, a & 1 ? "#ffffff" : "#7ad8f8");
+      }
+    }
+    // Rising motes
+    for (let i = 0; i < 8; i++) {
+      const life = (t * 0.55 + i * 0.13) % 1;
+      const mx = (px0 + 4 + ((hash(i, 3) * (pw - 8)) | 0) + Math.sin(t * 2 + i) * 2) | 0;
+      const my = (py0 + ph - 4 - life * (ph - 6)) | 0;
+      ink.globalAlpha = (1 - life) * 0.85;
+      px(mx, my, 1, 1, i & 1 ? "#d8f4ff" : "#6ec8e8");
+    }
+    ink.restore();
+  }
+
   function spawnDailyIdol(temple) {
     const day = utcDayKey();
     dailyLootId = null;
@@ -7325,6 +7627,7 @@
     bakeFloorInterior();
     bakeWreckInterior();
     placeTemple(pier);
+    placeRiverRuins(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
       if (p.x > shop.x - 20 && p.x < hut.x + hut.w + 20 && p.y > hut.y - 10 && p.y < pier.y + 24) {
@@ -10800,10 +11103,12 @@
       "ENTER DROPS OR EQUIPS COSMETIC",
       "SPACE USES HELD ITEM",
       "CLOAK SPACE = STEALTH",
-      "TEMPLE IS DEEP WEST JUNGLE",
+      "TEMPLE IS DEEP EAST JUNGLE",
       "WALK INLAND, NOT THE BEACH",
       "HUGE MAZE WITH NO TRAPS",
       "JADE MASK AT THE FAR END",
+      "RIVER RUINS HALF TO TEMPLE",
+      "BLUE PORTAL IS DORMANT",
       "GOLD EXIT LEAVES THE TEMPLE",
       "DAILY SUN IDOL NEAR TEMPLE",
       "HUB IS A TITLE-SCREEN MODE",
@@ -10921,6 +11226,7 @@
       drawFoam(cpos, t);
       drawDockOverFoam(cpos);
       drawRocks(cpos);
+      drawRuins(cpos, t);
       drawTrees(cpos);
       drawBankReeds(cpos, t);
       drawInsects(cpos, t);
