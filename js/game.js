@@ -283,6 +283,8 @@
   let srRunId = "";
   let srPbPrev = 0;
   let srPbLabel = "";
+  /** Countdown after blowfish cutscene before Blowfish% ends; -1 = idle. */
+  let srBlowfishFinishT = -1;
   let authUser = "";
   let authPin = "";
   let authName = "";
@@ -1659,10 +1661,8 @@
   }
 
   function pickJumpKind() {
-    const roll = Math.random();
-    if (roll < 0.08) return "shark";
-    if (roll < 0.18) return "mini_shark";
-    return JUMP_KINDS[(Math.random() * 6) | 0];
+    // Equal odds among jump kinds (no mini-shark overweight).
+    return JUMP_KINDS[irand(0, JUMP_KINDS.length - 1)];
   }
 
   function bez(a, b, c, u) {
@@ -3402,11 +3402,34 @@
     cabinCut.mode = "open";
   }
 
+  function scheduleBlowfishSpeedEnd(delaySec) {
+    if (playMode !== "speedrun" || srCat !== "blowfish") return;
+    if (!srTiming || uiScreen === "finish") return;
+    srBlowfishFinishT = Math.max(0, delaySec);
+  }
+
+  function updateBlowfishSpeedEnd(dt) {
+    if (srBlowfishFinishT < 0) return;
+    if (playMode !== "speedrun" || srCat !== "blowfish" || uiScreen === "finish") {
+      srBlowfishFinishT = -1;
+      return;
+    }
+    srBlowfishFinishT -= dt;
+    if (srBlowfishFinishT <= 0) {
+      srBlowfishFinishT = -1;
+      if (srTiming) finishSpeedrun();
+    }
+  }
+
   function updateCabinCut(dt) {
     if (!cabinCut.kind) return;
     cabinCut.t += dt;
     if (cabinCut.kind === "blowfish") {
-      if (cabinCut.t >= 2.05) cabinCut.kind = "";
+      if (cabinCut.t >= 2.05) {
+        cabinCut.kind = "";
+        // Blowfish% ends 1s after the gag cutscene finishes.
+        scheduleBlowfishSpeedEnd(1);
+      }
       return;
     }
     if (cabinCut.kind === "classic") {
@@ -8484,8 +8507,10 @@
     if (srCat === "shark" && id === "shark") finishSpeedrun();
     else if (srCat === "jelly_white" && id === "jelly_white") finishSpeedrun();
     else if (srCat === "chest" && id === "chest") finishSpeedrun();
-    else if (srCat === "blowfish" && id === "blowfish") finishSpeedrun();
-    else if (srCat === "megalodon" && id === "megalodon") finishSpeedrun();
+    else if (srCat === "blowfish" && id === "blowfish") {
+      // Wait for cutscene + 1s (see updateCabinCut / scheduleBlowfishSpeedEnd).
+      if (cabinCut.kind !== "blowfish" && srBlowfishFinishT < 0) scheduleBlowfishSpeedEnd(1);
+    } else if (srCat === "megalodon" && id === "megalodon") finishSpeedrun();
     else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
   }
 
@@ -8504,6 +8529,7 @@
   function finishSpeedrun() {
     if (playMode !== "speedrun" || uiScreen === "finish") return;
     // Freeze timer this frame — all end hooks must land here.
+    srBlowfishFinishT = -1;
     lockSpeedFinalMs();
     srRunning = false;
     uiScreen = "finish";
@@ -8598,6 +8624,7 @@
     srSubmitted = false;
     srPbPrev = 0;
     srPbLabel = "";
+    srBlowfishFinishT = -1;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
@@ -9637,6 +9664,7 @@
     updateShopTrade(dt);
     updateTradeCoinDrift(dt);
     updateCabinCut(dt);
+    updateBlowfishSpeedEnd(dt);
     updateCabinFish(dt);
     updateBoatThrow(dt);
     updateCrabs(dt);
