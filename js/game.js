@@ -257,6 +257,17 @@
   let menuHits = [];
   let menuHoverKey = "";
   let pointerUi = { x: -9999, y: -9999, down: false };
+  // Island chat (Tab toggle; C/F still cast)
+  let chatOpen = false;
+  let chatDraft = "";
+  let chatFocused = false;
+  let chatUnread = 0;
+  let chatLastSeenId = "";
+  let chatScroll = 0; // 0 = pinned to newest
+  let chatHits = [];
+  let chatHoverTip = null; // { x, y, label }
+  let chatStatusNote = "";
+  let chatSendBusy = false;
   const dockLamps = [];
   const windowLights = [];
   const eaveShades = [];
@@ -1899,13 +1910,13 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay()) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput()) {
       dx = 0;
       dy = 0;
       player.moving = false;
     }
 
-    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind && !uiBlocksPlay()) {
+    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind && !uiBlocksPlay() && !chatCapturesInput()) {
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
       } else {
@@ -1956,6 +1967,7 @@
     if (
       !guideOpen &&
       !uiBlocksPlay() &&
+      !chatCapturesInput() &&
       !player.aboard &&
       ownedBoat &&
       ownedBoat.landed &&
@@ -6899,6 +6911,380 @@
     ctx.drawImage(cloakMask, 0, 0);
   }
 
+  function chatCapturesInput() {
+    return !!(chatOpen && chatFocused);
+  }
+
+  function syncPresenceActivity() {
+    const api = lbApi();
+    if (!api || typeof api.setPresenceActivity !== "function") return;
+    let mode = "menu";
+    let cat = null;
+    if (uiScreen === "mode" || uiScreen === "account" || uiScreen === "nm_boards" || !playMode) {
+      mode = "menu";
+    } else if (playMode === "normal") {
+      mode = "normal";
+    } else if (playMode === "speedrun") {
+      mode = "speedrun";
+      if (uiScreen === "categories") cat = SPEED_ORDER[srCursor] || srCat;
+      else cat = srCat;
+    }
+    api.setPresenceActivity(mode, cat);
+  }
+
+  function clearChatHits() {
+    chatHits = [];
+  }
+
+  function addChatHit(key, x, y, w, h, onClick, meta) {
+    chatHits.push({
+      key: String(key),
+      x: x | 0,
+      y: y | 0,
+      w: w | 0,
+      h: h | 0,
+      onClick,
+      meta: meta || null,
+    });
+  }
+
+  function hitChatAt(ux, uy) {
+    for (let i = chatHits.length - 1; i >= 0; i--) {
+      const h = chatHits[i];
+      if (ux >= h.x && uy >= h.y && ux < h.x + h.w && uy < h.y + h.h) return h;
+    }
+    return null;
+  }
+
+  function markChatRead() {
+    const api = lbApi();
+    const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
+    if (msgs.length) chatLastSeenId = msgs[msgs.length - 1].id || chatLastSeenId;
+    chatUnread = 0;
+  }
+
+  function refreshChatUnread() {
+    if (chatOpen) {
+      markChatRead();
+      return;
+    }
+    const api = lbApi();
+    const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
+    if (!msgs.length) {
+      chatUnread = 0;
+      return;
+    }
+    if (!chatLastSeenId) {
+      chatLastSeenId = msgs[msgs.length - 1].id || "";
+      chatUnread = 0;
+      return;
+    }
+    let n = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].id === chatLastSeenId) break;
+      n++;
+    }
+    chatUnread = n;
+  }
+
+  function toggleIslandChat() {
+    chatOpen = !chatOpen;
+    if (chatOpen) {
+      chatFocused = true;
+      chatScroll = 0;
+      markChatRead();
+      const api = lbApi();
+      if (api && api.fetchChatMessages) api.fetchChatMessages().catch(() => {});
+      nudgePresenceRefresh();
+    } else {
+      chatFocused = false;
+      chatHoverTip = null;
+    }
+  }
+
+  function closeIslandChat() {
+    if (!chatOpen) return false;
+    chatOpen = false;
+    chatFocused = false;
+    chatHoverTip = null;
+    return true;
+  }
+
+  function chatPlayerName() {
+    const api = lbApi();
+    if (api && api.chatSenderName) return api.chatSenderName() || "";
+    if (api && api.displayName) return api.displayName() || "";
+    return "";
+  }
+
+  async function trySendChat() {
+    if (chatSendBusy) return;
+    const api = lbApi();
+    if (!api || !api.sendChatMessage) {
+      chatStatusNote = "NO CLIENT";
+      return;
+    }
+    const name = chatPlayerName();
+    if (!name) {
+      chatStatusNote = "SET NAME IN ACCOUNT";
+      return;
+    }
+    const body = api.sanitizeChatBody ? api.sanitizeChatBody(chatDraft) : String(chatDraft || "").trim().slice(0, 80);
+    if (!body) return;
+    chatSendBusy = true;
+    chatStatusNote = "";
+    const res = await api.sendChatMessage(body);
+    chatSendBusy = false;
+    if (res && res.ok) {
+      chatDraft = "";
+      chatScroll = 0;
+      markChatRead();
+    } else {
+      const err = (res && res.error) || "fail";
+      if (err === "set name") chatStatusNote = "SET NAME IN ACCOUNT";
+      else if (err === "slow down") chatStatusNote = "WAIT…";
+      else if (err === "setup" || (res && res.missing)) chatStatusNote = "RUN SETUP SQL";
+      else chatStatusNote = String(err).toUpperCase().slice(0, 18);
+    }
+  }
+
+  function typeIntoChat(rawKey) {
+    if (!chatOpen || !chatFocused) return false;
+    const ch = String(rawKey || "");
+    if (!ch || ch.length !== 1) return false;
+    if (ch === " ") {
+      if (chatDraft.length < 80) chatDraft += " ";
+      return true;
+    }
+    // Allow readable characters; sanitize on send
+    if (chatDraft.length >= 80) return true;
+    if (/[\u0000-\u001f\u007f]/.test(ch)) return true;
+    chatDraft += ch;
+    return true;
+  }
+
+  function backspaceChat() {
+    if (!chatOpen || !chatFocused) return false;
+    chatDraft = chatDraft.slice(0, -1);
+    return true;
+  }
+
+  function wrapChatLines(text, maxChars) {
+    const s = String(text || "");
+    const max = Math.max(6, maxChars | 0);
+    const out = [];
+    let i = 0;
+    while (i < s.length && out.length < 6) {
+      out.push(s.slice(i, i + max));
+      i += max;
+    }
+    return out.length ? out : [""];
+  }
+
+  function drawChatTooltip(label, x, y) {
+    const s = String(label || "").toUpperCase().slice(0, 14);
+    if (!s) return;
+    const tw = pixTextWidth(s);
+    let tx = (x | 0) - 2;
+    let ty = (y | 0) - 12;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    if (tx + tw + 6 > uiW - 2) tx = uiW - tw - 8;
+    if (tx < 2) tx = 2;
+    if (ty < 2) ty = (y | 0) + 10;
+    if (ty + 11 > uiH - 2) ty = uiH - 13;
+    px(tx, ty, tw + 6, 11, "#3a2414");
+    px(tx + 1, ty + 1, tw + 4, 9, "#c4a574");
+    drawPixText(s, tx + 3, ty + 2, "#3a2414");
+  }
+
+  function drawChatUnreadPip() {
+    if (chatOpen || chatUnread <= 0) return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const label = chatUnread > 9 ? "9+" : String(chatUnread);
+    const tw = pixTextWidth(label);
+    const w = Math.max(14, tw + 8);
+    const x = uiW - w - 4;
+    const y = uiH - 18;
+    px(x, y, w, 12, "#3a2414");
+    px(x + 1, y + 1, w - 2, 10, "#8a5a32");
+    px(x + 2, y + 2, 3, 3, "#3ddc5a");
+    drawPixText(label, x + 7, y + 3, "#f3e2c4");
+  }
+
+  function drawIslandChat() {
+    syncPresenceActivity();
+    refreshChatUnread();
+    clearChatHits();
+    chatHoverTip = null;
+    drawChatUnreadPip();
+    if (!chatOpen) return;
+
+    const api = lbApi();
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const panelW = Math.min(152, Math.max(120, (uiW * 0.3) | 0));
+    const x = uiW - panelW - 3;
+    const y = 3;
+    const h = uiH - 6;
+
+    // Soft dim on the left so the parchment sidebar reads as overlay
+    ctx.globalAlpha = 0.28;
+    px(0, 0, x - 1, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+
+    drawPanelBox(x, y, panelW, h, "ISLAND CHAT");
+    const online = onlineLabel();
+    drawPixText(online, x + panelW - 6, y + 5, "#c9a227", "right");
+
+    // Presence strip
+    const stripY = y + 16;
+    const stripH = 12;
+    px(x + 3, stripY, panelW - 6, stripH, "#b8955e");
+    px(x + 3, stripY + stripH, panelW - 6, 1, "#8a5a32");
+    const presence = api && api.getOnlinePresence ? api.getOnlinePresence() : [];
+    let pxCursor = x + 5;
+    const stripMax = x + panelW - 5;
+    for (let i = 0; i < presence.length; i++) {
+      const p = presence[i];
+      const name = (p && p.username) || "?";
+      const isAcc = !!(p && p.user_id);
+      const tip =
+        api && api.presenceActivityLabel
+          ? api.presenceActivityLabel(p)
+          : p && p.mode === "normal"
+            ? "SURVIVAL"
+            : p && p.mode === "speedrun"
+              ? String(p.category || "SPEEDRUN").toUpperCase()
+              : "LOBBY";
+      const shown = name.slice(0, isAcc ? 6 : 7);
+      const nw = (isAcc ? pixTextWidth(shown) + 4 : pixTextWidth(shown)) + 5;
+      if (pxCursor + nw > stripMax) {
+        drawPixText("…", pxCursor, stripY + 3, "#5c3a21");
+        break;
+      }
+      drawOnlineDot(pxCursor, stripY + 2);
+      const nameX = pxCursor + 4;
+      if (isAcc) drawNameTag(shown, nameX, stripY + 2, 6);
+      else drawPixText(shown, nameX, stripY + 3, "#3a2414");
+      addChatHit("pres:" + i, pxCursor, stripY, nw, stripH, null, { tip, tipX: nameX, tipY: stripY + 2 });
+      pxCursor += nw + 3;
+    }
+    if (!presence.length) drawPixText("NO ONE YET", x + 6, stripY + 3, "#5c3a21");
+
+    // Messages
+    const composerH = 28;
+    const msgTop = stripY + stripH + 3;
+    const msgBottom = y + h - composerH - 4;
+    const msgH = Math.max(20, msgBottom - msgTop);
+    px(x + 3, msgTop, panelW - 6, msgH, "#d4b888");
+    const msgs = api && api.getChatMessages ? api.getChatMessages() : [];
+    const soft = (api && api.getChatStatus && api.getChatStatus()) || chatStatusNote || "";
+    const lineH = 8;
+    const maxChars = Math.max(8, ((panelW - 14) / 6) | 0);
+    const viewLines = Math.max(2, ((msgH - 4) / lineH) | 0);
+
+    // Build flattened render lines newest-bottom
+    const render = [];
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
+      const who = String((m && m.player_name) || "?").slice(0, 8);
+      const isAcc = !!(m && (m.is_account || m.user_id));
+      const bodyLines = wrapChatLines(m && m.body, maxChars - Math.min(who.length, 8) - 1);
+      for (let j = 0; j < bodyLines.length; j++) {
+        render.push({
+          who: j === 0 ? who : "",
+          isAcc: j === 0 ? isAcc : false,
+          text: bodyLines[j],
+          tipWho: who,
+          modeRow: m,
+        });
+      }
+    }
+    if (!msgs.length) {
+      render.push({ who: "", isAcc: false, text: soft ? soft : "NO MESSAGES", tipWho: "", modeRow: null });
+      if (!soft && api && api.isChatAvailable && !api.isChatAvailable()) {
+        render.push({ who: "", isAcc: false, text: "RUN SETUP SQL", tipWho: "", modeRow: null });
+      }
+    }
+
+    const maxScroll = Math.max(0, render.length - viewLines);
+    if (chatScroll > maxScroll) chatScroll = maxScroll;
+    const start = Math.max(0, render.length - viewLines - chatScroll);
+    const end = Math.min(render.length, start + viewLines);
+    let my = msgTop + 3;
+    for (let i = start; i < end; i++) {
+      const row = render[i];
+      let cx = x + 5;
+      if (row.who) {
+        const tip =
+          row.modeRow && api && api.presenceActivityLabel
+            ? (() => {
+                const list = presence;
+                for (let pi = 0; pi < list.length; pi++) {
+                  const pr = list[pi];
+                  if (!pr) continue;
+                  if (row.modeRow.user_id && pr.user_id && String(pr.user_id) === String(row.modeRow.user_id)) {
+                    return api.presenceActivityLabel(pr);
+                  }
+                  if (pr.username && api.namesFuzzyMatch && api.namesFuzzyMatch(pr.username, row.tipWho)) {
+                    return api.presenceActivityLabel(pr);
+                  }
+                }
+                return row.modeRow.user_id ? "SURVIVAL" : "LOBBY";
+              })()
+            : "";
+        if (row.isAcc) {
+          const tw = drawNameTag(row.who, cx, my, 8);
+          if (tip) addChatHit("msgname:" + i, cx, my, tw, 8, null, { tip, tipX: cx, tipY: my });
+          cx += tw + 2;
+        } else {
+          drawPixText(row.who, cx, my, "#5c3a21");
+          const tw = pixTextWidth(row.who);
+          if (tip) addChatHit("msgname:" + i, cx, my, tw, 8, null, { tip, tipX: cx, tipY: my });
+          cx += tw + 2;
+        }
+      }
+      drawPixText(row.text, cx, my, "#3a2414");
+      my += lineH;
+    }
+
+    // Composer
+    const cy = y + h - composerH;
+    px(x + 3, cy, panelW - 6, composerH - 2, "#5c3a21");
+    px(x + 4, cy + 1, panelW - 8, 11, chatFocused ? "#e8c44a" : "#8a5a32");
+    px(x + 5, cy + 2, panelW - 22, 9, "#f3e2c4");
+    const draftShow = (chatDraft || "").slice(0, 80);
+    drawPixText(draftShow || (chatPlayerName() ? "…" : "SET NAME"), x + 7, cy + 3, draftShow ? "#2b1c12" : "#8a5a32");
+    if (chatFocused && ((time * 3) | 0) % 2 === 0) {
+      const cxo = x + 7 + pixTextWidth(draftShow);
+      px(cxo, cy + 3, 5, 7, "#2b1c12");
+    }
+    addChatHit("composer", x + 4, cy + 1, panelW - 22, 11, () => {
+      chatFocused = true;
+    });
+
+    const sendX = x + panelW - 36;
+    const sendHover = menuHoverKey === "chat:send" || (pointerUi.x >= sendX && pointerUi.x < sendX + 30 && pointerUi.y >= cy + 1 && pointerUi.y < cy + 12);
+    if (sendHover) px(sendX - 1, cy + 1, 30, 11, "#e8c44a");
+    else px(sendX - 1, cy + 1, 30, 11, "#8a5a32");
+    drawPixText("SEND", sendX + 2, cy + 3, sendHover ? "#2b1c12" : "#f3e2c4");
+    addChatHit("chat:send", sendX - 1, cy + 1, 30, 11, () => {
+      chatFocused = true;
+      trySendChat();
+    });
+
+    if (chatStatusNote) drawPixText(chatStatusNote.slice(0, 18), x + 6, cy + 14, "#c9a227");
+    else drawPixText("TAB CLOSE  ENTER SEND", x + 6, cy + 14, "#c4a574");
+
+    // Hover tip from presence / author hits
+    const tipHit = hitChatAt(pointerUi.x, pointerUi.y);
+    if (tipHit && tipHit.meta && tipHit.meta.tip) {
+      drawChatTooltip(tipHit.meta.tip, tipHit.meta.tipX != null ? tipHit.meta.tipX : tipHit.x, tipHit.meta.tipY != null ? tipHit.meta.tipY : tipHit.y);
+    }
+  }
+
   function drawGuide() {
     if (!guideOpen) return;
     const uiW = canvas.width / SCALE_UI;
@@ -6914,7 +7300,8 @@
       "CHEST NEEDS THE MASTER",
       "T OPENS CHEST IN CABIN",
       "T TRADES NEAR NPC",
-      "C CASTS WHEN BOAT STOPS",
+      "C / F CASTS THE ROD",
+      "TAB OPENS ISLAND CHAT",
       "CLOSE DOCK GOOD FAR LEGEND",
       "WALK TO LOOT TO PICK UP",
       "WALK TO BOAT TO BOARD",
@@ -7028,6 +7415,7 @@
     drawSpeedTimer();
     drawAccountHudChip();
     drawSpeedUI();
+    drawIslandChat();
   }
 
   function drawUseFx() {
@@ -8311,6 +8699,54 @@
     ) {
       e.preventDefault();
     }
+
+    // Tab toggles island chat globally (not C — C/F still cast)
+    if (k === "tab") {
+      e.preventDefault();
+      if (!e.repeat) toggleIslandChat();
+      return;
+    }
+
+    // Esc closes chat first when open
+    if (k === "escape" && chatOpen) {
+      e.preventDefault();
+      closeIslandChat();
+      return;
+    }
+
+    // Chat composer captures typing (blocks move/cast/trade leak)
+    if (chatCapturesInput()) {
+      if (k === "enter") {
+        e.preventDefault();
+        if (!e.repeat) trySendChat();
+        return;
+      }
+      if (k === "backspace") {
+        e.preventDefault();
+        backspaceChat();
+        return;
+      }
+      if (k === "arrowup") {
+        chatScroll = Math.min(chatScroll + 1, 200);
+        return;
+      }
+      if (k === "arrowdown") {
+        chatScroll = Math.max(0, chatScroll - 1);
+        return;
+      }
+      if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
+        e.preventDefault();
+        typeIntoChat(e.key);
+        return;
+      }
+      // Swallow game binds while chat focused
+      if (["c", "f", "t", " ", "h", "r"].includes(k) || (k >= "1" && k <= "8")) {
+        e.preventDefault();
+        return;
+      }
+      return;
+    }
+
     if (
       uiScreen === "account" &&
       authMode !== "menu" &&
@@ -8350,15 +8786,18 @@
   window.addEventListener("keyup", (e) => {
     const k = e.key.toLowerCase();
     keys[k] = false;
-    if (k === " ") releaseHorn();
+    if (k === " ") {
+      if (!chatCapturesInput()) releaseHorn();
+    }
   });
   window.addEventListener("pointerdown", () => ensureAudio());
 
   function refreshMenuHover(ux, uy) {
     pointerUi.x = ux;
     pointerUi.y = uy;
+    const chatHit = hitChatAt(ux, uy);
     const hit = hitMenuAt(ux, uy);
-    const next = hit ? hit.key : "";
+    const next = hit ? hit.key : chatHit ? chatHit.key : "";
     if (next !== menuHoverKey) {
       menuHoverKey = next;
       if (hit && hit.key.indexOf("cat:") === 0 && hit.key !== "cat:esc") {
@@ -8387,24 +8826,40 @@
         if (!isNaN(idx)) srFinishSel = idx + 1;
       }
     }
-    canvas.style.cursor = hit ? "pointer" : "";
+    canvas.style.cursor = hit || (chatHit && chatHit.onClick) || (chatHit && chatHit.meta && chatHit.meta.tip) ? "pointer" : "";
   }
 
   canvas.addEventListener("mousemove", (e) => {
-    if (!uiScreen) {
+    const p = eventToUi(e);
+    pointerUi.x = p.x;
+    pointerUi.y = p.y;
+    if (!uiScreen && !chatOpen) {
       menuHoverKey = "";
       canvas.style.cursor = "";
       return;
     }
-    const p = eventToUi(e);
     refreshMenuHover(p.x, p.y);
   });
 
   canvas.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     ensureAudio();
-    if (!uiScreen) return;
     const p = eventToUi(e);
+    pointerUi.x = p.x;
+    pointerUi.y = p.y;
+    const chatHit = hitChatAt(p.x, p.y);
+    if (chatHit && typeof chatHit.onClick === "function") {
+      e.preventDefault();
+      chatHit.onClick();
+      return;
+    }
+    if (chatOpen && !chatHit) {
+      // Click outside composer keeps chat open but unfocuses if outside panel composer area
+      const uiW = canvas.width / SCALE_UI;
+      const panelW = Math.min(152, Math.max(120, (uiW * 0.3) | 0));
+      if (p.x < uiW - panelW - 3) chatFocused = false;
+    }
+    if (!uiScreen) return;
     refreshMenuHover(p.x, p.y);
     const hit = hitMenuAt(p.x, p.y);
     if (hit && typeof hit.onClick === "function") {
@@ -8416,7 +8871,24 @@
   canvas.addEventListener("mouseleave", () => {
     menuHoverKey = "";
     canvas.style.cursor = "";
+    pointerUi.x = -9999;
+    pointerUi.y = -9999;
   });
+
+  canvas.addEventListener(
+    "wheel",
+    (e) => {
+      if (!chatOpen) return;
+      const p = eventToUi(e);
+      const uiW = canvas.width / SCALE_UI;
+      const panelW = Math.min(152, Math.max(120, (uiW * 0.3) | 0));
+      if (p.x < uiW - panelW - 3) return;
+      e.preventDefault();
+      if (e.deltaY < 0) chatScroll = Math.min(200, chatScroll + 1);
+      else chatScroll = Math.max(0, chatScroll - 1);
+    },
+    { passive: false }
+  );
 
   function indoorZoom() {
     const zx = canvas.width / indoorW();

@@ -11,10 +11,15 @@
   const PRS = "speedrun_prs";
   const ACCOUNTS = "player_accounts";
   const PRESENCE = "players_online";
+  const CHAT = "chat_messages";
   const CLIENT_ID_KEY = "islebound-client-id";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
   const PRESENCE_HEARTBEAT_MS = 12000; // keep board dots roughly fresh while menus are open
   const PRESENCE_ONLINE_MS = 75000; // last_seen within this = online
+  const CHAT_POLL_MS = 2500;
+  const CHAT_RATE_MS = 1500;
+  const CHAT_BODY_MAX = 80;
+  const CHAT_FETCH_LIMIT = 50;
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
     "HENRI P": "HENRI",
@@ -53,9 +58,17 @@
   let presenceTimer = null;
   let presenceAvailable = true; // false if table missing / hard fail
   let presenceHasUserId = true; // false if user_id column missing on players_online
+  let presenceHasMode = true; // false if mode/category columns missing
   let onlineCount = null; // null = unknown / unavailable
-  let onlinePresence = []; // [{ client_id, username, user_id }]
+  let onlinePresence = []; // [{ client_id, username, user_id, mode, category }]
   let lastPresenceAt = 0;
+  let presenceActivity = { mode: "menu", category: null }; // set by game
+  let chatAvailable = true; // false if table missing / hard fail
+  let chatMessages = []; // newest last
+  let chatPollTimer = null;
+  let lastChatSendAt = 0;
+  let chatStatus = ""; // soft-fail note for UI
+  let chatListeners = [];
 
   function configured() {
     return !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
@@ -1281,8 +1294,9 @@
 
   function presenceLooksMissing(status, detail) {
     const d = String(detail || "").toLowerCase();
-    // Column-missing (user_id) must not be treated as the whole table missing.
+    // Column-missing (user_id / mode) must not be treated as the whole table missing.
     if (presenceLooksMissingUserId(status, detail)) return false;
+    if (presenceLooksMissingMode(status, detail)) return false;
     return (
       status === 404 ||
       String(detail).indexOf("PGRST205") >= 0 ||
@@ -1296,8 +1310,14 @@
     const raw = String(detail || "");
     const d = raw.toLowerCase();
     // PGRST204 = missing column in schema cache; 42703 = undefined_column
-    if (raw.indexOf("PGRST204") >= 0 || d.indexOf("pgrst204") >= 0) return true;
-    if (d.indexOf("42703") >= 0) return true;
+    if (raw.indexOf("PGRST204") >= 0 || d.indexOf("pgrst204") >= 0) {
+      // Only treat as user_id miss when the detail mentions user_id (or no mode mention).
+      if (d.indexOf("mode") >= 0 || d.indexOf("category") >= 0) return false;
+      if (d.indexOf("user_id") >= 0 || d.indexOf("userid") >= 0) return true;
+      // Ambiguous PGRST204 — caller decides; prefer user_id path when that field was sent.
+      return d.indexOf("user_id") >= 0;
+    }
+    if (d.indexOf("42703") >= 0 && d.indexOf("user_id") >= 0) return true;
     if (
       d.indexOf("user_id") >= 0 &&
       (d.indexOf("column") >= 0 ||
@@ -1308,6 +1328,50 @@
       return true;
     }
     return false;
+  }
+
+  function presenceLooksMissingMode(status, detail) {
+    const raw = String(detail || "");
+    const d = raw.toLowerCase();
+    if (
+      (d.indexOf("mode") >= 0 || d.indexOf("category") >= 0) &&
+      (raw.indexOf("PGRST204") >= 0 ||
+        d.indexOf("pgrst204") >= 0 ||
+        d.indexOf("42703") >= 0 ||
+        d.indexOf("column") >= 0 ||
+        d.indexOf("schema cache") >= 0 ||
+        d.indexOf("does not exist") >= 0 ||
+        status === 400)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function setPresenceActivity(mode, category) {
+    const m = String(mode || "menu").toLowerCase();
+    presenceActivity = {
+      mode: m === "normal" || m === "speedrun" || m === "menu" ? m : "menu",
+      category: category ? String(category).toLowerCase().slice(0, 24) : null,
+    };
+  }
+
+  function getPresenceActivity() {
+    return { mode: presenceActivity.mode, category: presenceActivity.category };
+  }
+
+  /** Human label for a presence row: SHARK%, SURVIVAL, LOBBY, … */
+  function presenceActivityLabel(row) {
+    if (!row) return "LOBBY";
+    const m = String(row.mode || "").toLowerCase();
+    if (m === "speedrun") {
+      const cat = String(row.category || "").toLowerCase();
+      if (cat && CATEGORIES[cat]) return CATEGORIES[cat].label;
+      if (cat) return cat.replace(/_/g, " ").toUpperCase() + "%";
+      return "SPEEDRUN";
+    }
+    if (m === "normal") return "SURVIVAL";
+    return "LOBBY";
   }
 
   async function postPresenceBody(body) {
@@ -1334,16 +1398,33 @@
     };
     const uid = presenceUserId();
     if (uid) body.user_id = uid;
+    if (presenceHasMode) {
+      body.mode = presenceActivity.mode || "menu";
+      body.category = presenceActivity.mode === "speedrun" ? presenceActivity.category : null;
+    }
     try {
       let { res, detail } = await postPresenceBody(body);
-      if (!res.ok && body.user_id && presenceLooksMissingUserId(res.status, detail)) {
-        presenceHasUserId = false;
-        delete body.user_id;
-        ({ res, detail } = await postPresenceBody(body));
-        if (res.ok) {
-          lastPresenceAt = Date.now();
-          return { ok: true, noUserId: true };
+      // Soft-drop missing optional columns and retry.
+      for (let attempt = 0; attempt < 3 && !res.ok; attempt++) {
+        let retried = false;
+        if (body.mode != null && presenceLooksMissingMode(res.status, detail)) {
+          presenceHasMode = false;
+          delete body.mode;
+          delete body.category;
+          retried = true;
+        } else if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
+          presenceHasUserId = false;
+          delete body.user_id;
+          retried = true;
+        } else if (body.mode != null && (res.status === 400 || String(detail).indexOf("PGRST204") >= 0)) {
+          // Ambiguous column miss while sending mode — try dropping mode first.
+          presenceHasMode = false;
+          delete body.mode;
+          delete body.category;
+          retried = true;
         }
+        if (!retried) break;
+        ({ res, detail } = await postPresenceBody(body));
       }
       if (!res.ok) {
         if (presenceLooksMissing(res.status, detail)) {
@@ -1363,16 +1444,22 @@
     return fetchOnlinePresence();
   }
 
+  function presenceSelectCols() {
+    let cols = "client_id,username";
+    if (presenceHasUserId) cols += ",user_id";
+    if (presenceHasMode) cols += ",mode,category";
+    return cols;
+  }
+
   async function fetchOnlinePresence() {
     if (!configured() || !presenceAvailable) return null;
     const cutoff = new Date(Date.now() - PRESENCE_ONLINE_MS).toISOString();
-    const cols = presenceHasUserId ? "client_id,username,user_id" : "client_id,username";
     const url =
       restBase() +
       "/" +
       PRESENCE +
       "?select=" +
-      cols +
+      presenceSelectCols() +
       "&last_seen=gte." +
       encodeURIComponent(cutoff) +
       "&limit=200";
@@ -1384,7 +1471,11 @@
           err = await res.json();
         } catch (e) {}
         const detail = presenceErrorDetail(res, err);
-        // Missing user_id column → drop it and retry (do NOT kill presence).
+        // Missing optional columns → drop and retry (do NOT kill presence).
+        if (presenceHasMode && (presenceLooksMissingMode(res.status, detail) || res.status === 400)) {
+          presenceHasMode = false;
+          return fetchOnlinePresence();
+        }
         if (presenceHasUserId && (presenceLooksMissingUserId(res.status, detail) || res.status === 400)) {
           presenceHasUserId = false;
           return fetchOnlinePresence();
@@ -1401,6 +1492,8 @@
         client_id: r && r.client_id ? String(r.client_id) : "",
         username: r && r.username ? normalizeIdentityName(r.username) : "",
         user_id: r && r.user_id ? String(r.user_id) : null,
+        mode: r && r.mode ? String(r.mode).toLowerCase() : null,
+        category: r && r.category ? String(r.category).toLowerCase() : null,
       }));
       onlineCount = onlinePresence.length;
       return onlineCount;
@@ -1463,11 +1556,240 @@
     }
   }
 
+  /* ---------- Island chat (global group) ---------- */
+
+  function sanitizeChatBody(body) {
+    let s = String(body || "")
+      .replace(/[\u0000-\u001f\u007f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (s.length > CHAT_BODY_MAX) s = s.slice(0, CHAT_BODY_MAX);
+    return s;
+  }
+
+  function chatSenderName() {
+    const n = displayName() || getLastName() || "";
+    return sanitizeName(n, true) || "";
+  }
+
+  function canSendChat() {
+    return !!(configured() && chatAvailable && chatSenderName());
+  }
+
+  function getChatMessages() {
+    return chatMessages.slice();
+  }
+
+  function getChatStatus() {
+    return chatStatus || "";
+  }
+
+  function isChatAvailable() {
+    return !!(configured() && chatAvailable);
+  }
+
+  function onChatUpdate(fn) {
+    if (typeof fn === "function") chatListeners.push(fn);
+    return () => {
+      chatListeners = chatListeners.filter((f) => f !== fn);
+    };
+  }
+
+  function notifyChatListeners() {
+    for (let i = 0; i < chatListeners.length; i++) {
+      try {
+        chatListeners[i](chatMessages);
+      } catch (e) {}
+    }
+  }
+
+  function markChatUnavailable(note) {
+    chatAvailable = false;
+    chatStatus = note || "SETUP NEEDED";
+    chatMessages = [];
+    stopChatPoll();
+    notifyChatListeners();
+  }
+
+  function chatErrorDetail(res, err) {
+    try {
+      const parts = [];
+      if (err && err.code) parts.push(String(err.code));
+      if (err && err.message) parts.push(String(err.message));
+      if (err && err.hint) parts.push(String(err.hint));
+      if (!parts.length && res && res.status) parts.push("http " + res.status);
+      return parts.join(" ");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function chatLooksMissing(status, detail) {
+    const d = String(detail || "").toLowerCase();
+    return (
+      status === 404 ||
+      String(detail).indexOf("PGRST205") >= 0 ||
+      String(detail).indexOf("PGRST106") >= 0 ||
+      d.indexOf("could not find the table") >= 0 ||
+      (d.indexOf("does not exist") >= 0 && d.indexOf("column") < 0) ||
+      d.indexOf("chat_messages") >= 0 && d.indexOf("schema cache") >= 0
+    );
+  }
+
+  function normalizeChatRow(r) {
+    if (!r) return null;
+    const body = sanitizeChatBody(r.body);
+    const name = sanitizeName(r.player_name, true) || "?";
+    if (!body) return null;
+    return {
+      id: r.id != null ? String(r.id) : "",
+      client_id: r.client_id ? String(r.client_id) : "",
+      user_id: r.user_id ? String(r.user_id) : null,
+      player_name: name,
+      body,
+      created_at: r.created_at || null,
+      is_account: !!(r.user_id || r.is_account),
+    };
+  }
+
+  async function fetchChatMessages() {
+    if (!configured()) {
+      chatStatus = "NO SERVER";
+      return chatMessages;
+    }
+    if (!chatAvailable) return chatMessages;
+    const url =
+      restBase() +
+      "/" +
+      CHAT +
+      "?select=id,client_id,user_id,player_name,body,created_at" +
+      "&order=created_at.desc" +
+      "&limit=" +
+      CHAT_FETCH_LIMIT;
+    try {
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = chatErrorDetail(res, err);
+        if (chatLooksMissing(res.status, detail) || res.status === 404 || res.status === 406) {
+          markChatUnavailable("RUN SETUP SQL");
+          return chatMessages;
+        }
+        return chatMessages;
+      }
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : [];
+      const out = [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const n = normalizeChatRow(rows[i]);
+        if (n) out.push(n);
+      }
+      chatMessages = out;
+      if (chatStatus === "RUN SETUP SQL" || chatStatus === "NO SERVER") chatStatus = "";
+      notifyChatListeners();
+      return chatMessages;
+    } catch (e) {
+      return chatMessages;
+    }
+  }
+
+  async function sendChatMessage(rawBody) {
+    if (!configured()) return { ok: false, error: "no server" };
+    if (!chatAvailable) return { ok: false, error: "setup", missing: true };
+    const body = sanitizeChatBody(rawBody);
+    if (!body || body.length < 1) return { ok: false, error: "empty" };
+    const name = chatSenderName();
+    if (!name) return { ok: false, error: "set name" };
+    const now = Date.now();
+    if (now - lastChatSendAt < CHAT_RATE_MS) return { ok: false, error: "slow down" };
+    const row = {
+      client_id: getClientId(),
+      player_name: name,
+      body,
+    };
+    const uid = presenceUserId();
+    if (uid) row.user_id = uid;
+    try {
+      const res = await fetch(restBase() + "/" + CHAT, {
+        method: "POST",
+        headers: anonHeaders("return=representation"),
+        body: JSON.stringify(row),
+      });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = chatErrorDetail(res, err);
+        if (chatLooksMissing(res.status, detail) || res.status === 404) {
+          markChatUnavailable("RUN SETUP SQL");
+          return { ok: false, error: "setup", missing: true };
+        }
+        return { ok: false, error: "http " + res.status };
+      }
+      lastChatSendAt = now;
+      let inserted = null;
+      try {
+        const data = await res.json();
+        inserted = Array.isArray(data) ? data[0] : data;
+      } catch (e) {}
+      const n = normalizeChatRow(inserted) || {
+        id: "local-" + now,
+        client_id: row.client_id,
+        user_id: row.user_id || null,
+        player_name: name,
+        body,
+        created_at: new Date().toISOString(),
+        is_account: !!row.user_id,
+      };
+      // Optimistic append if not already present
+      if (!chatMessages.some((m) => m.id && n.id && m.id === n.id)) {
+        chatMessages.push(n);
+        if (chatMessages.length > CHAT_FETCH_LIMIT) chatMessages = chatMessages.slice(-CHAT_FETCH_LIMIT);
+        notifyChatListeners();
+      }
+      // Refresh soon so others' messages stay in sync
+      fetchChatMessages().catch(() => {});
+      return { ok: true, row: n };
+    } catch (e) {
+      return { ok: false, error: "network" };
+    }
+  }
+
+  function startChatPoll() {
+    if (!configured()) {
+      chatStatus = "NO SERVER";
+      return;
+    }
+    if (chatPollTimer) return;
+    fetchChatMessages().catch(() => {});
+    chatPollTimer = setInterval(() => {
+      fetchChatMessages().catch(() => {});
+    }, CHAT_POLL_MS);
+    if (typeof document !== "undefined" && !startChatPoll._vis) {
+      startChatPoll._vis = true;
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && chatAvailable) fetchChatMessages().catch(() => {});
+      });
+    }
+  }
+
+  function stopChatPoll() {
+    if (chatPollTimer) {
+      clearInterval(chatPollTimer);
+      chatPollTimer = null;
+    }
+  }
+
   // Restore session first so the initial heartbeat includes username + user_id.
   Promise.resolve(initAuth())
     .catch(() => {})
     .then(() => {
       startPresence();
+      startChatPoll();
     });
   // Re-heartbeat after sign-in / sign-out so ONLINE dots track the active account.
   onAuthChange(() => {
@@ -1506,9 +1828,24 @@
     getOnlinePresence,
     rowIsOnline,
     fetchOnlinePresence,
+    setPresenceActivity,
+    getPresenceActivity,
+    presenceActivityLabel,
     startPresence,
     stopPresence,
     tickPresence,
+    // island chat
+    sanitizeChatBody,
+    chatSenderName,
+    canSendChat,
+    getChatMessages,
+    getChatStatus,
+    isChatAvailable,
+    fetchChatMessages,
+    sendChatMessage,
+    startChatPoll,
+    stopChatPoll,
+    onChatUpdate,
     pbInfo,
     getLocalPr,
     fetchPr,

@@ -339,6 +339,14 @@ create table if not exists public.players_online (
 alter table public.players_online
   add column if not exists user_id uuid;
 
+-- Optional activity fields for island-chat presence tooltips (SURVIVAL / SHARK% / LOBBY):
+alter table public.players_online
+  add column if not exists mode text
+    check (mode is null or mode in ('menu', 'normal', 'speedrun'));
+alter table public.players_online
+  add column if not exists category text
+    check (category is null or char_length(category) between 1 and 24);
+
 create index if not exists players_online_last_seen_idx
   on public.players_online (last_seen desc);
 
@@ -367,7 +375,54 @@ create policy "Public update players_online"
   with check (char_length(client_id) between 8 and 64);
 ```
 
-Client behavior: upsert every ~12s while the tab is open (also nudged when boards redraw / after sign-in); rows with `last_seen` within ~75s count as online. Heartbeat stores `username` (and `user_id` when signed in) so account nametag chips can show a green online dot. If `user_id` is missing from the table, the client soft-falls back to username-only matching and still shows `ONLINE N` (it does **not** disable presence).
+Client behavior: upsert every ~12s while the tab is open (also nudged when boards redraw / after sign-in); rows with `last_seen` within ~75s count as online. Heartbeat stores `username` (and `user_id` when signed in) so account nametag chips can show a green online dot. If `user_id` is missing from the table, the client soft-falls back to username-only matching and still shows `ONLINE N` (it does **not** disable presence). Optional `mode` / `category` power chat presence hover tooltips (`SURVIVAL`, `SHARK%`, `LOBBY`, …); if those columns are missing the client soft-drops them and keeps heartbeats working.
+
+## 4c. Island chat (`chat_messages`)
+
+Optional global group chat (Tab sidebar). Soft-fails empty with a SETUP note if the table is missing.
+
+```sql
+create table if not exists public.chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  client_id text not null
+    check (char_length(client_id) between 8 and 64),
+  user_id uuid null,
+  player_name text not null
+    check (char_length(player_name) between 1 and 12),
+  body text not null
+    check (char_length(body) between 1 and 80),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists chat_messages_created_at_idx
+  on public.chat_messages (created_at desc);
+
+alter table public.chat_messages enable row level security;
+
+-- Public read (client fetches last ~50)
+drop policy if exists "Public read chat_messages" on public.chat_messages;
+create policy "Public read chat_messages"
+  on public.chat_messages
+  for select
+  to anon, authenticated
+  using (true);
+
+-- Insert only (length checks on columns); no update/delete from clients
+drop policy if exists "Public insert chat_messages" on public.chat_messages;
+create policy "Public insert chat_messages"
+  on public.chat_messages
+  for insert
+  to anon, authenticated
+  with check (
+    char_length(client_id) between 8 and 64
+    and char_length(player_name) between 1 and 12
+    and char_length(body) between 1 and 80
+  );
+
+-- Intentionally no update/delete policies for anon/authenticated
+```
+
+Client: polls last 50 rows every ~2.5s; sanitize + ~1.5s send rate limit; signed-in uses account name, guests use speedrun/guest name (no name → cannot send). Presence strip reuses `players_online` (hover shows mode tooltip).
 
 ## 5. Verify / how to test
 
@@ -383,6 +438,8 @@ Client behavior: upsert every ~12s while the tab is open (also nudged when board
 10. While signed in, top-left HUD chip shows username + total playtime (opposite the top-right timer in speedrun)
 11. **GUEST** path still works; guest scores omit `user_id`
 12. Menus: click mode / category / ready / finish / account / stats (hover highlights)
+13. **TAB** opens **ISLAND CHAT** (C/F still cast); Esc closes chat; SEND / Enter posts; unread pip when closed
+14. Hover a name in the chat presence strip → parchment tooltip (`SURVIVAL` / `SHARK%` / `LOBBY`) after mode/category columns exist
 
 ## Categories
 
@@ -422,6 +479,8 @@ Guests keep the same counters in `localStorage` (`islebound-nm-stats`) until the
 - **ONLINE**: `players_online` heartbeat (~12s); count rows with `last_seen` within ~75s
 - **Nametags**: account / ACC rows use the gold/wood chip; unclaimed guests stay classic pixel text
 - **Green pip**: accounts when that `user_id`/username is in `players_online`; guests only if presence fuzzy-matches their name
+- **Island chat**: Tab toggles sidebar; C/F still cast; Esc closes chat; polls `chat_messages`; presence hover shows `mode`/`category` tooltip
 - **R** resets the current speedrun category from ready or mid-run
 - Normal mode still uses `survival-rpg-save` for world state and never writes speedrun scores
 - Old email/magic-link sessions in `localStorage` are ignored / cleared on load
+- Speedrun timer does **not** pause while chat is open
