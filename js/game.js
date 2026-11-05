@@ -292,6 +292,8 @@
   let fadeNext = null;
   let islandHold = null;
   let dockExit = null;
+  /** Designated skiff slip at the finger-pier tip: { x, y, w, h, face }. */
+  let boatBerth = null;
   let doorCool = 0;
   const foamBlockers = [];
   const dockBlit = [];
@@ -4333,7 +4335,70 @@
   }
 
   function skiffBob(b, t) {
-    return b.landed && !boatThrow ? Math.sin((t == null ? time : t) * 1.8 + (b.phase || 0)) * 1.15 : 0;
+    if (!b || !b.landed || boatThrow) return 0;
+    const amp = b.docked ? 0.45 : 1.15;
+    return Math.sin((t == null ? time : t) * 1.8 + (b.phase || 0)) * amp;
+  }
+
+  function boatNearBerth(b, reach) {
+    if (!b || !boatBerth) return false;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const bx = boatBerth.x + boatBerth.w / 2;
+    const by = boatBerth.y + boatBerth.h / 2;
+    return Math.hypot(cx - bx, cy - by) <= (reach == null ? 30 : reach);
+  }
+
+  function settleBoatInBerth(b) {
+    if (!b || !boatBerth) return;
+    b.x = boatBerth.x;
+    b.y = boatBerth.y;
+    b.vx = 0;
+    b.vy = 0;
+    b.tilt = 0;
+    b.face = boatBerth.face;
+    b.docked = true;
+    if (typeof player !== "undefined" && player.aboard) {
+      player.facing = boatBerth.face;
+      seatPlayerOnBoat();
+    }
+  }
+
+  /** Soft magnet into the finger-tip slip when close and slow; WASD shoves off. */
+  function updateBoatBerthSnap(dt, dx, dy) {
+    const b = ownedBoat;
+    if (!b || !boatBerth || boatThrow || !b.landed) return;
+    const moving = dx !== 0 || dy !== 0;
+    if (b.docked) {
+      if (moving) {
+        b.docked = false;
+        return;
+      }
+      settleBoatInBerth(b);
+      return;
+    }
+    if (!boatNearBerth(b, 32)) return;
+    const tx = boatBerth.x;
+    const ty = boatBerth.y;
+    const ox = tx - b.x;
+    const oy = ty - b.y;
+    const dist = Math.hypot(ox, oy);
+    const spd = Math.hypot(b.vx || 0, b.vy || 0);
+    // Shoving hard away from the slip cancels the magnet.
+    if (moving) {
+      const away = ox * dx + oy * dy;
+      if (away < -0.2 && spd > 18) return;
+    }
+    if (spd > 55 && dist > 10) return;
+    const pull = Math.min(1, dt * (moving ? 2.8 : 5.2));
+    const nx = b.x + ox * pull;
+    const ny = b.y + oy * pull;
+    if (boatHullOk(nx, b.y, b.w, b.h)) b.x = nx;
+    if (boatHullOk(b.x, ny, b.w, b.h)) b.y = ny;
+    b.vx = (b.vx || 0) * (1 - Math.min(1, dt * 6));
+    b.vy = (b.vy || 0) * (1 - Math.min(1, dt * 6));
+    b.tilt *= 1 - Math.min(1, dt * 8);
+    if (dist < 2.4 && Math.hypot(b.vx || 0, b.vy || 0) < 14) settleBoatInBerth(b);
   }
 
   function seatPlayerOnBoat() {
@@ -4366,9 +4431,15 @@
     if (!b || boatThrow) return;
     const moving = dx !== 0 || dy !== 0;
     player.moving = moving;
+    if (b.docked && !moving) {
+      settleBoatInBerth(b);
+      if (player.aboard) seatPlayerOnBoat();
+      return;
+    }
     const len = Math.hypot(dx, dy) || 1;
     const acc = 140;
     if (moving) {
+      if (b.docked) b.docked = false;
       b.vx = (b.vx || 0) + (dx / len) * acc * dt;
       b.vy = (b.vy || 0) + (dy / len) * acc * dt;
       if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
@@ -4395,6 +4466,7 @@
       if (moving) tryStepOffBoat(0, Math.sign(dy) * 10);
     }
     b.tilt += (((b.vx || 0) / max) * 0.22 - b.tilt) * Math.min(1, dt * 8);
+    updateBoatBerthSnap(dt, dx, dy);
     emitBoatWake(b, dt);
     if (player.aboard) seatPlayerOnBoat();
   }
@@ -4412,9 +4484,10 @@
       vy: 0,
       tilt: 0,
       phase: rand(0, 6),
-      face: 1,
+      face: boatBerth ? boatBerth.face : 1,
       kind: "skiff",
       landed: false,
+      docked: false,
     };
     boatThrow = {
       t: 0,
@@ -4443,6 +4516,7 @@
       ownedBoat.landed = true;
       ownedBoat.tilt = 0;
       boatThrow = null;
+      if (boatBerth && boatNearBerth(ownedBoat, 18)) settleBoatInBerth(ownedBoat);
       emitSplash(ownedBoat.x + ownedBoat.w / 2, ownedBoat.y + ownedBoat.h, 8);
     }
   }
@@ -7023,6 +7097,21 @@
     const hutDoor = { x: hut.x + 12, y: hut.y + hut.h - 9, w: 8, h: 9 };
     const ramp = { x: pier.x - 2, y: pier.y - 16, w: 28, h: 26 };
     const finger = { x: pier.x + 96, y: rest + 6, w: 18, h: 88 };
+    // T-head + slip at the outer tip of the finger pier (south end, clear of the offshore sub).
+    const berthDeck = { x: finger.x - 8, y: finger.y + finger.h - 10, w: 34, h: 12 };
+    boatBerth = {
+      x: finger.x - 2,
+      y: berthDeck.y + berthDeck.h + 1,
+      w: 22,
+      h: 10,
+      face: 1,
+    };
+    const berthPosts = {
+      x: boatBerth.x - 5,
+      y: boatBerth.y - 2,
+      w: boatBerth.w + 10,
+      h: boatBerth.h + 8,
+    };
     const boatA = { x: pier.x + 122, y: rest + 42, w: 64, h: 20 };
     const rowA = { x: pier.x + 108, y: rest + 14, w: 30, h: 10 };
     const rowB = { x: pier.x + 140, y: rest + 22, w: 26, h: 9 };
@@ -7045,13 +7134,13 @@
     subHull.y = restShoreY(subHull.x + 24) + 160 - ((subHull.h / 2) | 0);
     const subPad = { x: subHull.x - 2, y: subHull.y - 4, w: subHull.w + 4, h: subHull.h + 8 };
     dockWood.length = 0;
-    dockWood.push(pier, finger);
+    dockWood.push(pier, finger, berthDeck);
     deckPads.length = 0;
-    deckPads.push(pier, finger, ramp, moorDeck, moorPlank);
+    deckPads.push(pier, finger, berthDeck, ramp, moorDeck, moorPlank);
     walkPads.length = 0;
     islandSolids.length = 0;
     keepouts.length = 0;
-    walkPads.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorPlank, subPad);
+    walkPads.push(pier, finger, berthDeck, boatA, rowA, rowB, ramp, moorDeck, moorPlank, subPad);
     walkPads.push({ x: door.x - 4, y: door.y, w: door.w + 8, h: pier.y + pier.h - door.y });
     walkPads.push({ x: hutDoor.x - 3, y: hutDoor.y, w: hutDoor.w + 6, h: pier.y + pier.h - hutDoor.y });
     islandSolids.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h - 10 });
@@ -7082,11 +7171,11 @@
     subIslandExit = null;
     foamBlockers.length = 0;
     dockBlit.length = 0;
-    foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank);
+    foamBlockers.push(pier, finger, berthDeck, berthPosts, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank);
     foamBlockers.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h });
     foamBlockers.push({ x: hut.x, y: hut.y, w: hut.w, h: hut.h });
     foamBlockers.push({ x: pier.x - 2, y: pier.y + pier.h - 2, w: pier.w + 4, h: 26 });
-    foamBlockers.push({ x: finger.x - 2, y: finger.y, w: finger.w + 6, h: finger.h + 22 });
+    foamBlockers.push({ x: finger.x - 2, y: finger.y, w: finger.w + 6, h: finger.h + 36 });
     function padKeep(r, pad) {
       keepouts.push({ x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 });
     }
@@ -7095,6 +7184,7 @@
     padKeep(pier, 18);
     padKeep(ramp, 16);
     padKeep(finger, 20);
+    padKeep(berthDeck, 12);
     padKeep(boatA, 18);
     padKeep(rowA, 14);
     padKeep(rowB, 14);
@@ -7104,7 +7194,28 @@
     dockBlit.push({ x: moorPlank.x - 2, y: moorPlank.y - 2, w: moorPlank.w + 4, h: moorPlank.h + 4 });
     dockBlit.push({ x: moorHull.x - 2, y: moorDeck.y - 2, w: moorHull.w + 4, h: moorHull.h + 6 });
     dockBlit.push({ x: pier.x - 2, y: pier.y - 2, w: pier.w + 4, h: pier.h + 28 });
-    dockBlit.push({ x: finger.x - 2, y: finger.y - 2, w: finger.w + 6, h: finger.h + 24 });
+    dockBlit.push({ x: finger.x - 10, y: finger.y - 2, w: finger.w + 20, h: finger.h + 40 });
+    function paintBoatBerth(g) {
+      paintPlanks(g, berthDeck.x, berthDeck.y, berthDeck.w, berthDeck.h, false);
+      pxi(g, berthDeck.x, berthDeck.y, berthDeck.w, 1, "#5a3420");
+      pxi(g, berthDeck.x, berthDeck.y + berthDeck.h - 1, berthDeck.w, 1, "#3a2414");
+      // Tire bumpers along the water edge
+      for (let i = 0; i < 4; i++) {
+        const bx = berthDeck.x + 4 + i * 7;
+        pxi(g, bx, berthDeck.y + berthDeck.h - 2, 4, 3, "#2a1810");
+        pxi(g, bx + 1, berthDeck.y + berthDeck.h - 1, 2, 1, "#5a3420");
+      }
+      // Slip posts + rope line so the berth reads as a marked slip
+      paintPost(g, boatBerth.x - 4, boatBerth.y - 2, 16);
+      paintPost(g, boatBerth.x + boatBerth.w + 2, boatBerth.y - 2, 16);
+      paintPost(g, berthDeck.x + 1, berthDeck.y - 2, 14);
+      paintPost(g, berthDeck.x + berthDeck.w - 3, berthDeck.y - 2, 14);
+      pxi(g, boatBerth.x - 2, boatBerth.y + 3, boatBerth.w + 4, 1, "#4a2e16");
+      pxi(g, boatBerth.x - 1, boatBerth.y + 4, boatBerth.w + 2, 1, "#6b3f1f");
+      for (let i = 0; i < 5; i++) {
+        pxi(g, boatBerth.x + 2 + i * 4, boatBerth.y + 2, 2, 1, i & 1 ? "#c9a227" : "#8a5a32");
+      }
+    }
     function paintDockBits(g) {
       paintPlanks(g, pier.x, pier.y, pier.w, pier.h, false);
       paintRamp(g, ramp.x, ramp.y, ramp.w, ramp.h);
@@ -7114,6 +7225,7 @@
       }
       paintPost(g, finger.x + 1, rest + 78, 20);
       paintPost(g, finger.x + 15, rest + 84, 16);
+      paintBoatBerth(g);
       paintPlanks(g, moorPlank.x, moorPlank.y, moorPlank.w, moorPlank.h, true);
       pxi(g, moorPlank.x, moorPlank.y, 1, moorPlank.h, "#3a2414");
       pxi(g, moorPlank.x + moorPlank.w - 1, moorPlank.y, 1, moorPlank.h, "#3a2414");
@@ -7129,10 +7241,20 @@
     }
     dockLamps.push({ x: finger.x + 1, y: rest + 75 });
     dockLamps.push({ x: finger.x + 15, y: rest + 81 });
-    const deckLeft = Math.min(ramp.x, pier.x, finger.x, moorHull.x) - 2;
+    dockLamps.push({ x: boatBerth.x - 4, y: boatBerth.y - 5 });
+    dockLamps.push({ x: boatBerth.x + boatBerth.w + 2, y: boatBerth.y - 5 });
+    const deckLeft = Math.min(ramp.x, pier.x, finger.x, berthDeck.x, moorHull.x) - 2;
     const deckTop = Math.min(ramp.y, pier.y, finger.y, moorHull.y) - 2;
-    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w, moorHull.x + moorHull.w) + 4;
-    const deckBottom = Math.max(ramp.y + ramp.h, pier.y + pier.h, finger.y + finger.h, rest + 102, moorHull.y + moorHull.h) + 2;
+    const deckRight = Math.max(ramp.x + ramp.w, pier.x + pier.w, finger.x + finger.w, berthDeck.x + berthDeck.w, moorHull.x + moorHull.w) + 4;
+    const deckBottom =
+      Math.max(
+        ramp.y + ramp.h,
+        pier.y + pier.h,
+        finger.y + finger.h,
+        berthPosts.y + berthPosts.h,
+        rest + 102,
+        moorHull.y + moorHull.h
+      ) + 2;
     dockOX = deckLeft;
     dockOY = deckTop;
     dockOverlay = document.createElement("canvas");
@@ -7181,7 +7303,7 @@
       y: finger.y + ((finger.h / 2) | 0) + 5,
       phase: 1.2,
     });
-    harborDrop = { x: finger.x - 2, y: finger.y + finger.h + 8 };
+    harborDrop = { x: boatBerth.x, y: boatBerth.y };
     npcs.push({ kind: "keeper", scene: "shop", x: (SHOP_W / 2 - 3) | 0, y: 46, phase: 0.5 });
     npcs.push({ kind: "fisher", scene: "fish", x: (FISH_W / 2 - 3) | 0, y: 36, phase: 2.1 });
     npcs.push({ kind: "warden", scene: "cabin", x: CABIN_NPC_X, y: CABIN_NPC_Y, phase: 0.8 });
@@ -13325,6 +13447,16 @@
     updateBlowfishSpeedEnd(dt);
     updateCabinFish(dt);
     updateBoatThrow(dt);
+    if (
+      scene === "island" &&
+      ownedBoat &&
+      ownedBoat.landed &&
+      !boatThrow &&
+      !player.aboard &&
+      !uiBlocksPlay()
+    ) {
+      updateBoatBerthSnap(dt, 0, 0);
+    }
     updateCrabs(dt);
     if (scene === "island") {
       updateFish(dt);
