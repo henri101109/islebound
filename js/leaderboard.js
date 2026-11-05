@@ -30,20 +30,22 @@
     "MATTEUS OWENS": "MATTEUS O",
   };
 
+  // floorMs = cheat floor (impossible-or-near under normal rules).
+  // Fishing cats include the hard 15s cast wait; keep below known legit WRs.
   const CATEGORIES = {
-    shark: { id: "shark", label: "SHARK%", floorMs: 12000 },
-    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 12000 },
-    chest: { id: "chest", label: "CHEST%", floorMs: 12000 },
-    death: { id: "death", label: "DEATH%", floorMs: 1500 },
-    boat: { id: "boat", label: "BOAT%", floorMs: 4000 },
-    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 6000 },
-    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 15000 },
-    serpent: { id: "serpent", label: "SERPENT%", floorMs: 20000 },
-    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 18000 },
-    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 30000 },
-    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 3000 },
-    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 8000 },
-    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 30000 },
+    shark: { id: "shark", label: "SHARK%", floorMs: 15000 },
+    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 15000 },
+    chest: { id: "chest", label: "CHEST%", floorMs: 15000 },
+    death: { id: "death", label: "DEATH%", floorMs: 800 },
+    boat: { id: "boat", label: "BOAT%", floorMs: 3000 },
+    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 2000 },
+    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 16000 },
+    serpent: { id: "serpent", label: "SERPENT%", floorMs: 18000 },
+    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 15000 },
+    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 15000 },
+    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 2000 },
+    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
+    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
   };
 
   const NM_BOARD_DEFS = {
@@ -788,6 +790,15 @@
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
     const ms = timeMs | 0;
     if (ms < 0) return { ok: false, error: "bad time" };
+    // Anti-cheat: reject times below the category's physical minimum.
+    if (ms < (def.floorMs | 0)) {
+      return {
+        ok: false,
+        error: "cheat? min " + formatTime(def.floorMs),
+        cheated: true,
+        floorMs: def.floorMs | 0,
+      };
+    }
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     setLastName(name);
     if (!configured()) {
