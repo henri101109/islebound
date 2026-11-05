@@ -3611,7 +3611,7 @@
     else drawPixText(n, x, y, "#3a2414", align);
   }
 
-  // Compact gold/wood pixel chip — used for NEW, ACC, and player nametags.
+  // Compact gold/wood pixel chip — used for NEW and player nametags.
   function drawChipTag(label, x, y) {
     const s = String(label || "").toUpperCase();
     const tw = pixTextWidth(s);
@@ -7407,8 +7407,8 @@
           ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
           : false;
       const isOnline = boardRowOnline(r);
-      // Accounts use nametag chips (shorter when ACC/NEW sit beside); guests use classic text.
-      const nameMax = isAcc ? (isNew ? 6 : 7) : isNew ? 9 : 10;
+      // Accounts use nametag chips (shorter when NEW sits beside); guests use classic text.
+      const nameMax = isAcc ? (isNew ? 7 : 8) : isNew ? 9 : 10;
       drawPixText(rank + " ", x, yy, "#3a2414");
       let tagX = x + 18;
       tagX += drawBoardPlayerLabel(r.player_name, tagX, yy, {
@@ -7416,7 +7416,6 @@
         isOnline,
         maxLen: nameMax,
       }) + 2;
-      if (isAcc) tagX += drawMemberTag(tagX, yy) + 2;
       if (isNew) tagX += drawNewTag(tagX, yy) + 2;
       drawPixText(timeStr, Math.max(tagX + 1, x + 108), yy, "#5c3a21");
       yy += 8;
