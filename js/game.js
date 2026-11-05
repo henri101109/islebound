@@ -142,10 +142,10 @@
   const FISH_H = 96;
   const CABIN_W = 200;
   const CABIN_H = 136;
-  const TEMPLE_W = 200;
-  const TEMPLE_H = 152;
-  const HUB_W = 220;
-  const HUB_H = 160;
+  const TEMPLE_W = 960;
+  const TEMPLE_H = 720;
+  const HUB_W = 260;
+  const HUB_H = 180;
   const CABIN_NPC_X = 124;
   const CABIN_NPC_Y = 80;
   const CABIN_TABLE = { x: 146, y: 74, w: 36, h: 12 };
@@ -195,16 +195,12 @@
   let templeDoor = null;
   let templeExit = null;
   let templeIslandExit = null;
-  let hubDoor = null;
   let hubExit = null;
-  let hubIslandExit = null;
   let templePedestal = null;
-  let templeHazards = [];
-  let templeHazardCool = 0;
   let templeMaskTaken = false;
   let dailyLootId = null;
   let dailyClaimedUtc = "";
-  let hubUi = { mode: "", tip: "", tipT: 0, duelSel: 0, duoSel: 0, practice: null };
+  let hubUi = { tip: "", tipT: 0 };
   let hubPeers = [];
   let hubEmote = "";
   let hubEmoteT = 0;
@@ -349,9 +345,9 @@
   let nmBoardRows = [];
   let nmBoardNote = "";
   let nmCursor = 0;
-  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "ACCOUNT", "STATS"];
-  const MODE_WALK = ["SURVIVAL", "SPEEDRUN"];
-  /** Title-screen cursor across play modes (0-3) + walkthroughs (4-5). */
+  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS"];
+  const MODE_WALK = ["SURVIVAL", "SPEEDRUN", "HUB"];
+  /** Title-screen cursor across play modes + walkthroughs. */
   let modeOpts = MODE_PLAY.concat(MODE_WALK);
   let walkKind = "normal";
   let walkStep = 0;
@@ -379,7 +375,11 @@
       },
       {
         title: "ISLAND",
-        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "TEMPLE IN JUNGLE", "HUB GATE NEAR PATH"],
+        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "TEMPLE DEEP IN JUNGLE", "HUB IS ITS OWN MODE"],
+      },
+      {
+        title: "TEMPLE",
+        lines: ["WALK FAR INLAND", "DENSE JUNGLE RING", "HUGE MAZE INSIDE", "JADE MASK AT END"],
       },
       {
         title: "GOALS",
@@ -406,6 +406,20 @@
       {
         title: "SUBMIT",
         lines: ["FINISH LOCKS TIME", "TYPE A NAME", "POST TO TOP 10", "REPLAY MAY SAVE"],
+      },
+    ],
+    hub: [
+      {
+        title: "HUB",
+        lines: ["OPEN SHARED PLAZA", "SEE ONLINE PLAYERS", "NAMETAGS ABOVE HEADS", "JUST HANG OUT"],
+      },
+      {
+        title: "CONTROLS",
+        lines: ["WASD TO WALK", "E SENDS AN EMOTE", "TAB OPENS CHAT", "ESC RETURNS HERE"],
+      },
+      {
+        title: "HANGOUT",
+        lines: ["JUST WALK AND CHAT", "COSMETICS SHOW UP", "DOOR ALSO EXITS", "PICK HUB FROM MENU"],
       },
     ],
   };
@@ -2105,7 +2119,7 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || hubUi.mode === "menu") {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput()) {
       dx = 0;
       dy = 0;
       player.moving = false;
@@ -2117,8 +2131,7 @@
       !guideOpen &&
       !cabinCut.kind &&
       !uiBlocksPlay() &&
-      !chatCapturesInput() &&
-      hubUi.mode !== "menu"
+      !chatCapturesInput()
     ) {
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
@@ -5349,66 +5362,173 @@
     const g = templeCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
     pxi(g, 0, 0, TEMPLE_W, TEMPLE_H, "#1a1814");
-    for (let y = 8; y < TEMPLE_H - 8; y++) {
-      for (let x = 8; x < TEMPLE_W - 8; x++) {
+    for (let y = 10; y < TEMPLE_H - 10; y += 8) {
+      for (let x = 10; x < TEMPLE_W - 10; x += 8) {
         const n = hash(x + 3, y + 7);
         let col = ((x / 8) | 0) % 2 === ((y / 8) | 0) % 2 ? "#4a463e" : "#3a3834";
-        if (n > 0.93) col = "#5a564e";
-        pxi(g, x, y, 1, 1, col);
+        if (n > 0.92) col = "#5a564e";
+        pxi(g, x, y, 8, 8, col);
       }
     }
-    // Outer walls
-    paintStoneBlock(g, 0, 0, TEMPLE_W, 10, "#5a564e");
-    paintStoneBlock(g, 0, 0, 10, TEMPLE_H, "#5a564e");
-    paintStoneBlock(g, TEMPLE_W - 10, 0, 10, TEMPLE_H, "#5a564e");
-    paintStoneBlock(g, 0, TEMPLE_H - 10, TEMPLE_W, 10, "#3a3834");
-    // Short maze walls (2–4 min walk) — corridor to pedestal
-    const walls = [
-      { x: 28, y: 24, w: 10, h: 72 },
-      { x: 28, y: 24, w: 64, h: 10 },
-      { x: 82, y: 24, w: 10, h: 40 },
-      { x: 52, y: 54, w: 40, h: 10 },
-      { x: 52, y: 54, w: 10, h: 48 },
-      { x: 52, y: 92, w: 56, h: 10 },
-      { x: 108, y: 40, w: 10, h: 62 },
-      { x: 118, y: 40, w: 42, h: 10 },
-      { x: 150, y: 40, w: 10, h: 72 },
-      { x: 118, y: 102, w: 42, h: 10 },
-      { x: 70, y: 110, w: 10, h: 22 },
-    ];
+
+    // Huge recursive-backtracker maze on an odd/even grid (no traps/hazards).
+    // Each grid cell is 16px so corridors fit the 8x14 player.
+    const U = 16;
+    const doorBand = 34;
+    const gx0 = 14;
+    const gy0 = 14;
+    const maxGW = ((TEMPLE_W - gx0 - 14) / U) | 0;
+    const maxGH = ((TEMPLE_H - gy0 - doorBand) / U) | 0;
+    // Maze rooms on odd indices; walls on even
+    let roomsC = Math.max(11, ((maxGW - 1) / 2) | 0);
+    let roomsR = Math.max(9, ((maxGH - 1) / 2) | 0);
+    const gw = roomsC * 2 + 1;
+    const gh = roomsR * 2 + 1;
+    const solid = [];
+    for (let r = 0; r < gh; r++) {
+      solid[r] = [];
+      for (let c = 0; c < gw; c++) solid[r][c] = true;
+    }
+    for (let r = 0; r < roomsR; r++) {
+      for (let c = 0; c < roomsC; c++) solid[r * 2 + 1][c * 2 + 1] = false;
+    }
+    const visited = [];
+    for (let r = 0; r < roomsR; r++) {
+      visited[r] = [];
+      for (let c = 0; c < roomsC; c++) visited[r][c] = false;
+    }
+    function shuffleDirs(c, r, salt) {
+      const dirs = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ];
+      for (let i = dirs.length - 1; i > 0; i--) {
+        const j = (hash(c * 47 + r * 91 + i * 13 + salt, i * 17 + roomsC) * (i + 1)) | 0;
+        const tmp = dirs[i];
+        dirs[i] = dirs[j];
+        dirs[j] = tmp;
+      }
+      return dirs;
+    }
+    // Iterative DFS carve — many rooms, avoid call-stack limits
+    const entrC = (roomsC / 2) | 0;
+    const entrR = roomsR - 1;
+    const stack = [[entrC, entrR]];
+    visited[entrR][entrC] = true;
+    let salt = 0;
+    while (stack.length) {
+      const cur = stack[stack.length - 1];
+      const c = cur[0];
+      const r = cur[1];
+      const dirs = shuffleDirs(c, r, salt++);
+      let stepped = false;
+      for (let i = 0; i < dirs.length; i++) {
+        const nc = c + dirs[i][0];
+        const nr = r + dirs[i][1];
+        if (nc < 0 || nr < 0 || nc >= roomsC || nr >= roomsR || visited[nr][nc]) continue;
+        solid[r * 2 + 1 + dirs[i][1]][c * 2 + 1 + dirs[i][0]] = false;
+        visited[nr][nc] = true;
+        stack.push([nc, nr]);
+        stepped = true;
+        break;
+      }
+      if (!stepped) stack.pop();
+    }
+    // Open south wall of entrance room toward the foyer / EXIT
+    solid[gh - 1][entrC * 2 + 1] = false;
+
+    // Farthest room → jade pedestal
+    const dist = [];
+    for (let r = 0; r < roomsR; r++) {
+      dist[r] = [];
+      for (let c = 0; c < roomsC; c++) dist[r][c] = -1;
+    }
+    const q = [[entrC, entrR]];
+    dist[entrR][entrC] = 0;
+    let qi = 0;
+    let bestC = entrC;
+    let bestR = entrR;
+    let bestD = 0;
+    while (qi < q.length) {
+      const cur = q[qi++];
+      const c = cur[0];
+      const r = cur[1];
+      const d0 = dist[r][c];
+      if (d0 > bestD) {
+        bestD = d0;
+        bestC = c;
+        bestR = r;
+      }
+      const dirs = [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ];
+      for (let i = 0; i < dirs.length; i++) {
+        const nc = c + dirs[i][0];
+        const nr = r + dirs[i][1];
+        if (nc < 0 || nr < 0 || nc >= roomsC || nr >= roomsR || dist[nr][nc] >= 0) continue;
+        const wr = r * 2 + 1 + dirs[i][1];
+        const wc = c * 2 + 1 + dirs[i][0];
+        if (solid[wr][wc]) continue;
+        dist[nr][nc] = d0 + 1;
+        q.push([nc, nr]);
+      }
+    }
+
     templeSolids.length = 0;
-    templeSolids.push({ x: 0, y: 0, w: TEMPLE_W, h: 10 });
-    templeSolids.push({ x: 0, y: 0, w: 10, h: TEMPLE_H });
-    templeSolids.push({ x: TEMPLE_W - 10, y: 0, w: 10, h: TEMPLE_H });
-    templeSolids.push({ x: 0, y: TEMPLE_H - 10, w: 88, h: 10 });
-    templeSolids.push({ x: 112, y: TEMPLE_H - 10, w: TEMPLE_W - 112, h: 10 });
-    for (let i = 0; i < walls.length; i++) {
-      const w = walls[i];
-      paintStoneBlock(g, w.x, w.y, w.w, w.h, "#6a6258");
-      templeSolids.push({ x: w.x, y: w.y, w: w.w, h: w.h });
+    function addWall(x, y, w, h) {
+      if (w <= 0 || h <= 0) return;
+      paintStoneBlock(g, x, y, w, h, (x + y) & 2 ? "#6a6258" : "#5a564e");
+      templeSolids.push({ x, y, w, h });
     }
-    // Soft hazard pads (spike tiles)
-    templeHazards = [
-      { x: 42, y: 70, w: 8, h: 8 },
-      { x: 96, y: 70, w: 8, h: 8 },
-      { x: 130, y: 70, w: 8, h: 8 },
-    ];
-    for (let i = 0; i < templeHazards.length; i++) {
-      const hz = templeHazards[i];
-      pxi(g, hz.x, hz.y, hz.w, hz.h, "#2a1810");
-      pxi(g, hz.x + 2, hz.y + 1, 1, 5, "#8a6a42");
-      pxi(g, hz.x + 5, hz.y + 2, 1, 4, "#c4a070");
+
+    // Merge solid grid cells into horizontal runs for fewer solids
+    for (let r = 0; r < gh; r++) {
+      let c = 0;
+      while (c < gw) {
+        if (!solid[r][c]) {
+          c++;
+          continue;
+        }
+        let c2 = c + 1;
+        while (c2 < gw && solid[r][c2]) c2++;
+        addWall(gx0 + c * U, gy0 + r * U, (c2 - c) * U, U);
+        c = c2;
+      }
     }
-    // Pedestal + jade glow at end of maze
-    templePedestal = { x: 128, y: 56, w: 16, h: 12 };
+
+    // Outer frame + foyer band under maze
+    addWall(0, 0, TEMPLE_W, 10);
+    addWall(0, 0, 10, TEMPLE_H);
+    addWall(TEMPLE_W - 10, 0, 10, TEMPLE_H);
+    const mazeBottom = gy0 + gh * U;
+    const entrPX = gx0 + (entrC * 2 + 1) * U;
+    const doorX = entrPX + ((U - 20) / 2) | 0;
+    // Foyer floor strip from maze mouth to EXIT
+    pxi(g, entrPX, mazeBottom - U, U, TEMPLE_H - (mazeBottom - U) - 10, "#4a463e");
+    addWall(0, TEMPLE_H - 10, doorX, 10);
+    addWall(doorX + 20, TEMPLE_H - 10, TEMPLE_W - (doorX + 20), 10);
+    // Side foyer walls leaving the mouth open
+    addWall(10, mazeBottom, entrPX - 10, TEMPLE_H - mazeBottom - 10);
+    addWall(entrPX + U, mazeBottom, TEMPLE_W - 10 - (entrPX + U), TEMPLE_H - mazeBottom - 10);
+
+    const px0 = gx0 + (bestC * 2 + 1) * U + ((U - 16) / 2) | 0;
+    const py0 = gy0 + (bestR * 2 + 1) * U + ((U - 12) / 2) | 0;
+    templePedestal = { x: px0, y: py0, w: 16, h: 12 };
     paintStoneBlock(g, templePedestal.x, templePedestal.y + 4, 16, 8, "#5a564e");
     pxi(g, templePedestal.x + 2, templePedestal.y, 12, 6, "#3a8a4a");
     pxi(g, templePedestal.x + 4, templePedestal.y + 1, 8, 4, "#4ec86a");
     pxi(g, templePedestal.x + 6, templePedestal.y + 2, 4, 2, "#b8f0c8");
-    // Door gap
-    const doorX = 92;
+
+    // Marked EXIT so players aren't soft-locked
+    pxi(g, doorX - 2, TEMPLE_H - 18, 24, 4, "#c9a227");
     pxi(g, doorX, TEMPLE_H - 14, 20, 14, "#100c0a");
     pxi(g, doorX + 2, TEMPLE_H - 12, 16, 2, "#5a564e");
+    withInk(g, () => drawPixText("EXIT", doorX + 2, TEMPLE_H - 28, "#c9a227"));
     templeExit = { x: doorX, y: TEMPLE_H - 14, w: 20, h: 14 };
   }
 
@@ -5419,123 +5539,195 @@
     const g = hubCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
     pxi(g, 0, 0, HUB_W, HUB_H, "#2a2418");
-    for (let y = 14; y < HUB_H - 10; y++) {
-      for (let x = 12; x < HUB_W - 12; x++) {
+    for (let y = 14; y < HUB_H - 10; y += 4) {
+      for (let x = 12; x < HUB_W - 12; x += 4) {
         const n = hash(x * 3, y * 5);
-        let col = ((x + y) & 2) ? "#6a5a3a" : "#5a4a2e";
+        let col = (x + y) & 4 ? "#6a5a3a" : "#5a4a2e";
         if (n > 0.94) col = "#7a6a48";
-        pxi(g, x, y, 1, 1, col);
+        pxi(g, x, y, 4, 4, col);
       }
     }
     paintStoneBlock(g, 0, 0, HUB_W, 12, "#4a463e");
     paintStoneBlock(g, 0, 0, 12, HUB_H, "#4a463e");
     paintStoneBlock(g, HUB_W - 12, 0, 12, HUB_H, "#4a463e");
     paintStoneBlock(g, 0, HUB_H - 12, HUB_W, 12, "#3a3834");
-    // Plaza fountain
-    pxi(g, 96, 56, 28, 28, "#3a6a8a");
-    pxi(g, 100, 60, 20, 20, "#5a9aba");
-    pxi(g, 106, 66, 8, 8, "#c8e8f8");
-    pxi(g, 108, 52, 4, 8, "#8ab0c4");
-    // Duel ring + duo benches
-    pxi(g, 24, 40, 40, 40, "#3a2414");
-    pxi(g, 28, 44, 32, 32, "#5a3a21");
-    pxi(g, 36, 52, 16, 16, "#8a5a32");
-    withInk(g, () => {
-      drawPixText("DUEL", 32, 48, "#f3e2c4");
-      drawPixText("DUO", 168, 48, "#f3e2c4");
-    });
-    pxi(g, 160, 40, 36, 12, "#5a3420");
-    pxi(g, 160, 68, 36, 12, "#5a3420");
+    // Open hangout plaza — fountain + planters (no duel/duo props)
+    const fx = ((HUB_W - 32) / 2) | 0;
+    const fy = ((HUB_H - 40) / 2) | 0;
+    pxi(g, fx, fy, 32, 32, "#3a6a8a");
+    pxi(g, fx + 4, fy + 4, 24, 24, "#5a9aba");
+    pxi(g, fx + 10, fy + 10, 12, 12, "#c8e8f8");
+    pxi(g, fx + 14, fy - 4, 4, 8, "#8ab0c4");
+    pxi(g, 28, 36, 18, 10, "#3a5a28");
+    pxi(g, 32, 30, 10, 8, "#4a7a34");
+    pxi(g, HUB_W - 46, 36, 18, 10, "#3a5a28");
+    pxi(g, HUB_W - 42, 30, 10, 8, "#4a7a34");
+    pxi(g, 28, HUB_H - 56, 18, 10, "#3a5a28");
+    pxi(g, HUB_W - 46, HUB_H - 56, 18, 10, "#3a5a28");
+    withInk(g, () => drawPixText("PLAZA", ((HUB_W - 40) / 2) | 0, 20, "#f3e2c4"));
     hubSolids.length = 0;
     hubSolids.push({ x: 0, y: 0, w: HUB_W, h: 12 });
     hubSolids.push({ x: 0, y: 0, w: 12, h: HUB_H });
     hubSolids.push({ x: HUB_W - 12, y: 0, w: 12, h: HUB_H });
-    hubSolids.push({ x: 0, y: HUB_H - 12, w: 96, h: 12 });
-    hubSolids.push({ x: 124, y: HUB_H - 12, w: HUB_W - 124, h: 12 });
-    hubSolids.push({ x: 96, y: 56, w: 28, h: 28 });
-    hubSolids.push({ x: 160, y: 40, w: 36, h: 12 });
-    hubSolids.push({ x: 160, y: 68, w: 36, h: 12 });
-    const doorX = 100;
-    pxi(g, doorX, HUB_H - 16, 24, 16, "#100c0a");
-    hubExit = { x: doorX, y: HUB_H - 16, w: 24, h: 16 };
+    hubSolids.push({ x: 0, y: HUB_H - 12, w: ((HUB_W - 28) / 2) | 0, h: 12 });
+    hubSolids.push({
+      x: (((HUB_W - 28) / 2) | 0) + 28,
+      y: HUB_H - 12,
+      w: HUB_W - ((((HUB_W - 28) / 2) | 0) + 28),
+      h: 12,
+    });
+    hubSolids.push({ x: fx, y: fy, w: 32, h: 32 });
+    const doorX = ((HUB_W - 28) / 2) | 0;
+    pxi(g, doorX, HUB_H - 16, 28, 16, "#100c0a");
+    withInk(g, () => drawPixText("EXIT", doorX + 4, HUB_H - 28, "#c9a227"));
+    hubExit = { x: doorX, y: HUB_H - 16, w: 28, h: 16 };
   }
 
   function paintMayanTemple(g, x, y, w, h, door) {
-    // Stepped pyramid silhouette
-    const steps = [
-      [0, 18, w, h - 18],
-      [8, 10, w - 16, h - 28],
-      [16, 4, w - 32, h - 36],
-      [24, 0, w - 48, 8],
-    ];
-    for (let s = 0; s < steps.length; s++) {
-      const st = steps[s];
-      paintStoneBlock(g, x + st[0], y + st[1], st[2], st[3], s % 2 ? "#6a6258" : "#5a564e");
+    // Mesoamerican step pyramid — weathered gray/blue stone, central stairs, top sanctuary
+    const tiers = 9;
+    const baseH = h - 18;
+    const tierH = Math.max(4, (baseH / tiers) | 0);
+    const inset = Math.max(3, ((w / 2 - 18) / tiers) | 0);
+    const stairW = Math.max(12, ((w * 0.22) | 0));
+    const mid = (w / 2) | 0;
+    const stairL = mid - ((stairW / 2) | 0);
+    const stairR = stairL + stairW;
+
+    // Ground strip (grass / soil)
+    pxi(g, x - 3, y + h - 3, w + 6, 3, "#2a4a24");
+    pxi(g, x - 2, y + h - 5, w + 4, 2, "#3a2a18");
+
+    for (let t = 0; t < tiers; t++) {
+      const ix = t * inset;
+      const iy = h - 6 - (t + 1) * tierH;
+      const iw = w - ix * 2;
+      const ih = tierH + 1;
+      const lit = "#6a7278";
+      const midCol = "#4a5258";
+      const shade = "#2e343c";
+      // Main tier face
+      paintStoneBlock(g, x + ix, y + iy, iw, ih, t & 1 ? midCol : "#545c64");
+      // Left highlight / right shade for volume
+      pxi(g, x + ix, y + iy, 2, ih, lit);
+      pxi(g, x + ix + iw - 3, y + iy, 3, ih, shade);
+      // Top ledge lip
+      pxi(g, x + ix, y + iy, iw, 1, lit);
+      pxi(g, x + ix + 1, y + iy + ih - 1, iw - 2, 1, shade);
+      // Mortar cracks
+      for (let ly = 2; ly < ih - 1; ly += 3) {
+        pxi(g, x + ix + 3, y + iy + ly, iw - 6, 1, "#3a4048");
+      }
+      // Moss tufts on ledges
+      if (t > 1 && hash(t, 17) > 0.35) {
+        const mx = x + ix + 4 + ((hash(t, 3) * (iw - 10)) | 0);
+        pxi(g, mx, y + iy + 1, 3, 2, "#2a5a28");
+        pxi(g, mx + 1, y + iy, 1, 1, "#3a7a34");
+      }
     }
-    // Glyph band
-    pxi(g, x + 10, y + 28, w - 20, 4, "#3a8a4a");
-    for (let i = 0; i < 5; i++) pxi(g, x + 14 + i * 10, y + 29, 4, 2, "#b8f0c8");
+
+    // Central stairway with thin balustrades
+    const stairTop = h - 6 - tiers * tierH;
+    const stairBot = h - 6;
+    for (let sy = stairTop; sy < stairBot; sy += 2) {
+      const row = ((sy - stairTop) / 2) | 0;
+      pxi(g, x + stairL, y + sy, stairW, 2, row & 1 ? "#7a8288" : "#5a6268");
+      pxi(g, x + stairL, y + sy, stairW, 1, "#8a9298");
+    }
+    // Balustrades
+    pxi(g, x + stairL - 2, y + stairTop, 2, stairBot - stairTop, "#3a4048");
+    pxi(g, x + stairR, y + stairTop, 2, stairBot - stairTop, "#2a3038");
+    pxi(g, x + stairL - 2, y + stairTop - 1, 2, 2, "#6a7278");
+    pxi(g, x + stairR, y + stairTop - 1, 2, 2, "#4a5258");
+
+    // Top sanctuary (cella) with pillars + doorway
+    const platY = y + stairTop - 2;
+    const platW = Math.max(22, w - tiers * inset * 2 - 4);
+    const platX = x + ((w - platW) / 2) | 0;
+    const cellH = 14;
+    const cellW = Math.max(16, platW - 6);
+    const cellX = x + ((w - cellW) / 2) | 0;
+    const cellY = platY - cellH;
+    paintStoneBlock(g, platX, platY, platW, 3, "#5a6268");
+    paintStoneBlock(g, cellX, cellY, cellW, cellH, "#4a5258");
+    pxi(g, cellX, cellY, cellW, 1, "#7a8288");
+    pxi(g, cellX + cellW - 2, cellY, 2, cellH, "#2e343c");
+    // Corner pillars
+    pxi(g, cellX - 1, cellY - 2, 3, cellH + 2, "#6a7278");
+    pxi(g, cellX + cellW - 2, cellY - 2, 3, cellH + 2, "#3a4048");
+    pxi(g, cellX - 1, cellY - 3, 3, 2, "#8a9298");
+    pxi(g, cellX + cellW - 2, cellY - 3, 3, 2, "#5a6268");
+    // Flat roof ledge
+    pxi(g, cellX - 2, cellY - 4, cellW + 4, 2, "#6a7278");
+    pxi(g, cellX - 1, cellY - 5, cellW + 2, 1, "#8a9298");
+    // Sanctuary doorway (dark)
+    const sDoorW = Math.max(6, ((cellW * 0.38) | 0));
+    const sDoorX = cellX + ((cellW - sDoorW) / 2) | 0;
+    const sDoorH = cellH - 3;
+    pxi(g, sDoorX - 1, cellY + 2, sDoorW + 2, sDoorH + 1, "#1a1814");
+    pxi(g, sDoorX, cellY + 3, sDoorW, sDoorH, "#0a0806");
+
+    // Vine streaks down the faces (medieval jungle ruin)
+    for (let i = 0; i < 8; i++) {
+      const side = i < 4 ? 0 : 1;
+      const vx =
+        side === 0
+          ? x + 3 + ((hash(i, 9) * (stairL - 8)) | 0)
+          : x + stairR + 4 + ((hash(i, 11) * (w - stairR - 10)) | 0);
+      const vy = y + 20 + ((hash(i, 5) * (h - 36)) | 0);
+      const vh = 8 + ((hash(i, 13) * 22) | 0);
+      pxi(g, vx, vy, 2, vh, "#2a5a28");
+      pxi(g, vx + 1, vy + 2, 1, vh - 3, "#3a7a34");
+      if (hash(i, 7) > 0.4) pxi(g, vx - 1, vy + 4, 3, 2, "#4a8a38");
+    }
+
+    // Entrance at base of stairs (walk-in)
     const dx = door.x - x;
     const dy = door.y - y;
-    pxi(g, x + dx - 1, y + dy - 1, door.w + 2, door.h + 1, "#2a1810");
-    pxi(g, x + dx, y + dy, door.w, door.h, "#100c0a");
+    pxi(g, x + dx - 2, y + dy - 2, door.w + 4, door.h + 2, "#1a140e");
+    pxi(g, x + dx, y + dy, door.w, door.h, "#080604");
     pxi(g, x + dx + door.w - 3, y + dy + ((door.h / 2) | 0), 1, 1, "#c9a227");
   }
 
-  function paintHubGate(g, x, y, w, h, door) {
-    paintStoneBlock(g, x, y, w, h, "#4a463e");
-    pxi(g, x + 4, y + 6, w - 8, 4, "#c9a227");
-    withInk(g, () => drawPixText("HUB", x + 8, y + 8, "#1a120c"));
-    const dx = door.x - x;
-    const dy = door.y - y;
-    pxi(g, x + dx, y + dy, door.w, door.h, "#100c0a");
-  }
+  function placeTemple(pier) {
+    // Deep jungle — far east of the dock, high inland toward the north cliff
+    const tw = 104;
+    const th = 92;
+    const midC = 318;
+    const midX = midC * TILE;
+    const rest = restShoreY(midX);
+    const cliff = northCliffY(midX);
+    const depth = Math.max(80, rest - cliff);
+    const tx = midX - ((tw / 2) | 0);
+    const ty = cliff + Math.max(48, (depth * 0.16) | 0);
+    const temple = { x: tx, y: ty, w: tw, h: th };
+    const tDoor = {
+      x: temple.x + ((temple.w / 2) | 0) - 7,
+      y: temple.y + temple.h - 12,
+      w: 14,
+      h: 12,
+    };
 
-  function placeTempleAndHub(pier) {
-    // Inland from dock — short jungle walk, off the main beach speedrun line
-    const tx = pier.x + 28;
-    const rest = restShoreY(tx + 24);
-    const ty = rest - 118;
-    const temple = { x: tx, y: ty, w: 56, h: 48 };
-    const tDoor = { x: temple.x + 22, y: temple.y + temple.h - 10, w: 12, h: 10 };
-    const hx = pier.x + 100;
-    const hy = rest - 78;
-    const hubB = { x: hx, y: hy, w: 40, h: 36 };
-    const hDoor = { x: hubB.x + 14, y: hubB.y + hubB.h - 9, w: 12, h: 9 };
-
-    islandSolids.push({ x: temple.x, y: temple.y, w: temple.w, h: temple.h - 10 });
-    islandSolids.push({ x: temple.x, y: temple.y + temple.h - 10, w: tDoor.x - temple.x, h: 6 });
+    islandSolids.push({ x: temple.x, y: temple.y, w: temple.w, h: temple.h - 12 });
+    islandSolids.push({ x: temple.x, y: temple.y + temple.h - 12, w: tDoor.x - temple.x, h: 8 });
     islandSolids.push({
       x: tDoor.x + tDoor.w,
-      y: temple.y + temple.h - 10,
+      y: temple.y + temple.h - 12,
       w: temple.x + temple.w - (tDoor.x + tDoor.w),
-      h: 6,
-    });
-    islandSolids.push({ x: hubB.x, y: hubB.y, w: hubB.w, h: hubB.h - 9 });
-    islandSolids.push({ x: hubB.x, y: hubB.y + hubB.h - 9, w: hDoor.x - hubB.x, h: 6 });
-    islandSolids.push({
-      x: hDoor.x + hDoor.w,
-      y: hubB.y + hubB.h - 9,
-      w: hubB.x + hubB.w - (hDoor.x + hDoor.w),
-      h: 6,
+      h: 8,
     });
 
-    walkPads.push({ x: tDoor.x - 4, y: tDoor.y, w: tDoor.w + 8, h: 16 });
-    walkPads.push({ x: hDoor.x - 4, y: hDoor.y, w: hDoor.w + 8, h: 14 });
-    keepouts.push({ x: temple.x - 16, y: temple.y - 12, w: temple.w + 32, h: temple.h + 28 });
-    keepouts.push({ x: hubB.x - 12, y: hubB.y - 10, w: hubB.w + 24, h: hubB.h + 22 });
+    walkPads.push({ x: tDoor.x - 6, y: tDoor.y, w: tDoor.w + 12, h: 22 });
+    keepouts.push({ x: temple.x - 14, y: temple.y - 10, w: temple.w + 28, h: temple.h + 24 });
 
     templeDoor = { x: tDoor.x, y: tDoor.y, w: tDoor.w, h: tDoor.h + 4 };
     templeIslandExit = { x: tDoor.x + tDoor.w + 6, y: tDoor.y + 4 };
-    hubDoor = { x: hDoor.x, y: hDoor.y, w: hDoor.w, h: hDoor.h + 2 };
-    hubIslandExit = { x: hDoor.x + hDoor.w + 6, y: hDoor.y + 4 };
 
-    // Extend building canvas to include temple + hub (redraw onto larger canvas)
-    const pad = 10;
-    const nx0 = Math.min(bldgOX, temple.x - pad, hubB.x - pad);
-    const ny0 = Math.min(bldgOY, temple.y - 4, hubB.y - 4);
-    const nx1 = Math.max(bldgOX + (bldgCanvas ? bldgCanvas.width : 0), temple.x + temple.w + pad, hubB.x + hubB.w + pad);
-    const ny1 = Math.max(bldgOY + (bldgCanvas ? bldgCanvas.height : 0), temple.y + temple.h + 8, hubB.y + hubB.h + 8);
+    const pad = 16;
+    const nx0 = Math.min(bldgOX, temple.x - pad);
+    const ny0 = Math.min(bldgOY, temple.y - 8);
+    const nx1 = Math.max(bldgOX + (bldgCanvas ? bldgCanvas.width : 0), temple.x + temple.w + pad);
+    const ny1 = Math.max(bldgOY + (bldgCanvas ? bldgCanvas.height : 0), temple.y + temple.h + 12);
     const nc = document.createElement("canvas");
     nc.width = Math.max(1, nx1 - nx0);
     nc.height = Math.max(1, ny1 - ny0);
@@ -5548,39 +5740,72 @@
       w: tDoor.w,
       h: tDoor.h,
     });
-    paintHubGate(ng, hubB.x - nx0, hubB.y - ny0, hubB.w, hubB.h, {
-      x: hDoor.x - nx0,
-      y: hDoor.y - ny0,
-      w: hDoor.w,
-      h: hDoor.h,
-    });
     bldgOX = nx0;
     bldgOY = ny0;
     bldgCanvas = nc;
 
     bakeTempleInterior();
     bakeHubInterior();
-    spawnDailyIdol(temple, hubB);
-    clearTreesNear(temple);
-    clearTreesNear(hubB);
+    spawnDailyIdol(temple);
+    clearTreesNearDoor(temple, tDoor);
+    plantTempleJungle(temple, tDoor);
   }
 
-  function clearTreesNear(r) {
+  function clearTreesNearDoor(temple, door) {
+    const zx0 = door.x - 10;
+    const zx1 = door.x + door.w + 10;
+    const zy0 = door.y - 4;
+    const zy1 = door.y + 28;
     for (let i = trees.length - 1; i >= 0; i--) {
       const t = trees[i];
-      if (t.x > r.x - 18 && t.x < r.x + r.w + 18 && t.y > r.y - 10 && t.y < r.y + r.h + 20) {
+      if (t.x > zx0 && t.x < zx1 && t.y > zy0 && t.y < zy1) trees.splice(i, 1);
+      else if (t.x > temple.x - 4 && t.x < temple.x + temple.w + 4 && t.y > temple.y - 4 && t.y < temple.y + temple.h + 4) {
         trees.splice(i, 1);
       }
     }
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
-      if (p.x > r.x - 18 && p.x < r.x + r.w + 18 && p.y > r.y - 10 && p.y < r.y + r.h + 20) {
+      if (p.x > zx0 && p.x < zx1 && p.y > zy0 && p.y < zy1) palms.splice(i, 1);
+      else if (p.x > temple.x - 4 && p.x < temple.x + temple.w + 4 && p.y > temple.y - 4 && p.y < temple.y + temple.h + 4) {
         palms.splice(i, 1);
       }
     }
   }
 
-  function spawnDailyIdol(temple, hubB) {
+  function plantTempleJungle(temple, door) {
+    // Dense tree/palm ring so the temple reads as deep jungle, not beach
+    for (let i = 0; i < 84; i++) {
+      const ang = (i / 84) * Math.PI * 2 + hash(i, 41) * 0.4;
+      const rad = 26 + hash(i * 3, 7) * 52;
+      const x = (temple.x + temple.w / 2 + Math.cos(ang) * rad) | 0;
+      const y = (temple.y + temple.h / 2 + Math.sin(ang) * rad * 0.7) | 0;
+      if (x > door.x - 14 && x < door.x + door.w + 14 && y > door.y - 6 && y < door.y + 30) continue;
+      if (x > temple.x - 2 && x < temple.x + temple.w + 2 && y > temple.y - 2 && y < temple.y + temple.h + 2) continue;
+      if (y >= restShoreY(x) - 8) continue;
+      if (y <= northCliffY(x) + 10) continue;
+      if (inRiverWater(x, y)) continue;
+      if (hash(i, 19) > 0.55) {
+        palms.push({ x, y, s: 0.9 + hash(i, 5) * 0.35 });
+      } else {
+        trees.push({
+          x,
+          y,
+          s: 0.85 + hash(i, 11) * 0.45,
+          kind: hash(i, 23) > 0.6 ? "pine" : "leaf",
+        });
+      }
+    }
+    // Extra palms south of temple toward the path
+    for (let i = 0; i < 14; i++) {
+      const x = temple.x - 20 + ((hash(i, 61) * (temple.w + 40)) | 0);
+      const y = temple.y + temple.h + 8 + ((hash(i, 67) * 36) | 0);
+      if (x > door.x - 12 && x < door.x + door.w + 12 && y < door.y + 26) continue;
+      if (y >= restShoreY(x) - 6) continue;
+      palms.push({ x, y, s: 0.95 + hash(i, 3) * 0.3 });
+    }
+  }
+
+  function spawnDailyIdol(temple) {
     const day = utcDayKey();
     dailyLootId = null;
     // Ember cape on temple path (visual cosmetic; cloak stays stealth ability)
@@ -5827,7 +6052,7 @@
     bakeShopInterior();
     bakeFishInterior();
     bakeCabinInterior();
-    placeTempleAndHub(pier);
+    placeTemple(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
       if (p.x > shop.x - 20 && p.x < hut.x + hut.w + 20 && p.y > hut.y - 10 && p.y < pier.y + 24) {
@@ -5965,21 +6190,14 @@
       beginFade("island", { x: cabinDockExit.x, y: cabinDockExit.y });
     }
     if (scene === "island" && templeDoor && playerHits(templeDoor)) {
-      beginFade("temple", { x: 98, y: TEMPLE_H - 40 });
+      const spawnX0 = templeExit ? templeExit.x + 2 : ((TEMPLE_W / 2 - 4) | 0);
+      beginFade("temple", { x: spawnX0, y: TEMPLE_H - 40 });
     }
     if (scene === "temple" && templeExit && playerHits(templeExit)) {
       beginFade("island", { x: templeIslandExit.x, y: templeIslandExit.y });
     }
-    if (scene === "island" && hubDoor && playerHits(hubDoor)) {
-      beginFade("hub", { x: (HUB_W / 2 - 4) | 0, y: HUB_H - 40 });
-      hubUi.mode = "";
-      hubUi.tip = "TAB CHAT · E EMOTE · T MENU";
-      hubUi.tipT = 4;
-    }
-    if (scene === "hub" && hubExit && playerHits(hubExit)) {
-      beginFade("island", { x: hubIslandExit.x, y: hubIslandExit.y });
-      hubUi.mode = "";
-      hubUi.practice = null;
+    if (scene === "hub" && hubExit && playerHits(hubExit) && playMode === "hub") {
+      leaveHubMode();
     }
   }
 
@@ -8321,8 +8539,10 @@
       !playMode
     ) {
       mode = "menu";
+    } else if (playMode === "hub") {
+      mode = "hub";
     } else if (playMode === "normal") {
-      mode = scene === "hub" ? "hub" : "normal";
+      mode = "normal";
     } else if (playMode === "speedrun") {
       mode = "speedrun";
       if (uiScreen === "categories") cat = SPEED_ORDER[srCursor] || srCat;
@@ -8957,24 +9177,6 @@
     }
   }
 
-  function updateTempleHazards(dt) {
-    if (templeHazardCool > 0) templeHazardCool = Math.max(0, templeHazardCool - dt);
-    if (scene !== "temple" || player.dead > 0 || player.hurt > 0 || templeHazardCool > 0) return;
-    const fx = player.x + player.w / 2;
-    const fy = player.y + player.h - 2;
-    for (let i = 0; i < templeHazards.length; i++) {
-      const hz = templeHazards[i];
-      if (fx >= hz.x && fx < hz.x + hz.w && fy >= hz.y && fy < hz.y + hz.h) {
-        player.hp = Math.max(0, player.hp - 1);
-        player.hurt = 0.7;
-        templeHazardCool = 1.1;
-        shake = Math.max(shake, 3);
-        if (player.hp <= 0) player.dead = 2.2;
-        break;
-      }
-    }
-  }
-
   function hubLocalName() {
     const api = lbApi();
     if (api && api.displayName) {
@@ -9153,100 +9355,15 @@
     ink = prevInk;
   }
 
-  function drawHubPractice(cpos, t) {
-    const pr = hubUi.practice;
-    if (!pr) return;
-    if (pr.kind === "duel") {
-      const x = (pr.x - cpos.x) | 0;
-      const y = (pr.y - cpos.y) | 0;
-      const bob = (Math.sin(t * 6) * 2) | 0;
-      px(x, y + bob, 8, 10, "#6a5088");
-      px(x + 2, y - 4 + bob, 4, 4, "#c9a227");
-      if (pr.hitCool > 0) return; // drawn; skip hit until cooldown ends
-      if (Math.hypot(player.x + 4 - pr.x, player.y + 7 - pr.y) < 14) {
-        hubUi.tip = "PRACTICE HIT!";
-        hubUi.tipT = 1.2;
-        pr.hitCool = 0.55;
-        pr.hp = (pr.hp | 0) - 1;
-        pr.x = 30 + Math.random() * 40;
-        pr.y = 48 + Math.random() * 30;
-        if (pr.hp <= 0) {
-          hubUi.practice = null;
-          hubUi.tip = "DUEL PRACTICE CLEAR";
-          hubUi.tipT = 2.5;
-          gainXp(4);
-        }
-      }
-    }
-  }
-
   function drawHubOverlay() {
     if (scene !== "hub" || uiBlocksPlay()) return;
     const uiW = canvas.width / SCALE_UI;
-    const uiH = canvas.height / SCALE_UI;
     if (hubUi.tipT > 0 && hubUi.tip) {
       drawPixText(hubUi.tip, (uiW / 2) | 0, 10, "#f3e2c4", "center");
     }
-    if (hubUi.mode === "menu") {
-      const w = 120;
-      const h = 68;
-      const x = ((uiW - w) / 2) | 0;
-      const y = ((uiH - h) / 2) | 0;
-      px(x, y, w, h, "#3a2414");
-      px(x + 1, y + 1, w - 2, h - 2, "#8a5a32");
-      px(x + 3, y + 3, w - 6, h - 6, "#c4a574");
-      drawPixText("HUB PLAZA", (x + w / 2) | 0, y + 8, "#3a2414", "center");
-      const opts = ["PRACTICE DUEL", "INVITE DUEL", "PAIR DUO", "CLOSE"];
-      for (let i = 0; i < opts.length; i++) {
-        const sel = hubUi.duelSel === i;
-        drawPixText((sel ? "> " : "  ") + opts[i], x + 10, y + 22 + i * 10, sel ? "#1a120c" : "#5a3a21");
-      }
-    }
-    // Online roster strip
     const api = lbApi();
     const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
     if (n != null) drawPixText("ONLINE " + n, uiW - 6, 8, "#c9a227", "right");
-  }
-
-  function handleHubMenuKey(k) {
-    if (scene !== "hub") return false;
-    if (k === "t" && !hubUi.mode) {
-      hubUi.mode = "menu";
-      hubUi.duelSel = 0;
-      return true;
-    }
-    if (hubUi.mode !== "menu") return false;
-    if (k === "arrowup" || k === "w") {
-      hubUi.duelSel = (hubUi.duelSel + 3) % 4;
-      return true;
-    }
-    if (k === "arrowdown" || k === "s") {
-      hubUi.duelSel = (hubUi.duelSel + 1) % 4;
-      return true;
-    }
-    if (k === "escape") {
-      hubUi.mode = "";
-      return true;
-    }
-    if (k === "enter" || k === " ") {
-      const i = hubUi.duelSel;
-      if (i === 0) {
-        hubUi.practice = { kind: "duel", x: 44, y: 56, hp: 3, hitCool: 0 };
-        hubUi.tip = "WALK INTO THE TARGET";
-        hubUi.tipT = 3;
-        hubUi.mode = "";
-      } else if (i === 1) {
-        hubUi.tip = "DUEL INVITE STUB — NEED LIVE SYNC";
-        hubUi.tipT = 3;
-        hubUi.mode = "";
-      } else if (i === 2) {
-        hubUi.tip = "DUO PAIR STUB — COMING SOON";
-        hubUi.tipT = 3;
-        hubUi.mode = "";
-      } else hubUi.mode = "";
-      return true;
-    }
-    return false;
   }
 
   function tryHubEmote() {
@@ -9268,11 +9385,12 @@
       "ENTER DROPS OR EQUIPS COSMETIC",
       "SPACE USES HELD ITEM",
       "CLOAK SPACE = STEALTH",
-      "TEMPLE INLAND FROM DOCK",
+      "TEMPLE DEEP IN THE JUNGLE",
+      "HUGE MAZE — NO TRAPS",
       "JADE MASK ON THE PEDESTAL",
       "DAILY SUN IDOL NEAR PATH",
-      "HUB GATE FOR ONLINE PLAZA",
-      "HUB: T MENU  E EMOTE",
+      "HUB MODE = SHARED PLAZA",
+      "HUB: E EMOTE  ESC LEAVES",
       "SHELL BLOWS THE HORN",
       "FAR HORN WAKES SERPENT",
       "WAND HITS BREACHING SERPENT",
@@ -9345,7 +9463,6 @@
       if (scene === "temple") drawTemplePedestal(cpos, t);
       if (scene === "hub") {
         drawHubPeers(cpos, t);
-        drawHubPractice(cpos, t);
       }
       for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
       if (scene === "cabin") drawWardenMagic(cpos, t);
@@ -9482,7 +9599,7 @@
   }
 
   function openWalkthrough(kind) {
-    walkKind = kind === "speedrun" ? "speedrun" : "normal";
+    walkKind = kind === "speedrun" ? "speedrun" : kind === "hub" ? "hub" : "normal";
     walkStep = 0;
     uiScreen = "walkthrough";
     playMode = null;
@@ -9499,20 +9616,22 @@
       uiScreen = "categories";
       srCursor = 0;
       refreshSpeedBoard(SPEED_ORDER[0]);
-    } else if (i === 2) {
+    } else if (i === 2) enterHubMode();
+    else if (i === 3) {
       uiScreen = "account";
       authMode = "menu";
       authStatus = "";
       srCursor = 0;
       const api = lbApi();
       if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
-    } else if (i === 3) {
+    } else if (i === 4) {
       uiScreen = "nm_boards";
       nmCursor = 0;
       nmBoardKind = "playtime";
       refreshNmBoard(nmBoardKind);
-    } else if (i === 4) openWalkthrough("normal");
-    else if (i === 5) openWalkthrough("speedrun");
+    } else if (i === 5) openWalkthrough("normal");
+    else if (i === 6) openWalkthrough("speedrun");
+    else if (i === 7) openWalkthrough("hub");
   }
 
   function speedrunActive() {
@@ -10119,8 +10238,8 @@
     cosmetics.back = null;
     cosSelect = null;
     templeMaskTaken = false;
-    hubUi.mode = "";
-    hubUi.practice = null;
+    hubUi.tip = "";
+    hubUi.tipT = 0;
     hubEmoteT = 0;
     ownedBoat = null;
     boatThrow = null;
@@ -10306,12 +10425,48 @@
     clampCamera();
   }
 
+  function enterHubMode() {
+    if (!hubCanvas) bakeHubInterior();
+    playMode = "hub";
+    uiScreen = null;
+    scene = "hub";
+    player.aboard = false;
+    player.dead = 0;
+    player.hurt = 0;
+    player.x = (HUB_W / 2 - 4) | 0;
+    player.y = HUB_H - 44;
+    player.facing = 1;
+    hubUi.tip = "TAB CHAT · E EMOTE · ESC LEAVES";
+    hubUi.tipT = 4;
+    hubEmoteT = 0;
+    guideOpen = false;
+    camera.x = player.x + player.w / 2 - viewW / 2;
+    camera.y = player.y + player.h / 2 - viewH * 0.36;
+    clampCamera();
+    syncPresenceActivity();
+  }
+
+  function leaveHubMode() {
+    hubUi.tip = "";
+    hubUi.tipT = 0;
+    hubEmoteT = 0;
+    const api = lbApi();
+    if (api && typeof api.setHubPresence === "function") api.setHubPresence(null);
+    scene = "island";
+    backToModeMenu();
+  }
+
   function backToModeMenu() {
     if (serpent) endSerpentFight("flee");
     bumpReplayPlayGen();
     clearReplayPlayback();
     replayCutT = 0;
-    const restoreCursor = uiScreen === "walkthrough" ? (walkKind === "speedrun" ? 5 : 4) : 0;
+    let restoreCursor = 0;
+    if (uiScreen === "walkthrough") {
+      if (walkKind === "speedrun") restoreCursor = MODE_PLAY.length + 1;
+      else if (walkKind === "hub") restoreCursor = MODE_PLAY.length + 2;
+      else restoreCursor = MODE_PLAY.length;
+    } else if (playMode === "hub") restoreCursor = 2;
     playMode = null;
     uiScreen = "mode";
     srCursor = restoreCursor;
@@ -10322,6 +10477,9 @@
     authMode = "menu";
     authStatus = "";
     authField = 0;
+    if (scene === "hub") scene = "island";
+    const api = lbApi();
+    if (api && typeof api.setHubPresence === "function") api.setHubPresence(null);
   }
 
   async function refreshNmBoard(kind) {
@@ -10498,7 +10656,7 @@
     const playW = 148;
     const walkW = 128;
     const gap = 10;
-    const h = 108;
+    const h = 124;
     const totalW = playW + walkW + gap;
     const x0 = ((uiW - totalW) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
@@ -10519,12 +10677,12 @@
 
     const wx = x0 + playW + gap;
     drawPanelBox(wx, y, walkW, h, "WALKTHROUGH");
-    drawPixText("LEARN A MODE", (wx + walkW / 2) | 0, y + 20, "#5c3a21", "center");
+    drawPixText("LEARN A MODE", (wx + walkW / 2) | 0, y + 18, "#5c3a21", "center");
     for (let i = 0; i < MODE_WALK.length; i++) {
       const idx = MODE_PLAY.length + i;
       const key = "mode:" + idx;
       const sel = srCursor === idx || menuHovering(key);
-      const oy = y + 40 + i * 18;
+      const oy = y + 32 + i * 18;
       if (sel) px(wx + 12, oy - 2, walkW - 24, 14, "#e8c44a");
       else px(wx + 12, oy - 2, walkW - 24, 14, "#8a5a32");
       px(wx + 13, oy - 1, walkW - 26, 12, sel ? "#e8c44a" : "#c4a574");
@@ -11339,17 +11497,21 @@
       data.scene === "fish" ||
       data.scene === "cabin" ||
       data.scene === "island" ||
-      data.scene === "temple" ||
-      data.scene === "hub"
+      data.scene === "temple"
     ) {
       scene = data.scene;
+    } else if (data.scene === "hub") {
+      // Hub is its own mode now — remount old island-gate saves to the dock
+      scene = "island";
+      player.x = spawnX;
+      player.y = spawnY;
     }
     cosmetics.face = data.cosmetics && ITEM_DEFS[data.cosmetics.face] ? data.cosmetics.face : null;
     cosmetics.back = data.cosmetics && ITEM_DEFS[data.cosmetics.back] ? data.cosmetics.back : null;
     templeMaskTaken = !!data.templeMaskTaken;
     dailyClaimedUtc = data.dailyClaimedUtc ? String(data.dailyClaimedUtc) : "";
     cloakOn = !!data.cloak && ownsCloak();
-    if (scene === "cabin" || scene === "temple" || scene === "hub") player.aboard = false;
+    if (scene === "cabin" || scene === "temple") player.aboard = false;
     if (data.boat && typeof data.boat.x === "number") {
       ownedBoat = {
         x: data.boat.x,
@@ -11391,18 +11553,10 @@
     updateDoors(dt);
     updatePlayer(dt);
     updatePickup(dt);
-    updateTempleHazards(dt);
     if (hubUi.tipT > 0) hubUi.tipT = Math.max(0, hubUi.tipT - dt);
     if (hubEmoteT > 0) hubEmoteT = Math.max(0, hubEmoteT - dt);
     if (cosTipT > 0) cosTipT = Math.max(0, cosTipT - dt);
-    if (hubUi.practice && hubUi.practice.hitCool > 0) {
-      hubUi.practice.hitCool = Math.max(0, hubUi.practice.hitCool - dt);
-    }
-    if (scene === "hub") {
-      syncHubPresencePose();
-    } else {
-      syncHubPresencePose();
-    }
+    syncHubPresencePose();
     updateXpFx(dt);
     updateHorn();
     updateUseFx(dt);
@@ -11570,13 +11724,17 @@
       if (!e.repeat) guideOpen = !guideOpen;
       return;
     }
-    if (k === "escape" && playMode === "normal" && !uiBlocksPlay()) {
+    if (k === "escape" && playMode === "hub" && !uiBlocksPlay()) {
       if (guideOpen) {
         guideOpen = false;
         return;
       }
-      if (hubUi.mode === "menu") {
-        hubUi.mode = "";
+      leaveHubMode();
+      return;
+    }
+    if (k === "escape" && playMode === "normal" && !uiBlocksPlay()) {
+      if (guideOpen) {
+        guideOpen = false;
         return;
       }
       if (cabinCut.kind) return;
@@ -11586,7 +11744,6 @@
       return;
     }
     if (guideOpen || cabinCut.kind) return;
-    if (!e.repeat && handleHubMenuKey(k)) return;
     if (e.repeat) {
       if (k === "enter" && isIndoor() && !cosSelect) dropHeld();
       return;
@@ -11602,14 +11759,8 @@
       cosSelect = "back";
     }
     if (k === "enter") onEnter();
-    if (k === " ") {
-      if (hubUi.mode === "menu") handleHubMenuKey(k);
-      else useHeld();
-    }
-    if (k === "t") {
-      if (scene === "hub") handleHubMenuKey(k);
-      else tryTradeKey();
-    }
+    if (k === " ") useHeld();
+    if (k === "t") tryTradeKey();
     if (k === "e" && scene === "hub") tryHubEmote();
     if (k === "c" || k === "f") tryCastRod();
   });
