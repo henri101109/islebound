@@ -235,6 +235,28 @@
   let srBoardNote = "";
   let srStatus = "";
   let srSubmitting = false;
+  let srSubmitted = false;
+  let srRunId = "";
+  let srPbPrev = 0;
+  let srPbLabel = "";
+  let authUser = "";
+  let authPin = "";
+  let authName = "";
+  let authField = 0;
+  let authMode = "menu";
+  let authStatus = "";
+  let authBusy = false;
+  let nmBoardKind = "playtime";
+  let nmBoardRows = [];
+  let nmBoardNote = "";
+  let nmCursor = 0;
+  let modeOpts = ["NORMAL", "SPEEDRUN", "ACCOUNT", "STATS"];
+  let playtimeAcc = 0;
+  let playtimeFlush = 0;
+  let guestNameLocked = false;
+  let menuHits = [];
+  let menuHoverKey = "";
+  let pointerUi = { x: -9999, y: -9999, down: false };
   const dockLamps = [];
   const windowLights = [];
   const eaveShades = [];
@@ -1962,6 +1984,10 @@
     if (player.hp <= 0) {
       player.dead = 1.4;
       player.aboard = false;
+      if (playMode === "normal") {
+        const api = lbApi();
+        if (api && api.noteNmEvent) api.noteNmEvent("deaths", 1);
+      }
     }
   }
 
@@ -1981,7 +2007,7 @@
         player.drownTick = 0;
         player.hurt = 0;
         player.aboard = false;
-        if (playMode === "speedrun" && srCat === "death" && srTiming && srWasDead) {
+        if (playMode === "speedrun" && srCat === "death" && srTiming && srWasDead && uiScreen !== "finish") {
           srWasDead = false;
           finishSpeedrun();
         }
@@ -2036,6 +2062,10 @@
     if (existing >= 0) {
       if (inventory[existing].count >= def.max) return false;
       inventory[existing].count += 1;
+      if (playMode === "normal" && id === "shark") {
+        const api = lbApi();
+        if (api && api.noteNmEvent) api.noteNmEvent("sharks", 1);
+      }
       if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
         finishSpeedrun();
       }
@@ -2044,6 +2074,10 @@
     const empty = inventory.findIndex((s) => !s);
     if (empty < 0) return false;
     inventory[empty] = { id, count: 1 };
+    if (playMode === "normal" && id === "shark") {
+      const api = lbApi();
+      if (api && api.noteNmEvent) api.noteNmEvent("sharks", 1);
+    }
     if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
       finishSpeedrun();
     }
@@ -2064,6 +2098,10 @@
       player.xp -= xpNeeded(player.level);
       player.level += 1;
       leveled += 1;
+    }
+    if (leveled > 0 && playMode === "normal") {
+      const api = lbApi();
+      if (api && api.noteNmEvent) api.noteNmEvent("level", player.level);
     }
     xpFx = {
       t: 0,
@@ -2226,6 +2264,13 @@
     if (coinBatch > 0) {
       player.coins += coinBatch;
       playCoinClink();
+      if (playMode === "normal") {
+        const api = lbApi();
+        if (api && api.noteNmEvent) {
+          api.noteNmEvent("coins_earned", coinBatch);
+          api.noteNmEvent("coins_high", player.coins);
+        }
+      }
     }
     if (xpBatch > 0) {
       gainXp(xpBatch);
@@ -2746,6 +2791,10 @@
       return true;
     }
     if (!consumeHeldChest()) return false;
+    if (playMode === "normal") {
+      const api = lbApi();
+      if (api && api.noteNmEvent) api.noteNmEvent("chests", 1);
+    }
     startCabinCut(Math.random() < 0.5 ? "classic" : "magic");
     return true;
   }
@@ -3525,6 +3574,9 @@
     "!": [4, 4, 4, 4, 4, 0, 4],
     "?": [14, 17, 1, 2, 4, 0, 4],
     "+": [0, 4, 4, 31, 4, 4, 0],
+    "@": [14, 17, 23, 21, 23, 16, 14],
+    "_": [0, 0, 0, 0, 0, 0, 31],
+    "*": [0, 10, 4, 31, 4, 10, 0],
   };
 
   function drawPixChar(ch, x, y, color) {
@@ -3546,6 +3598,65 @@
     if (align === "center") ox = (x - pixTextWidth(s) / 2) | 0;
     else if (align === "right") ox = (x - pixTextWidth(s)) | 0;
     for (let i = 0; i < s.length; i++) drawPixChar(s[i], ox + i * 6, y, color);
+  }
+
+  function drawPixTextBold(text, x, y, color, align) {
+    drawPixText(text, x, y, color, align);
+    drawPixText(text, x + 1, y, color, align);
+  }
+
+  function drawAccountName(name, x, y, isAccount, align) {
+    const n = String(name || "?").slice(0, 12);
+    if (isAccount) drawPixTextBold(n, x, y, "#c9a227", align);
+    else drawPixText(n, x, y, "#3a2414", align);
+  }
+
+  function drawNewTag(x, y) {
+    const label = "NEW";
+    const tw = pixTextWidth(label);
+    px(x - 1, y - 1, tw + 3, 9, "#3a2414");
+    px(x, y, tw + 1, 7, "#8a5a18");
+    drawPixText(label, x + 1, y, "#ffe27a");
+    return tw + 4;
+  }
+
+  function clearMenuHits() {
+    menuHits = [];
+  }
+
+  function addMenuHit(key, x, y, w, h, onClick, opts) {
+    const o = opts || {};
+    menuHits.push({
+      key: String(key),
+      x: x | 0,
+      y: y | 0,
+      w: w | 0,
+      h: h | 0,
+      onClick,
+      hover: !!o.hover,
+    });
+  }
+
+  function hitMenuAt(ux, uy) {
+    for (let i = menuHits.length - 1; i >= 0; i--) {
+      const h = menuHits[i];
+      if (ux >= h.x && uy >= h.y && ux < h.x + h.w && uy < h.y + h.h) return h;
+    }
+    return null;
+  }
+
+  function menuHovering(key) {
+    return menuHoverKey && menuHoverKey === String(key);
+  }
+
+  function eventToUi(e) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / Math.max(1, rect.width);
+    const sy = canvas.height / Math.max(1, rect.height);
+    return {
+      x: ((e.clientX - rect.left) * sx) / SCALE_UI,
+      y: ((e.clientY - rect.top) * sy) / SCALE_UI,
+    };
   }
 
   function tileType(c, r) {
@@ -6746,6 +6857,7 @@
       "WALK TO LOOT TO PICK UP",
       "WALK TO BOAT TO BOARD",
       "SHORE OR DOCK TO GET OUT",
+      "R RESETS SPEEDRUN",
       "H CLOSES THIS GUIDE",
     ];
     const title = "GUIDEBOOK";
@@ -6852,6 +6964,7 @@
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
     drawFade();
     drawSpeedTimer();
+    drawAccountHudChip();
     drawSpeedUI();
   }
 
@@ -6897,11 +7010,31 @@
   }
 
   function uiBlocksPlay() {
-    return uiScreen === "mode" || uiScreen === "categories" || uiScreen === "finish" || uiScreen === "boards";
+    return (
+      uiScreen === "mode" ||
+      uiScreen === "categories" ||
+      uiScreen === "finish" ||
+      uiScreen === "boards" ||
+      uiScreen === "account" ||
+      uiScreen === "nm_boards"
+    );
   }
 
   function speedrunActive() {
     return playMode === "speedrun" && (srRunning || uiScreen === "ready");
+  }
+
+  function newSpeedRunId() {
+    const api = lbApi();
+    return api && api.uuid ? api.uuid() : "run-" + Date.now() + "-" + ((Math.random() * 1e9) | 0);
+  }
+
+  function lockSpeedFinalMs() {
+    if (srTiming) {
+      srElapsed = Math.max(srElapsed, performance.now() - srStartPerf);
+      srTiming = false;
+    }
+    srFinalMs = Math.max(0, srElapsed | 0);
   }
 
   function maybeStartSpeedTimer() {
@@ -6913,32 +7046,53 @@
     srTiming = true;
     srStartPerf = performance.now();
     srElapsed = 0;
+    srFinalMs = 0;
+    srSubmitted = false;
+    if (!srRunId) srRunId = newSpeedRunId();
   }
 
   function checkCatchSpeedEnd(id) {
-    if (!speedrunActive() || !srTiming) return;
+    if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
     if (srCat === "shark" && id === "shark") finishSpeedrun();
     else if (srCat === "jelly_white" && id === "jelly_white") finishSpeedrun();
     else if (srCat === "chest" && id === "chest") finishSpeedrun();
-    else if (srCat === "shark_cloak" && id === "shark" && cloakOn) finishSpeedrun();
+    else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
   }
 
   function checkBoatSpeedEnd() {
-    if (!speedrunActive() || !srTiming) return;
+    if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
     if (srCat === "boat" && srBoughtBoat && player.aboard) finishSpeedrun();
   }
 
   function finishSpeedrun() {
     if (playMode !== "speedrun" || uiScreen === "finish") return;
-    if (srTiming) srElapsed = Math.max(srElapsed, performance.now() - srStartPerf);
-    srFinalMs = Math.max(0, srElapsed | 0);
-    srTiming = false;
+    // Freeze timer this frame — all end hooks must land here.
+    lockSpeedFinalMs();
     srRunning = false;
     uiScreen = "finish";
     srFinishSel = 1;
     srStatus = "";
+    srSubmitted = false;
     const api = lbApi();
-    if (api && !srName) srName = api.getLastName() || "";
+    if (api) {
+      if (api.isSignedIn && api.isSignedIn()) {
+        srName = api.displayName() || srName || "";
+        guestNameLocked = true;
+      } else {
+        guestNameLocked = false;
+        if (!srName) srName = api.getLastName() || "";
+      }
+      const pb = api.pbInfo ? api.pbInfo(srCat, srFinalMs) : null;
+      if (pb) {
+        srPbPrev = pb.prev | 0;
+        srPbLabel = pb.isFirst ? "FIRST PB" : pb.label;
+      } else {
+        srPbPrev = 0;
+        srPbLabel = "";
+      }
+      if (api.recordSpeedrunFinish) api.recordSpeedrunFinish();
+      if (api.addPlaytime) api.addPlaytime(srFinalMs, "speedrun");
+    }
     refreshSpeedBoard(srCat);
   }
 
@@ -6996,9 +7150,19 @@
     srFinalMs = 0;
     srStatus = "";
     srSubmitting = false;
+    srSubmitted = false;
+    srPbPrev = 0;
+    srPbLabel = "";
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
+  }
+
+  function applyBoardIdentityMerge(rows, lim) {
+    const api = lbApi();
+    const list = Array.isArray(rows) ? rows : [];
+    if (!api || !api.mergeBoardIdentities) return list.slice(0, lim || 10);
+    return api.mergeBoardIdentities(list, null, lim || 10);
   }
 
   async function refreshSpeedBoard(cat) {
@@ -7010,13 +7174,18 @@
       srBoardNote = "NO CLIENT";
       return;
     }
+    if (api.fetchKnownIdentities) {
+      try {
+        await api.fetchKnownIdentities();
+      } catch (e) {}
+    }
     if (!api.configured()) {
-      srBoardRows = api.getCachedBoard(id) || [];
+      srBoardRows = applyBoardIdentityMerge(api.getCachedBoard(id) || [], 10);
       srBoardNote = srBoardRows.length ? "CACHED / OFFLINE" : "SET UP SUPABASE";
       return;
     }
     const res = await api.fetchTop(id, 10);
-    srBoardRows = res.rows || [];
+    srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
   }
 
@@ -7027,6 +7196,16 @@
     uiScreen = "ready";
     srCursor = 0;
     srStatus = "";
+    srSubmitted = false;
+    srRunId = newSpeedRunId();
+    srFinalMs = 0;
+    const api = lbApi();
+    if (api && api.isSignedIn && api.isSignedIn()) {
+      srName = api.displayName() || srName;
+      guestNameLocked = true;
+    } else {
+      guestNameLocked = false;
+    }
     refreshSpeedBoard(srCat);
   }
 
@@ -7034,6 +7213,12 @@
     playMode = "normal";
     uiScreen = null;
     loadGame();
+    const api = lbApi();
+    if (api && api.loadLocalNmStats) {
+      const st = api.loadLocalNmStats();
+      if (st && player.level > (st.level_high | 0) && api.noteNmEvent) api.noteNmEvent("level", player.level);
+      if (st && player.coins > (st.coins_high | 0) && api.noteNmEvent) api.noteNmEvent("coins_high", player.coins);
+    }
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
@@ -7046,6 +7231,28 @@
     srRunning = false;
     srTiming = false;
     guideOpen = false;
+    authMode = "menu";
+    authStatus = "";
+    authField = 0;
+  }
+
+  async function refreshNmBoard(kind) {
+    const id = kind || nmBoardKind;
+    const api = lbApi();
+    nmBoardNote = "LOADING...";
+    if (!api || !api.fetchNmBoard) {
+      nmBoardRows = [];
+      nmBoardNote = "NO CLIENT";
+      return;
+    }
+    if (!api.configured()) {
+      nmBoardRows = [];
+      nmBoardNote = "SET UP SUPABASE";
+      return;
+    }
+    const res = await api.fetchNmBoard(id, 10);
+    nmBoardRows = res.rows || [];
+    nmBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
   }
 
   function backToCategories() {
@@ -7073,7 +7280,9 @@
     if (!(srTiming || uiScreen === "ready" || uiScreen === "finish")) return;
     const uiW = canvas.width / SCALE_UI;
     let ms = srFinalMs;
-    if (srTiming) ms = performance.now() - srStartPerf;
+    // Finish screen always shows locked final — never live clock.
+    if (uiScreen === "finish") ms = srFinalMs;
+    else if (srTiming) ms = performance.now() - srStartPerf;
     else if (uiScreen === "ready") ms = 0;
     const label = formatSpeedTime(ms);
     const tw = pixTextWidth(label);
@@ -7084,8 +7293,33 @@
     drawPixText(label, x, y, "#f3e2c4");
   }
 
+  function drawAccountHudChip() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return;
+    if (uiBlocksPlay() && uiScreen !== "ready" && uiScreen !== "finish") return;
+    // Opposite the speedrun timer (timer is top-right). Also show in normal when logged in.
+    if (playMode !== "speedrun" && playMode !== "normal") return;
+    const name = (api.displayName && api.displayName()) || "PLAYER";
+    let playMs = 0;
+    if (api.totalPlaytimeMs) playMs = api.totalPlaytimeMs() | 0;
+    else {
+      const p = api.currentProfile && api.currentProfile();
+      playMs = ((p && p.playtime_ms) || 0) + ((p && p.nm_playtime_ms) || 0);
+    }
+    const clock =
+      api.formatPlaytimeClock ? api.formatPlaytimeClock(playMs) : formatSpeedTime(playMs).split(".")[0];
+    const line = String(name).slice(0, 10) + "  " + clock;
+    const tw = pixTextWidth(line);
+    const x = 10;
+    const y = 6;
+    px(x - 4, y - 3, tw + 8, 13, "#3a2414");
+    px(x - 3, y - 2, tw + 6, 11, "#5c3a21");
+    drawPixText(line, x, y, "#f3e2c4");
+  }
+
   function drawBoardList(x, y, maxRows) {
-    const rows = srBoardRows || [];
+    const api = lbApi();
+    const rows = applyBoardIdentityMerge(srBoardRows || [], maxRows || 10);
     const n = Math.min(maxRows || 10, rows.length);
     if (!n) {
       drawPixText(srBoardNote || "NO SCORES YET", x, y, "#5c3a21");
@@ -7095,10 +7329,17 @@
     for (let i = 0; i < n; i++) {
       const r = rows[i];
       const rank = String(i + 1).padStart(2, " ");
-      const name = String(r.player_name || "?").slice(0, 12);
+      const name = String(r.player_name || "?").slice(0, 10);
       const timeStr = formatSpeedTime(r.time_ms | 0);
-      drawPixText(rank + " " + name, x, yy, "#3a2414");
-      drawPixText(timeStr, x + 108, yy, "#5c3a21");
+      const isAcc = api && api.rowIsAccount ? api.rowIsAccount(r) : !!(r.is_account || r.user_id);
+      const isNew =
+        api && api.isNewScoreRow
+          ? api.isNewScoreRow(r, { runId: srSubmitted ? srRunId : "" })
+          : false;
+      drawPixText(rank + " ", x, yy, "#3a2414");
+      drawAccountName(name, x + 18, yy, isAcc);
+      drawPixText(timeStr, x + 96, yy, "#5c3a21");
+      if (isNew) drawNewTag(x + 96 + pixTextWidth(timeStr) + 3, yy);
       yy += 8;
     }
     if (srBoardNote) {
@@ -7115,19 +7356,40 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const w = 168;
-    const h = 78;
+    const h = 96;
     const x = ((uiW - w) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
     drawPanelBox(x, y, w, h, "ISLEBOUND");
-    drawPixText("CHOOSE YOUR PATH", (x + w / 2) | 0, y + 20, "#3a2414", "center");
-    const opts = ["NORMAL", "SPEEDRUN"];
-    for (let i = 0; i < opts.length; i++) {
-      const sel = srCursor === i;
-      const oy = y + 36 + i * 14;
+    for (let i = 0; i < modeOpts.length; i++) {
+      const key = "mode:" + i;
+      const sel = srCursor === i || menuHovering(key);
+      const oy = y + 22 + i * 12;
       if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
-      drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+      drawPixText((sel ? "> " : "  ") + modeOpts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+      addMenuHit(key, x + 18, oy - 2, w - 36, 11, () => {
+        srCursor = i;
+        if (i === 0) enterNormalMode();
+        else if (i === 1) {
+          playMode = "speedrun";
+          uiScreen = "categories";
+          srCursor = 0;
+          refreshSpeedBoard(SPEED_ORDER[0]);
+        } else if (i === 2) {
+          uiScreen = "account";
+          authMode = "menu";
+          authStatus = "";
+          srCursor = 0;
+          const api = lbApi();
+          if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
+        } else if (i === 3) {
+          uiScreen = "nm_boards";
+          nmCursor = 0;
+          nmBoardKind = "playtime";
+          refreshNmBoard(nmBoardKind);
+        }
+      }, { hover: true });
     }
-    drawPixText("ARROWS + ENTER", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+    drawPixText("CLICK OR ARROWS", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
   }
 
   function drawCategorySelect() {
@@ -7145,12 +7407,18 @@
     drawPanelBox(x, y, leftW, h, "SPEEDRUN");
     for (let i = 0; i < SPEED_ORDER.length; i++) {
       const id = SPEED_ORDER[i];
-      const sel = srCursor === i;
+      const key = "cat:" + i;
+      const sel = srCursor === i || menuHovering(key);
       const oy = y + 20 + i * 10;
       if (sel) px(x + 5, oy - 2, leftW - 10, 9, "#e8c44a");
       drawPixText((sel ? ">" : " ") + catLabel(id), x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+      addMenuHit(key, x + 5, oy - 2, leftW - 10, 9, () => {
+        srCursor = i;
+        beginSpeedCategory(SPEED_ORDER[i]);
+      }, { hover: true });
     }
     drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
+    addMenuHit("cat:esc", x + 5, y + h - 12, 70, 10, () => backToModeMenu(), { hover: true });
     const bx = x + leftW + 10;
     drawPanelBox(bx, y, boardW, h, "TOP 10");
     drawBoardList(bx + 8, y + 20, 10);
@@ -7160,13 +7428,16 @@
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
     const w = 180;
-    const h = 64;
+    const h = 72;
     const x = ((uiW - w) / 2) | 0;
     const y = ((uiH - h) / 2 - 20) | 0;
     drawPanelBox(x, y, w, h, "READY");
     drawPixText(catLabel(srCat), (x + w / 2) | 0, y + 22, "#3a2414", "center");
-    drawPixText("ENTER PLAY  OR  MOVE", (x + w / 2) | 0, y + 36, "#5c3a21", "center");
-    drawPixText("ESC CATEGORIES", (x + w / 2) | 0, y + 48, "#5c3a21", "center");
+    if (menuHovering("ready:play")) px(x + 14, y + 32, w - 28, 11, "#e8c44a");
+    drawPixText("CLICK / ENTER PLAY", (x + w / 2) | 0, y + 36, menuHovering("ready:play") ? "#2b1c12" : "#5c3a21", "center");
+    drawPixText("R RESET   ESC BACK", (x + w / 2) | 0, y + 48, menuHovering("ready:back") ? "#2b1c12" : "#5c3a21", "center");
+    addMenuHit("ready:play", x + 10, y + 18, w - 20, 28, () => maybeStartSpeedTimer(), { hover: true });
+    addMenuHit("ready:back", x + 10, y + 46, w - 20, 14, () => backToCategories(), { hover: true });
   }
 
   function drawFinishScreen() {
@@ -7176,42 +7447,271 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const w = 210;
-    const h = 148;
+    const h = 158;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, "RUN COMPLETE");
     drawPixText(catLabel(srCat), (x + w / 2) | 0, y + 20, "#3a2414", "center");
     drawPixText(formatSpeedTime(srFinalMs), (x + w / 2) | 0, y + 32, "#2b1c12", "center");
-    drawPixText("NAME", x + 12, y + 48, "#5c3a21");
-    px(x + 48, y + 46, 120, 11, srFinishSel === 0 ? "#e8c44a" : "#8a5a32");
-    px(x + 49, y + 47, 118, 9, "#f3e2c4");
-    drawPixText((srName || "").slice(0, 12), x + 52, y + 48, "#2b1c12");
-    if (srFinishSel === 0 && ((time * 3) | 0) % 2 === 0) {
-      const cx = x + 52 + pixTextWidth((srName || "").slice(0, 12)) + (srName ? 1 : 0);
-      px(cx, y + 48, 5, 7, "#2b1c12");
+    if (srPbLabel) {
+      const pbCol = srPbLabel.indexOf("-") >= 0 || srPbLabel === "FIRST PB" ? "#2f6a24" : "#5c3a21";
+      drawPixText(srPbLabel, (x + w / 2) | 0, y + 42, pbCol, "center");
     }
-    const btns = ["SUBMIT", "RETRY", "CATEGORIES", "MENU"];
+    const nameLocked = guestNameLocked;
+    drawPixText("NAME", x + 12, y + 54, "#5c3a21");
+    const nameSel = (!nameLocked && srFinishSel === 0) || menuHovering("fin:name");
+    px(x + 48, y + 52, 120, 11, nameSel ? "#e8c44a" : "#8a5a32");
+    px(x + 49, y + 53, 118, 9, "#f3e2c4");
+    if (nameLocked) drawPixTextBold((srName || "").slice(0, 12), x + 52, y + 54, "#c9a227");
+    else drawPixText((srName || "").slice(0, 12), x + 52, y + 54, "#2b1c12");
+    if (!nameLocked && srFinishSel === 0 && ((time * 3) | 0) % 2 === 0) {
+      const cx = x + 52 + pixTextWidth((srName || "").slice(0, 12)) + (srName ? 1 : 0);
+      px(cx, y + 54, 5, 7, "#2b1c12");
+    }
+    if (!nameLocked) {
+      addMenuHit("fin:name", x + 48, y + 52, 120, 11, () => {
+        srFinishSel = 0;
+      }, { hover: true });
+    }
+    const submitLabel = srSubmitted ? "POSTED" : "SUBMIT";
+    const btns = [submitLabel, "RETRY", "CATEGORIES", "MENU"];
     for (let i = 0; i < btns.length; i++) {
-      const sel = srFinishSel === i + 1;
+      const key = "fin:btn:" + i;
+      const sel = srFinishSel === i + 1 || menuHovering(key);
       const bx = x + 12 + (i % 2) * 96;
-      const by = y + 64 + ((i / 2) | 0) * 14;
+      const by = y + 70 + ((i / 2) | 0) * 14;
       if (sel) px(bx - 2, by - 2, 90, 11, "#e8c44a");
       drawPixText(btns[i], bx, by, sel ? "#2b1c12" : "#3a2414");
+      addMenuHit(key, bx - 2, by - 2, 90, 11, () => {
+        srFinishSel = i + 1;
+        if (i === 0) {
+          if (!srSubmitted) submitSpeedScore();
+        } else if (i === 1) beginSpeedCategory(srCat);
+        else if (i === 2) backToCategories();
+        else if (i === 3) backToModeMenu();
+      }, { hover: true });
     }
-    if (srStatus) drawPixText(srStatus, (x + w / 2) | 0, y + 96, "#5c3a21", "center");
-    drawPixText("TOP 10", x + 12, y + 108, "#5c3a21");
-    drawBoardList(x + 12, y + 118, 3);
+    if (srStatus) drawPixText(srStatus, (x + w / 2) | 0, y + 102, "#5c3a21", "center");
+    drawPixText("TOP 10", x + 12, y + 114, "#5c3a21");
+    drawBoardList(x + 12, y + 124, 3);
+  }
+
+  function drawAccountScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const api = lbApi();
+    const signed = api && api.isSignedIn && api.isSignedIn();
+    const w = 220;
+    const h = signed ? 128 : authMode === "menu" ? 100 : authMode === "guest" ? 120 : 148;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, signed ? "PROFILE" : "ACCOUNT");
+    if (signed) {
+      const p = api.currentProfile && api.currentProfile();
+      const name = api.displayName() || "PLAYER";
+      drawPixTextBold(name, (x + w / 2) | 0, y + 22, "#c9a227", "center");
+      const totalMs =
+        api.totalPlaytimeMs
+          ? api.totalPlaytimeMs()
+          : ((p && p.playtime_ms) || 0) + ((p && p.nm_playtime_ms) || 0);
+      const lines = [
+        "PLAY " + (api.formatPlaytimeClock ? api.formatPlaytimeClock(totalMs) : String(totalMs)),
+        "RUNS " + ((p && p.total_runs) || 0) + "  SUB " + ((p && p.total_submits) || 0),
+        "NM LV " + ((p && p.nm_level_high) || 1) + "  SHARK " + ((p && p.nm_sharks) || 0),
+        "NM CHEST " + ((p && p.nm_chests) || 0) + "  DIE " + ((p && p.nm_deaths) || 0),
+      ];
+      for (let i = 0; i < lines.length; i++) {
+        drawPixText(lines[i], (x + w / 2) | 0, y + 36 + i * 10, "#3a2414", "center");
+      }
+      const opts = ["SIGN OUT", "BACK"];
+      for (let i = 0; i < opts.length; i++) {
+        const key = "acc:signed:" + i;
+        const sel = srCursor === i || menuHovering(key);
+        const oy = y + h - 28 + i * 12;
+        if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
+        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
+          srCursor = i;
+          if (i === 0) {
+            api.signOut();
+            guestNameLocked = false;
+            authStatus = "SIGNED OUT";
+            authMode = "menu";
+            srCursor = 0;
+          } else backToModeMenu();
+        }, { hover: true });
+      }
+      return;
+    }
+    if (authMode === "menu") {
+      const opts = ["SIGN IN", "SIGN UP", "GUEST", "BACK"];
+      for (let i = 0; i < opts.length; i++) {
+        const key = "acc:menu:" + i;
+        const sel = srCursor === i || menuHovering(key);
+        const oy = y + 22 + i * 12;
+        if (sel) px(x + 30, oy - 2, w - 60, 11, "#e8c44a");
+        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        addMenuHit(key, x + 30, oy - 2, w - 60, 11, () => {
+          srCursor = i;
+          if (i === 0) {
+            authMode = "signin";
+            authField = 0;
+            authStatus = "";
+            authUser = (api && api.getLastName && api.getLastName()) || authUser || "";
+            authPin = "";
+          } else if (i === 1) {
+            authMode = "signup";
+            authField = 0;
+            authStatus = "";
+            authUser = "";
+            authPin = "";
+          } else if (i === 2) {
+            authMode = "guest";
+            authField = 0;
+            authName = (api && api.getLastName && api.getLastName()) || srName || "";
+            authStatus = "";
+          } else backToModeMenu();
+        }, { hover: true });
+      }
+      if (authStatus) drawPixText(authStatus, (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+      return;
+    }
+    if (authMode === "guest") {
+      drawPixText("GUEST NAME 3-12", (x + w / 2) | 0, y + 22, "#3a2414", "center");
+      const nameSel = authField === 0 || menuHovering("acc:guest:name");
+      px(x + 40, y + 36, w - 80, 11, nameSel ? "#e8c44a" : "#8a5a32");
+      px(x + 41, y + 37, w - 82, 9, "#f3e2c4");
+      drawPixText((authName || "").slice(0, 12), x + 44, y + 38, "#2b1c12");
+      addMenuHit("acc:guest:name", x + 40, y + 36, w - 80, 11, () => {
+        authField = 0;
+      }, { hover: true });
+      const opts = ["PLAY GUEST", "BACK"];
+      for (let i = 0; i < opts.length; i++) {
+        const key = "acc:guest:" + i;
+        const sel = authField === i + 1 || menuHovering(key);
+        const oy = y + 56 + i * 12;
+        if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
+        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
+          authField = i + 1;
+          if (i === 0) submitAuthAction();
+          else {
+            authMode = "menu";
+            srCursor = 0;
+          }
+        }, { hover: true });
+      }
+      if (authStatus) drawPixText(authStatus, (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+      return;
+    }
+    // signin / signup — username + 4-digit PIN
+    drawPixText(authMode === "signup" ? "SIGN UP" : "SIGN IN", (x + w / 2) | 0, y + 20, "#3a2414", "center");
+    const fields = ["USER", "PIN"];
+    for (let i = 0; i < fields.length; i++) {
+      const key = "acc:field:" + i;
+      const oy = y + 34 + i * 18;
+      drawPixText(fields[i], x + 12, oy, "#5c3a21");
+      const sel = authField === i || menuHovering(key);
+      px(x + 48, oy - 2, w - 60, 11, sel ? "#e8c44a" : "#8a5a32");
+      px(x + 49, oy - 1, w - 62, 9, "#f3e2c4");
+      let val = "";
+      if (fields[i] === "USER") val = authUser;
+      else val = "*".repeat(Math.min(4, authPin.length)) + (authPin.length < 4 ? "_".repeat(4 - authPin.length) : "");
+      drawPixText(String(val).slice(0, 18), x + 52, oy, "#2b1c12");
+      addMenuHit(key, x + 48, oy - 2, w - 60, 11, () => {
+        authField = i;
+      }, { hover: true });
+    }
+    const actions = ["SUBMIT", "BACK"];
+    for (let i = 0; i < actions.length; i++) {
+      const key = "acc:act:" + i;
+      const sel = authField === fields.length + i || menuHovering(key);
+      const oy = y + 34 + fields.length * 18 + i * 12;
+      if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
+      drawPixText((sel ? "> " : "  ") + actions[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+      addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
+        authField = fields.length + i;
+        if (i === 0) submitAuthAction();
+        else {
+          authMode = "menu";
+          srCursor = 0;
+        }
+      }, { hover: true });
+    }
+    if (authStatus) drawPixText(authStatus.slice(0, 28), (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+  }
+
+  function drawNmBoardScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.5;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const api = lbApi();
+    const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
+    const leftW = 110;
+    const boardW = 170;
+    const h = Math.min(uiH - 16, 16 + order.length * 10 + 36);
+    const totalW = leftW + boardW + 10;
+    const x = ((uiW - totalW) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, leftW, h, "PROFILE");
+    for (let i = 0; i < order.length; i++) {
+      const id = order[i];
+      const key = "nm:" + i;
+      const def = api && api.NM_BOARD_DEFS ? api.NM_BOARD_DEFS[id] : null;
+      const label = def ? def.label : id.toUpperCase();
+      const sel = nmCursor === i || menuHovering(key);
+      const oy = y + 20 + i * 10;
+      if (sel) px(x + 5, oy - 2, leftW - 10, 9, "#e8c44a");
+      drawPixText((sel ? ">" : " ") + label, x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+      addMenuHit(key, x + 5, oy - 2, leftW - 10, 9, () => {
+        nmCursor = i;
+        nmBoardKind = order[i];
+        refreshNmBoard(nmBoardKind);
+      }, { hover: true });
+    }
+    drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
+    addMenuHit("nm:esc", x + 5, y + h - 12, 70, 10, () => backToModeMenu(), { hover: true });
+    const bx = x + leftW + 10;
+    drawPanelBox(bx, y, boardW, h, "TOP 10");
+    const rows = nmBoardRows || [];
+    if (!rows.length) {
+      drawPixText(nmBoardNote || "NO DATA YET", bx + 8, y + 20, "#5c3a21");
+    } else {
+      let yy = y + 20;
+      for (let i = 0; i < Math.min(10, rows.length); i++) {
+        const r = rows[i];
+        const rank = String(i + 1).padStart(2, " ");
+        drawPixText(rank + " ", bx + 8, yy, "#3a2414");
+        drawAccountName(String(r.player_name || "?").slice(0, 10), bx + 26, yy, true);
+        const val = api && api.formatNmValue ? api.formatNmValue(nmBoardKind, r.value) : String(r.value | 0);
+        drawPixText(val, bx + 100, yy, "#5c3a21");
+        yy += 8;
+      }
+      if (nmBoardNote) drawPixText(nmBoardNote, bx + 8, yy + 2, "#8a5a32");
+    }
   }
 
   function drawSpeedUI() {
+    clearMenuHits();
     if (uiScreen === "mode") drawModeSelect();
     else if (uiScreen === "categories") drawCategorySelect();
     else if (uiScreen === "ready") drawReadyScreen();
     else if (uiScreen === "finish") drawFinishScreen();
+    else if (uiScreen === "account") drawAccountScreen();
+    else if (uiScreen === "nm_boards") drawNmBoardScreen();
   }
 
   async function submitSpeedScore() {
     if (srSubmitting) return;
+    if (srSubmitted) {
+      srStatus = "POSTED";
+      return;
+    }
     const api = lbApi();
     if (!api) {
       srStatus = "NO CLIENT";
@@ -7220,35 +7720,248 @@
     const name = api.sanitizeName(srName);
     if (!name) {
       srStatus = "NAME 3-12";
-      srFinishSel = 0;
+      if (!guestNameLocked) srFinishSel = 0;
       return;
     }
     srName = name;
     srSubmitting = true;
     srStatus = "SUBMITTING...";
-    const res = await api.submitScore(srCat, srFinalMs, name);
+    const res = await api.submitScore(srCat, srFinalMs, name, {
+      runId: srRunId || newSpeedRunId(),
+      isAccount: !!(api.isSignedIn && api.isSignedIn()),
+    });
     srSubmitting = false;
     if (res.ok) {
-      srBoardRows = res.rows || [];
+      if (res.resolved && res.resolved.name) srName = res.resolved.name;
+      srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
       srStatus = "POSTED";
+      srSubmitted = true;
       srBoardNote = "";
+      if (res.pb) {
+        srPbPrev = res.pb.prev | 0;
+        srPbLabel = res.pb.isFirst ? "FIRST PB" : res.pb.label;
+      }
     } else {
       srStatus = (res.error || "FAILED").toUpperCase().slice(0, 22);
-      if (res.rows) srBoardRows = res.rows;
+      if (res.rows) srBoardRows = applyBoardIdentityMerge(res.rows, 10);
+      // Allow retry only on failure
+      srSubmitted = false;
     }
+  }
+
+  function authFieldCount() {
+    if (authMode === "guest") return 3;
+    if (authMode === "signup" || authMode === "signin") return 4; // USER, PIN, SUBMIT, BACK
+    return 0;
+  }
+
+  function typeIntoAuth(rawKey) {
+    const ch = String(rawKey || "");
+    if (!ch || ch.length !== 1) return;
+    if (authMode === "guest" && authField === 0) {
+      const up = ch.toUpperCase();
+      if (authName.length < 12 && /[A-Z0-9 ]/.test(up)) authName += up === " " ? " " : up;
+      return;
+    }
+    if (authMode === "signin" || authMode === "signup") {
+      if (authField === 0) {
+        const up = ch.toUpperCase();
+        if (authUser.length < 12 && /[A-Z0-9 ]/.test(up)) authUser += up === " " ? " " : up;
+      } else if (authField === 1) {
+        if (authPin.length < 4 && /[0-9]/.test(ch)) authPin += ch;
+      }
+    }
+  }
+
+  function backspaceAuth() {
+    if (authMode === "guest" && authField === 0) authName = authName.slice(0, -1);
+    else if ((authMode === "signin" || authMode === "signup") && authField === 0) authUser = authUser.slice(0, -1);
+    else if ((authMode === "signin" || authMode === "signup") && authField === 1) authPin = authPin.slice(0, -1);
+  }
+
+  async function submitAuthAction() {
+    if (authBusy) return;
+    const api = lbApi();
+    if (!api) {
+      authStatus = "NO CLIENT";
+      return;
+    }
+    authBusy = true;
+    authStatus = "WORKING...";
+    let res = { ok: false, error: "fail" };
+    if (authMode === "guest") {
+      const n = api.sanitizeName(authName);
+      if (!n) {
+        authStatus = "NAME 3-12";
+        authBusy = false;
+        return;
+      }
+      api.setLastName(n);
+      srName = n;
+      guestNameLocked = false;
+      authStatus = "GUEST READY";
+      authBusy = false;
+      authMode = "menu";
+      srCursor = 0;
+      return;
+    }
+    if (authMode === "signin" || authMode === "signup") {
+      const pinOk = api.sanitizePin ? api.sanitizePin(authPin) : /^\d{4}$/.test(authPin) ? authPin : "";
+      if (!pinOk) {
+        authStatus = "PIN 4 DIGITS";
+        authBusy = false;
+        authField = 1;
+        return;
+      }
+      if (authMode === "signin") {
+        res = await api.signIn(authUser, authPin);
+        authStatus = res.ok ? "SIGNED IN" : (res.error || "FAILED").toUpperCase().slice(0, 24);
+        if (res.ok) {
+          srName = api.displayName() || authUser;
+          guestNameLocked = true;
+          authMode = "menu";
+          srCursor = 0;
+          authPin = "";
+        }
+      } else {
+        res = await api.signUp(authUser, authPin);
+        if (res.ok) {
+          authStatus = "SIGNED UP";
+          srName = api.displayName() || authUser;
+          guestNameLocked = true;
+          authMode = "menu";
+          srCursor = 0;
+          authPin = "";
+        } else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
+      }
+    }
+    authBusy = false;
   }
 
   function onSpeedMenuKey(k) {
     if (uiScreen === "mode") {
-      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor ? 0 : 1;
+      if (k === "arrowup" || k === "w") srCursor = (srCursor + modeOpts.length - 1) % modeOpts.length;
+      if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % modeOpts.length;
       if (k === "enter" || k === " ") {
         if (srCursor === 0) enterNormalMode();
-        else {
+        else if (srCursor === 1) {
           playMode = "speedrun";
           uiScreen = "categories";
           srCursor = 0;
           refreshSpeedBoard(SPEED_ORDER[0]);
+        } else if (srCursor === 2) {
+          uiScreen = "account";
+          authMode = "menu";
+          authStatus = "";
+          srCursor = 0;
+          const api = lbApi();
+          if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
+        } else if (srCursor === 3) {
+          uiScreen = "nm_boards";
+          nmCursor = 0;
+          nmBoardKind = "playtime";
+          refreshNmBoard(nmBoardKind);
         }
+      }
+      return true;
+    }
+    if (uiScreen === "account") {
+      const api = lbApi();
+      const signed = api && api.isSignedIn && api.isSignedIn();
+      if (signed) {
+        if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor ? 0 : 1;
+        if (k === "escape" || ((k === "enter" || k === " ") && srCursor === 1)) {
+          backToModeMenu();
+          return true;
+        }
+        if ((k === "enter" || k === " ") && srCursor === 0) {
+          api.signOut();
+          guestNameLocked = false;
+          authStatus = "SIGNED OUT";
+          authMode = "menu";
+          srCursor = 0;
+        }
+        return true;
+      }
+      if (authMode === "menu") {
+        if (k === "escape") {
+          backToModeMenu();
+          return true;
+        }
+        if (k === "arrowup" || k === "w") srCursor = (srCursor + 3) % 4;
+        if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % 4;
+        if (k === "enter" || k === " ") {
+          if (srCursor === 0) {
+            authMode = "signin";
+            authField = 0;
+            authStatus = "";
+            authUser = (api && api.getLastName && api.getLastName()) || authUser || "";
+            authPin = "";
+          } else if (srCursor === 1) {
+            authMode = "signup";
+            authField = 0;
+            authStatus = "";
+            authUser = "";
+            authPin = "";
+          } else if (srCursor === 2) {
+            authMode = "guest";
+            authField = 0;
+            authName = (api && api.getLastName && api.getLastName()) || srName || "";
+            authStatus = "";
+          } else backToModeMenu();
+        }
+        return true;
+      }
+      const maxF = authFieldCount() - 1;
+      if (k === "escape") {
+        authMode = "menu";
+        srCursor = 0;
+        authStatus = "";
+        return true;
+      }
+      if (k === "arrowup" || k === "w") authField = Math.max(0, authField - 1);
+      if (k === "arrowdown" || k === "s" || k === "tab") authField = Math.min(maxF, authField + 1);
+      if (k === "backspace") {
+        backspaceAuth();
+        return true;
+      }
+      if (k === "enter" || k === " ") {
+        if (authMode === "guest") {
+          if (authField === 0) authField = 1;
+          else if (authField === 1) submitAuthAction();
+          else {
+            authMode = "menu";
+            srCursor = 0;
+          }
+        } else {
+          const fields = 2; // USER + PIN
+          if (authField < fields) authField += 1;
+          else if (authField === fields) submitAuthAction();
+          else {
+            authMode = "menu";
+            srCursor = 0;
+          }
+        }
+        return true;
+      }
+      return true;
+    }
+    if (uiScreen === "nm_boards") {
+      const api = lbApi();
+      const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
+      if (k === "escape") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowup" || k === "w") {
+        nmCursor = (nmCursor + order.length - 1) % order.length;
+        nmBoardKind = order[nmCursor];
+        refreshNmBoard(nmBoardKind);
+      }
+      if (k === "arrowdown" || k === "s") {
+        nmCursor = (nmCursor + 1) % order.length;
+        nmBoardKind = order[nmCursor];
+        refreshNmBoard(nmBoardKind);
       }
       return true;
     }
@@ -7273,6 +7986,10 @@
         backToCategories();
         return true;
       }
+      if (k === "r") {
+        beginSpeedCategory(srCat);
+        return true;
+      }
       if (k === "enter" || k === " ") {
         maybeStartSpeedTimer();
         return true;
@@ -7280,7 +7997,8 @@
       return false;
     }
     if (uiScreen === "finish") {
-      if (srFinishSel === 0) {
+      const nameLocked = guestNameLocked;
+      if (srFinishSel === 0 && !nameLocked) {
         if (k === "backspace") {
           srName = srName.slice(0, -1);
           return true;
@@ -7300,7 +8018,10 @@
         }
         return true;
       }
-      if (k === "arrowup" || k === "w") srFinishSel = srFinishSel <= 1 ? 0 : srFinishSel - 1;
+      if (k === "arrowup" || k === "w") {
+        if (nameLocked) srFinishSel = Math.max(1, srFinishSel - 1);
+        else srFinishSel = srFinishSel <= 1 ? 0 : srFinishSel - 1;
+      }
       if (k === "arrowdown" || k === "s") srFinishSel = Math.min(4, srFinishSel + 1);
       if (k === "arrowleft" || k === "a") {
         if (srFinishSel === 2 || srFinishSel === 4) srFinishSel -= 1;
@@ -7309,8 +8030,9 @@
         if (srFinishSel === 1 || srFinishSel === 3) srFinishSel += 1;
       }
       if (k === "enter" || k === " ") {
-        if (srFinishSel === 1) submitSpeedScore();
-        else if (srFinishSel === 2) beginSpeedCategory(srCat);
+        if (srFinishSel === 1) {
+          if (!srSubmitted) submitSpeedScore();
+        } else if (srFinishSel === 2) beginSpeedCategory(srCat);
         else if (srFinishSel === 3) backToCategories();
         else if (srFinishSel === 4) backToModeMenu();
       }
@@ -7430,6 +8152,21 @@
     updatePrompt();
     updateOcean();
     draw(time);
+    // Normal-mode session playtime (speedrun playtime credited once on finish)
+    if (playMode === "normal" && !uiBlocksPlay() && !guideOpen) {
+      playtimeAcc += dt * 1000;
+    }
+    playtimeFlush += dt;
+    if (playtimeFlush >= 5 && playtimeAcc >= 1) {
+      const api = lbApi();
+      const add = playtimeAcc | 0;
+      playtimeAcc = 0;
+      playtimeFlush = 0;
+      if (api && api.noteNmEvent && playMode === "normal") {
+        api.noteNmEvent("playtime", add);
+        if (api.isSignedIn && api.isSignedIn() && api.syncNmStatsToProfile) api.syncNmStatsToProfile();
+      }
+    }
     saveAcc += dt;
     if (saveAcc >= 1.5) {
       saveAcc = 0;
@@ -7443,12 +8180,53 @@
     keys[k] = true;
     ensureAudio();
     if (k === "z") e.preventDefault();
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "enter", "1", "2", "3", "4", "5", "6", "7", "8", "t", "f", "c", "h", "escape", "tab", "backspace"].includes(k)) {
+    if (
+      [
+        "arrowup",
+        "arrowdown",
+        "arrowleft",
+        "arrowright",
+        " ",
+        "enter",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "t",
+        "f",
+        "c",
+        "h",
+        "r",
+        "escape",
+        "tab",
+        "backspace",
+      ].includes(k)
+    ) {
       e.preventDefault();
     }
+    if (
+      uiScreen === "account" &&
+      authMode !== "menu" &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      e.key.length === 1 &&
+      e.key !== " "
+    ) {
+      typeIntoAuth(e.key);
+      e.preventDefault();
+      return;
+    }
     if (uiScreen && uiScreen !== null) {
-      if (e.repeat && uiScreen !== "finish") return;
+      if (e.repeat && uiScreen !== "finish" && uiScreen !== "account") return;
       if (onSpeedMenuKey(k)) return;
+    }
+    if (playMode === "speedrun" && k === "r" && !e.repeat && uiScreen === null && srRunning) {
+      beginSpeedCategory(srCat);
+      return;
     }
     if (uiBlocksPlay()) return;
     if (k === "h") {
@@ -7472,6 +8250,70 @@
     if (k === " ") releaseHorn();
   });
   window.addEventListener("pointerdown", () => ensureAudio());
+
+  function refreshMenuHover(ux, uy) {
+    pointerUi.x = ux;
+    pointerUi.y = uy;
+    const hit = hitMenuAt(ux, uy);
+    const next = hit ? hit.key : "";
+    if (next !== menuHoverKey) {
+      menuHoverKey = next;
+      if (hit && hit.key.indexOf("cat:") === 0 && hit.key !== "cat:esc") {
+        const idx = parseInt(hit.key.split(":")[1], 10);
+        if (!isNaN(idx) && SPEED_ORDER[idx] && srCursor !== idx && uiScreen === "categories") {
+          srCursor = idx;
+          refreshSpeedBoard(SPEED_ORDER[idx]);
+        }
+      }
+      if (hit && hit.key.indexOf("mode:") === 0 && uiScreen === "mode") {
+        const idx = parseInt(hit.key.split(":")[1], 10);
+        if (!isNaN(idx)) srCursor = idx;
+      }
+      if (hit && hit.key.indexOf("nm:") === 0 && hit.key !== "nm:esc" && uiScreen === "nm_boards") {
+        const idx = parseInt(hit.key.split(":")[1], 10);
+        const api = lbApi();
+        const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
+        if (!isNaN(idx) && order[idx] && nmCursor !== idx) {
+          nmCursor = idx;
+          nmBoardKind = order[idx];
+          refreshNmBoard(nmBoardKind);
+        }
+      }
+      if (hit && hit.key.indexOf("fin:btn:") === 0 && uiScreen === "finish") {
+        const idx = parseInt(hit.key.split(":")[2], 10);
+        if (!isNaN(idx)) srFinishSel = idx + 1;
+      }
+    }
+    canvas.style.cursor = hit ? "pointer" : "";
+  }
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (!uiScreen) {
+      menuHoverKey = "";
+      canvas.style.cursor = "";
+      return;
+    }
+    const p = eventToUi(e);
+    refreshMenuHover(p.x, p.y);
+  });
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    ensureAudio();
+    if (!uiScreen) return;
+    const p = eventToUi(e);
+    refreshMenuHover(p.x, p.y);
+    const hit = hitMenuAt(p.x, p.y);
+    if (hit && typeof hit.onClick === "function") {
+      e.preventDefault();
+      hit.onClick();
+    }
+  });
+
+  canvas.addEventListener("mouseleave", () => {
+    menuHoverKey = "";
+    canvas.style.cursor = "";
+  });
 
   function indoorZoom() {
     const zx = canvas.width / indoorW();
@@ -7512,7 +8354,13 @@
   }
 
   window.addEventListener("resize", resizeCanvas);
-  window.addEventListener("beforeunload", saveGame);
+  window.addEventListener("beforeunload", () => {
+    saveGame();
+    const api = lbApi();
+    if (api && api.isSignedIn && api.isSignedIn() && api.syncNmStatsToProfile) {
+      api.syncNmStatsToProfile();
+    }
+  });
 
   buildWorld();
   resizeCanvas();
@@ -7521,7 +8369,23 @@
   clampCamera();
   {
     const api = lbApi();
-    if (api) srName = api.getLastName() || "";
+    if (api) {
+      srName = api.getLastName() || "";
+      if (api.onAuthChange) {
+        api.onAuthChange(() => {
+          if (api.isSignedIn && api.isSignedIn()) {
+            srName = api.displayName() || srName;
+            guestNameLocked = true;
+          } else {
+            guestNameLocked = false;
+          }
+        });
+      }
+      if (api.isSignedIn && api.isSignedIn()) {
+        srName = api.displayName() || srName;
+        guestNameLocked = true;
+      }
+    }
   }
   requestAnimationFrame(loop);
 })();

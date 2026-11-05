@@ -1,6 +1,16 @@
-# Online speedrun leaderboards (Supabase)
+# Online speedrun leaderboards + accounts (Supabase)
 
-Islebound posts and reads scores over Supabase REST. The game works without this — speedrun mode still runs locally — but live boards stay empty until you configure a project.
+Islebound posts and reads scores over Supabase REST. The game works without this — speedrun mode still runs locally — but live boards / accounts stay empty until you configure a project and run the SQL below.
+
+## Auth model (username + 4-digit PIN)
+
+Accounts do **not** use Supabase Auth email/password/magic-link.
+
+- Table `player_accounts`: `id` (uuid), `username` (3–12 A–Z / 0–9 / space), `pin_salt`, `pin_hash` (SHA-256 of `salt:pin` via Web Crypto in the client)
+- After sign-up / sign-in the client stores a local session in `localStorage` (`islebound-auth-session`) with `{ token, user: { id, username } }`
+- `profiles.id` matches `player_accounts.id` (not `auth.uid()`)
+- Score rows set `user_id` / `is_account` from that local session; guests still submit with `user_id` null
+- Because GitHub Pages is static, RLS is open to the `anon` key for these tables (client still hashes PINs and enforces username rules). Treat this as a casual game board, not high-security auth.
 
 ## 1. Create a Supabase project
 
@@ -22,9 +32,7 @@ window.ISLE_LEADERBOARD = {
 
 Do **not** put the `service_role` key in the client.
 
-## 3. Create the table + RLS
-
-In the Supabase SQL editor, run:
+## 3. Base table (if not already created)
 
 ```sql
 create table if not exists public.speedrun_scores (
@@ -40,14 +48,12 @@ create index if not exists speedrun_scores_cat_time
 
 alter table public.speedrun_scores enable row level security;
 
--- Anyone can read the board
 create policy "Public read speedrun_scores"
   on public.speedrun_scores
   for select
   to anon, authenticated
   using (true);
 
--- Anyone can insert a score (client still enforces floors / name length)
 create policy "Public insert speedrun_scores"
   on public.speedrun_scores
   for insert
@@ -65,16 +71,267 @@ create policy "Public insert speedrun_scores"
     and time_ms > 0
     and char_length(player_name) between 3 and 12
   );
-
--- No update/delete for anon
 ```
 
-## 4. Verify
+## 4. Username + PIN accounts migration
+
+Paste into the Supabase SQL editor. Safe to re-run the `drop policy if exists` / `create table if not exists` bits.
+
+```sql
+-- Custom accounts (no Supabase Auth / email)
+create table if not exists public.player_accounts (
+  id uuid primary key,
+  username text not null unique
+    check (char_length(username) between 3 and 12),
+  pin_salt text not null,
+  pin_hash text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists player_accounts_username_idx
+  on public.player_accounts (username);
+
+alter table public.player_accounts enable row level security;
+
+drop policy if exists "Public read player_accounts" on public.player_accounts;
+create policy "Public read player_accounts"
+  on public.player_accounts
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Public insert player_accounts" on public.player_accounts;
+create policy "Public insert player_accounts"
+  on public.player_accounts
+  for insert
+  to anon, authenticated
+  with check (
+    char_length(username) between 3 and 12
+    and char_length(pin_salt) >= 8
+    and char_length(pin_hash) >= 8
+  );
+
+-- Profiles keyed by player_accounts.id (not auth.users)
+create table if not exists public.profiles (
+  id uuid primary key,
+  display_name text not null check (char_length(display_name) between 3 and 12),
+  playtime_ms bigint not null default 0 check (playtime_ms >= 0),
+  total_runs integer not null default 0 check (total_runs >= 0),
+  total_submits integer not null default 0 check (total_submits >= 0),
+  nm_playtime_ms bigint not null default 0 check (nm_playtime_ms >= 0),
+  nm_coins_earned bigint not null default 0 check (nm_coins_earned >= 0),
+  nm_coins_high integer not null default 0 check (nm_coins_high >= 0),
+  nm_sharks integer not null default 0 check (nm_sharks >= 0),
+  nm_deaths integer not null default 0 check (nm_deaths >= 0),
+  nm_chests integer not null default 0 check (nm_chests >= 0),
+  nm_level_high integer not null default 1 check (nm_level_high >= 1),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- If you previously created profiles with references auth.users, drop that FK:
+do $$
+begin
+  if exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'profiles'
+      and constraint_type = 'FOREIGN KEY'
+  ) then
+    execute (
+      select 'alter table public.profiles drop constraint ' || quote_ident(constraint_name)
+      from information_schema.table_constraints
+      where table_schema = 'public'
+        and table_name = 'profiles'
+        and constraint_type = 'FOREIGN KEY'
+      limit 1
+    );
+  end if;
+end $$;
+
+-- Optional soft FK to player_accounts (skip if migrating messy legacy rows)
+-- alter table public.profiles
+--   add constraint profiles_player_accounts_fk
+--   foreign key (id) references public.player_accounts (id) on delete cascade;
+
+create index if not exists profiles_nm_playtime on public.profiles (nm_playtime_ms desc);
+create index if not exists profiles_nm_level on public.profiles (nm_level_high desc);
+create index if not exists profiles_nm_sharks on public.profiles (nm_sharks desc);
+create index if not exists profiles_nm_chests on public.profiles (nm_chests desc);
+create index if not exists profiles_nm_coins on public.profiles (nm_coins_high desc);
+
+alter table public.profiles enable row level security;
+
+drop policy if exists "Public read profiles" on public.profiles;
+create policy "Public read profiles"
+  on public.profiles
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Users insert own profile" on public.profiles;
+drop policy if exists "Public insert profiles" on public.profiles;
+create policy "Public insert profiles"
+  on public.profiles
+  for insert
+  to anon, authenticated
+  with check (char_length(display_name) between 3 and 12);
+
+drop policy if exists "Users update own profile" on public.profiles;
+drop policy if exists "Public update profiles" on public.profiles;
+create policy "Public update profiles"
+  on public.profiles
+  for update
+  to anon, authenticated
+  using (true)
+  with check (char_length(display_name) between 3 and 12);
+
+-- Extend speedrun_scores for accounts + one-submit-per-run
+alter table public.speedrun_scores
+  add column if not exists user_id uuid;
+
+alter table public.speedrun_scores
+  add column if not exists run_id uuid;
+
+alter table public.speedrun_scores
+  add column if not exists is_account boolean not null default false;
+
+-- Drop old auth.users FK on speedrun_scores.user_id if present
+do $$
+begin
+  if exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'speedrun_scores'
+      and constraint_type = 'FOREIGN KEY'
+      and constraint_name like '%user_id%'
+  ) then
+    execute (
+      select 'alter table public.speedrun_scores drop constraint ' || quote_ident(constraint_name)
+      from information_schema.table_constraints
+      where table_schema = 'public'
+        and table_name = 'speedrun_scores'
+        and constraint_type = 'FOREIGN KEY'
+        and constraint_name like '%user_id%'
+      limit 1
+    );
+  end if;
+end $$;
+
+create unique index if not exists speedrun_scores_run_id_uidx
+  on public.speedrun_scores (run_id)
+  where run_id is not null;
+
+create index if not exists speedrun_scores_user
+  on public.speedrun_scores (user_id);
+
+drop policy if exists "Public insert speedrun_scores" on public.speedrun_scores;
+drop policy if exists "Insert speedrun_scores guests or self" on public.speedrun_scores;
+create policy "Insert speedrun_scores guests or accounts"
+  on public.speedrun_scores
+  for insert
+  to anon, authenticated
+  with check (
+    category in (
+      'shark',
+      'jelly_white',
+      'chest',
+      'death',
+      'boat',
+      'full_inv',
+      'shark_cloak'
+    )
+    and time_ms > 0
+    and char_length(player_name) between 3 and 12
+    and (
+      (user_id is null and is_account = false)
+      or (user_id is not null)
+    )
+  );
+
+-- Personal bests per category (keyed by player_accounts.id)
+create table if not exists public.speedrun_prs (
+  user_id uuid not null,
+  category text not null,
+  time_ms integer not null check (time_ms > 0),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, category),
+  constraint speedrun_prs_category_check check (
+    category in (
+      'shark',
+      'jelly_white',
+      'chest',
+      'death',
+      'boat',
+      'full_inv',
+      'shark_cloak'
+    )
+  )
+);
+
+-- Drop old auth.users FK on speedrun_prs if present
+do $$
+begin
+  if exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public'
+      and table_name = 'speedrun_prs'
+      and constraint_type = 'FOREIGN KEY'
+  ) then
+    execute (
+      select 'alter table public.speedrun_prs drop constraint ' || quote_ident(constraint_name)
+      from information_schema.table_constraints
+      where table_schema = 'public'
+        and table_name = 'speedrun_prs'
+        and constraint_type = 'FOREIGN KEY'
+      limit 1
+    );
+  end if;
+end $$;
+
+alter table public.speedrun_prs enable row level security;
+
+drop policy if exists "Public read speedrun_prs" on public.speedrun_prs;
+create policy "Public read speedrun_prs"
+  on public.speedrun_prs
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Users upsert own speedrun_prs" on public.speedrun_prs;
+drop policy if exists "Public insert speedrun_prs" on public.speedrun_prs;
+create policy "Public insert speedrun_prs"
+  on public.speedrun_prs
+  for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "Users update own speedrun_prs" on public.speedrun_prs;
+drop policy if exists "Public update speedrun_prs" on public.speedrun_prs;
+create policy "Public update speedrun_prs"
+  on public.speedrun_prs
+  for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+-- Remove email-auth profile trigger if it exists from the old setup
+drop trigger if exists on_auth_user_created on auth.users;
+drop function if exists public.handle_new_user();
+```
+
+## 5. Verify / how to test
 
 1. Hard-refresh the game (`index.html` cache-busted scripts)
-2. Open **SPEEDRUN →** any category — top 10 should load (empty is fine)
-3. Finish a run, enter a 3–12 character name, **SUBMIT**
-4. Confirm the row appears in Supabase **Table Editor → speedrun_scores**
+2. **ACCOUNT → SIGN UP** — username 3–12, PIN exactly 4 digits → should land on PROFILE
+3. Sign out, **SIGN IN** with same username + PIN
+4. Wrong PIN → `WRONG PIN`; taken username → `USERNAME TAKEN`
+5. Open **SPEEDRUN** — finish a run while signed in → name locked gold → **SUBMIT**
+6. Confirm row in Supabase **speedrun_scores** with `user_id` + `is_account`
+7. Board should show a gold **NEW** tag on that time (also on category TOP 10 within ~3 minutes / matching `run_id`)
+8. While signed in, top-left HUD chip shows username + total playtime (opposite the top-right timer in speedrun)
+9. **GUEST** path still works; guest scores omit `user_id`
+10. Menus: click mode / category / ready / finish / account / stats (hover highlights)
 
 ## Categories
 
@@ -88,8 +345,27 @@ create policy "Public insert speedrun_scores"
 | `full_inv` | Full Inventory% |
 | `shark_cloak` | Shark% while invisible |
 
+## Normal-mode profile boards
+
+Ordered from `profiles` (signed-in players only):
+
+| board | column |
+| ---- | ---- |
+| PLAYTIME | `nm_playtime_ms` |
+| LEVEL | `nm_level_high` |
+| SHARKS | `nm_sharks` |
+| CHESTS | `nm_chests` |
+| COINS HIGH | `nm_coins_high` |
+
+Guests keep the same counters in `localStorage` (`islebound-nm-stats`) until they sign in and sync.
+
 ## Notes
 
 - Boards and the last used name are cached in `localStorage` for offline display
 - The client rejects impossibly low times per category before insert
-- Normal mode still uses `survival-rpg-save` and never writes speedrun scores
+- One submit per speedrun attempt via client `run_id` (unique index) + `srSubmitted`
+- Signed-in finish screen locks the display name; account names render bold/gold on boards
+- **NEW** tag: matching just-submitted `run_id`, or `created_at` within the last 3 minutes
+- **R** resets the current speedrun category from ready or mid-run
+- Normal mode still uses `survival-rpg-save` for world state and never writes speedrun scores
+- Old email/magic-link sessions in `localStorage` are ignored / cleared on load
