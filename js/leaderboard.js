@@ -1346,11 +1346,13 @@
    * Fetch full replay for a board row. prefer = { run_id, time_ms, player_name }.
    * With a prefer identity, never falls through to a different player's replay.
    * With no prefer, returns fastest visible replay (legacy browse).
+   * opts.signal — AbortSignal to cancel in-flight PostgREST fetches (hard VID cut).
    */
-  async function fetchBestReplay(category, prefer) {
+  async function fetchBestReplay(category, prefer, opts) {
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, replay: null };
     const want = prefer || {};
+    const signal = opts && opts.signal;
     // Hidden/banned names never get a VID — do not fall through to someone else's run.
     if (want.player_name && isBoardHiddenName(want.player_name)) {
       return { ok: false, replay: null, hidden: true };
@@ -1378,7 +1380,7 @@
         (extra || "") +
         "&order=time_ms.asc&limit=" +
         lim;
-      const res = await fetch(url, { headers: anonHeaders() });
+      const res = await fetch(url, { headers: anonHeaders(), signal });
       if (!res.ok) return [];
       const data = await res.json();
       return Array.isArray(data) ? data : [];
@@ -1390,6 +1392,10 @@
         if (list[i] && !isBoardHiddenName(list[i].player_name)) return list[i];
       }
       return null;
+    }
+
+    function isAbort(err) {
+      return !!(err && (err.name === "AbortError" || (signal && signal.aborted)));
     }
 
     try {
@@ -1422,6 +1428,8 @@
       if (localOk) return { ok: true, replay: localOk, source: "local" };
       return { ok: false, replay: null };
     } catch (e) {
+      // Aborted hard-cut must not fall through to a stale local / wrong row.
+      if (isAbort(e)) return { ok: false, replay: null, aborted: true };
       if (localOk) return { ok: true, replay: localOk, source: "local", error: "network" };
       return { ok: false, replay: null, error: "network" };
     }

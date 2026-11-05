@@ -297,6 +297,8 @@
   let srReplayBusy = false;
   /** Bumped to cancel in-flight VID fetch / stale playBoardReplay results. */
   let replayPlayGen = 0;
+  /** AbortController for the in-flight fetchBestReplay (hard-cut kills the network too). */
+  let replayFetchAbort = null;
   /** Bumped to ignore stale refreshSpeedBoard / probe results. */
   let srBoardGen = 0;
   let replayActive = false;
@@ -8792,10 +8794,25 @@
     ];
   }
 
-  /** Cancel in-flight VID fetch and clear the busy latch. */
+  function abortReplayFetch() {
+    if (!replayFetchAbort) return;
+    const ac = replayFetchAbort;
+    replayFetchAbort = null;
+    try {
+      ac.abort();
+    } catch (e) {}
+  }
+
+  /** Cancel in-flight VID fetch/network and clear the busy latch. */
   function bumpReplayPlayGen() {
     replayPlayGen++;
     srReplayBusy = false;
+    abortReplayFetch();
+  }
+
+  /** Active spectate or in-flight VID load — Esc / Tab always tear this down. */
+  function replaySessionOpen() {
+    return replayActive || srReplayBusy;
   }
 
   /** If a cancelled/failed load left the world with no UI, return to the board. */
@@ -8870,26 +8887,37 @@
     cloakOn = false;
   }
 
+  /** Full teardown: cancel fetch+playback, clear busy/active, restore category board. */
   function stopReplay() {
     bumpReplayPlayGen();
     clearReplayPlayback();
     replayCutT = 0;
     guideOpen = false;
     chatOpen = false;
-    uiScreen = "categories";
+    closeIslandChat();
     playMode = "speedrun";
-    refreshSpeedBoard(srCat || SPEED_ORDER[0]);
+    uiScreen = "categories";
+    srRunning = false;
+    srTiming = false;
+    const cat = srCat || SPEED_ORDER[srCursor] || SPEED_ORDER[0];
+    srCursor = Math.max(0, SPEED_ORDER.indexOf(cat));
+    refreshSpeedBoard(cat);
   }
 
-  function startReplay(payload) {
+  function startReplay(payload, expectedGen) {
+    // Stale start after cancel / newer VID — never revive an old selection.
+    if (expectedGen != null && expectedGen !== replayPlayGen) return false;
     if (!payload || !Array.isArray(payload.frames) || !payload.frames.length) return false;
     // Hard-cut any current playback; do not bounce through categories / board refresh.
     clearReplayPlayback();
     chatOpen = false;
     guideOpen = false;
+    closeIslandChat();
     resetSpeedrunWorld();
     playMode = "speedrun";
     uiScreen = null;
+    srRunning = false;
+    srTiming = false;
     srCat = payload.category || srCat;
     replayFrames = payload.frames;
     replayMeta = {
@@ -8904,24 +8932,33 @@
     return true;
   }
 
-  /** Spectate the exact top-10 board row at rowIndex (0 = #1). */
+  /**
+   * Spectate the exact top-10 board row at rowIndex (0 = #1).
+   * HARD CUT: newest click always wins immediately — abort prior fetch, stop current
+   * playback, keep the board up during load, then play only if this gen is still current.
+   */
   async function playBoardReplay(cat, rowIndex) {
     const id = cat || srCat || SPEED_ORDER[srCursor];
     const idx = rowIndex | 0;
-    // Cancel prior fetch + hard-cut current playback immediately so switches never stall.
-    const gen = ++replayPlayGen;
+    // Kill prior fetch + hard-cut playback before any await.
+    bumpReplayPlayGen();
+    const gen = replayPlayGen;
     srReplayBusy = true;
-    if (replayActive) {
-      clearReplayPlayback();
-      replayCutT = 0;
-    }
+    srBoardNote = "";
+    clearReplayPlayback();
+    replayCutT = 0;
+    guideOpen = false;
+    chatOpen = false;
+    // Board stays interactive during load — no world limbo, Esc / other VID clicks work.
+    playMode = "speedrun";
+    uiScreen = "categories";
+
     const api = lbApi();
     const prefer = boardRowPrefer(id, idx);
     if (!prefer) {
       if (gen === replayPlayGen) {
         srReplayBusy = false;
         srBoardNote = "NO REPLAY";
-        ensureReplayMenuIfIdle();
       }
       return;
     }
@@ -8929,8 +8966,20 @@
       let payload =
         srBestReplay && replayMatchesBoardRow(srBestReplay, id, idx) ? srBestReplay : null;
       if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
-        const res = await api.fetchBestReplay(id, prefer);
+        srBoardNote = "LOADING VID...";
+        const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+        if (ac) replayFetchAbort = ac;
+        let res = null;
+        try {
+          res = await api.fetchBestReplay(id, prefer, ac ? { signal: ac.signal } : undefined);
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+          res = null;
+        } finally {
+          if (replayFetchAbort === ac) replayFetchAbort = null;
+        }
         if (gen !== replayPlayGen) return;
+        if (res && res.aborted) return;
         if (res && res.replay && replayMatchesPreferLocal(res.replay, prefer)) {
           if (!res.replay.category || res.replay.category === id) payload = res.replay;
         }
@@ -8956,7 +9005,13 @@
         srReplayAvail = (srBoardRows || []).map(() => false);
       }
       srReplayAvail[idx] = true;
-      startReplay(payload);
+      srBoardNote = "";
+      if (!startReplay(payload, gen)) {
+        if (gen === replayPlayGen) {
+          srBoardNote = "NO REPLAY";
+          ensureReplayMenuIfIdle();
+        }
+      }
     } finally {
       if (gen === replayPlayGen) srReplayBusy = false;
     }
@@ -8980,17 +9035,34 @@
   }
 
   function drawReplayHud() {
-    if (!replayActive) return;
+    // Safety HUD if a load somehow left uiScreen null; normal loads keep the board up.
+    if (!replayActive && !(srReplayBusy && uiScreen == null)) return;
     const uiW = canvas.width / SCALE_UI;
+    if (!replayActive) {
+      const msg = "LOADING VID  ESC CANCEL";
+      const tw = pixTextWidth(msg);
+      px(uiW - tw - 14, 6, tw + 10, 12, "#3a2414");
+      px(uiW - tw - 13, 7, tw + 8, 10, "#5c3a21");
+      const exitSel = menuHovering("replay:exit");
+      drawPixText(msg, uiW - 8, 9, exitSel ? "#e8c44a" : "#f3e2c4", "right");
+      addMenuHit("replay:exit", uiW - tw - 14, 6, tw + 10, 12, () => stopReplay(), { hover: true });
+      return;
+    }
     const label = "REPLAY " + catLabel(replayMeta && replayMeta.category);
     const who = String((replayMeta && replayMeta.name) || "?").slice(0, 12);
     const tim = formatSpeedTime((replayMeta && replayMeta.time_ms) | 0);
     const now = formatSpeedTime(replayT | 0);
+    const exitTxt = "ESC EXIT";
+    const right = now + "  " + exitTxt;
+    const rightW = pixTextWidth(right);
     px(6, 6, Math.max(120, pixTextWidth(label) + 16), 28, "#3a2414");
     px(7, 7, Math.max(118, pixTextWidth(label) + 14), 26, "#5c3a21");
     drawPixText(label, 10, 10, "#f3e2c4");
     drawPixText(who + "  " + tim, 10, 20, "#c9a227");
-    drawPixText(now + "  ESC EXIT", uiW - 8, 10, "#f3e2c4", "right");
+    const exitSel = menuHovering("replay:exit");
+    drawPixText(now + "  ", uiW - 8 - pixTextWidth(exitTxt), 10, "#f3e2c4", "right");
+    drawPixText(exitTxt, uiW - 8, 10, exitSel ? "#e8c44a" : "#f3e2c4", "right");
+    addMenuHit("replay:exit", uiW - rightW - 10, 6, rightW + 8, 14, () => stopReplay(), { hover: true });
     if (replayCutT > 0) {
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -9206,8 +9278,11 @@
   async function refreshSpeedBoard(cat) {
     const id = cat || srCat;
     const boardGen = ++srBoardGen;
-    // Category / board refresh always cancels any pending VID load.
+    // Category / board refresh always cancels any pending VID load and hard-cuts playback.
     bumpReplayPlayGen();
+    clearReplayPlayback();
+    replayCutT = 0;
+    ensureReplayMenuIfIdle();
     const api = lbApi();
     srBoardNote = "LOADING...";
     srBestReplay = null;
@@ -10399,8 +10474,9 @@
     keys[k] = true;
     ensureAudio();
     if (k === "z") e.preventDefault();
-    if (replayActive) {
-      if (k === "escape" || k === "tab") {
+    // Mid-replay or load-limbo: Esc / Tab / Back always fully tear down (newest cancel wins).
+    if (replaySessionOpen()) {
+      if (k === "escape" || k === "tab" || k === "backspace") {
         e.preventDefault();
         stopReplay();
       }
@@ -10580,7 +10656,7 @@
     const p = eventToUi(e);
     pointerUi.x = p.x;
     pointerUi.y = p.y;
-    if (!uiScreen && !chatOpen) {
+    if (!uiScreen && !chatOpen && !replaySessionOpen()) {
       menuHoverKey = "";
       canvas.style.cursor = "";
       return;
@@ -10605,6 +10681,17 @@
       const uiW = canvas.width / SCALE_UI;
       const panelW = Math.min(152, Math.max(120, (uiW * 0.3) | 0));
       if (p.x < uiW - panelW - 3) chatFocused = false;
+    }
+    // Spectate / limbo (uiScreen null): only replay EXIT hits. Busy loads keep the
+    // category board up so other VID chips stay clickable (newest wins).
+    if (replayActive || (srReplayBusy && uiScreen == null)) {
+      refreshMenuHover(p.x, p.y);
+      const replayHit = hitMenuAt(p.x, p.y);
+      if (replayHit && typeof replayHit.onClick === "function") {
+        e.preventDefault();
+        replayHit.onClick();
+      }
+      return;
     }
     if (!uiScreen) return;
     refreshMenuHover(p.x, p.y);
