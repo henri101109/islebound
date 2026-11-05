@@ -231,7 +231,21 @@ alter table public.player_bans enable row level security;
 drop policy if exists "Public read player_bans" on public.player_bans;
 create policy "Public read player_bans" on public.player_bans
   for select to anon, authenticated using (true);
--- Intentionally no insert/update/delete policies for anon.
+-- Client auto-ban after detected cheats (floor / invalid replay).
+-- Requires client_id; reason must start with 'cheat:'; expires within ~24h.
+-- No update/delete for anon. Manual bans still via SQL Editor / service_role.
+drop policy if exists "Insert cheat auto bans" on public.player_bans;
+create policy "Insert cheat auto bans" on public.player_bans
+  for insert to anon, authenticated
+  with check (
+    client_id is not null
+    and char_length(client_id) between 8 and 64
+    and reason is not null
+    and reason like 'cheat:%'
+    and expires_at is not null
+    and expires_at > now()
+    and expires_at <= now() + interval '24 hours 5 minutes'
+  );
 
 -- Harden score / chat / presence inserts against banned identities (name + account).
 -- Note: true client IP is not visible to PostgREST RLS from the browser anon key;

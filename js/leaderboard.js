@@ -14,6 +14,7 @@
   const CHAT = "chat_messages";
   const CLIENT_ID_KEY = "islebound-client-id";
   const CLIENT_IP_KEY = "islebound-client-ip";
+  const LOCAL_BANS_KEY = "islebound-local-bans";
   const BANS_TABLE = "player_bans";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
   const PRESENCE_HEARTBEAT_MS = 12000; // keep board dots roughly fresh while menus are open
@@ -23,6 +24,7 @@
   const CHAT_BODY_MAX = 80;
   const CHAT_FETCH_LIMIT = 50;
   const BAN_POLL_MS = 60000;
+  const AUTO_BAN_MS = 24 * 60 * 60 * 1000; // 24h temp ban for detected cheats
   // Friendly copy for banned players (shown in HUD / chat status).
   const BAN_USER_MSG = "You're temporarily banned from online features.";
   // Client-side fallback so Matteus stays blocked even before SETUP SQL runs.
@@ -63,15 +65,15 @@
     shark: { id: "shark", label: "SHARK%", floorMs: 28000 },
     jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 28000 },
     chest: { id: "chest", label: "CHEST%", floorMs: 28000 },
-    death: { id: "death", label: "DEATH%", floorMs: 800 },
-    boat: { id: "boat", label: "BOAT%", floorMs: 4000 },
-    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 4000 },
+    death: { id: "death", label: "DEATH%", floorMs: 5000 },
+    boat: { id: "boat", label: "BOAT%", floorMs: 5000 },
+    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 30000 },
     shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 45000 },
     serpent: { id: "serpent", label: "SERPENT%", floorMs: 40000 },
     blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 28000 },
     megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 28000 },
-    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 2500 },
-    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 6000 },
+    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 5000 },
+    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 20000 },
   };
 
@@ -214,9 +216,11 @@
   let lastChatSendAt = 0;
   let chatStatus = ""; // soft-fail note for UI
   let chatListeners = [];
-  let banRows = []; // from player_bans (plus HARD_BANS merged at check time)
+  let banRows = []; // from player_bans (plus HARD_BANS / localBans merged at check time)
+  let localBans = []; // localStorage auto-bans (cheat floor / invalid replay)
   let banPollTimer = null;
   let bansAvailable = true; // false if table missing
+  let bansInsertOk = true; // false after anon insert policy / table write fails
   let clientIp = null;
   let lastBanHit = null; // most recent ban check result for UI
 
@@ -374,8 +378,126 @@
       out.push(b);
     }
     for (let i = 0; i < HARD_BANS.length; i++) push(HARD_BANS[i]);
+    for (let i = 0; i < localBans.length; i++) push(localBans[i]);
     for (let i = 0; i < banRows.length; i++) push(banRows[i]);
     return out;
+  }
+
+  function loadLocalBans() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(LOCAL_BANS_KEY) || "[]");
+      if (!Array.isArray(raw)) return [];
+      const out = [];
+      for (let i = 0; i < raw.length; i++) {
+        const b = normalizeBanRow(raw[i]);
+        if (b && banStillActive(b)) out.push(b);
+      }
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveLocalBans(rows) {
+    const clean = [];
+    const list = Array.isArray(rows) ? rows : [];
+    for (let i = 0; i < list.length; i++) {
+      const b = normalizeBanRow(list[i]);
+      if (b && banStillActive(b)) clean.push(b);
+    }
+    localBans = clean;
+    try {
+      localStorage.setItem(LOCAL_BANS_KEY, JSON.stringify(clean));
+    } catch (e) {}
+    return clean;
+  }
+
+  /**
+   * Immediately ban a cheater for 24h: localStorage + in-memory, then best-effort
+   * POST to player_bans (needs RLS insert policy from SETUP_ALL.sql).
+   */
+  async function applyCheatBan(opts) {
+    const o = opts || {};
+    if (!clientIp) {
+      try {
+        await refreshClientIp();
+      } catch (e) {}
+    }
+    const expires = new Date(Date.now() + AUTO_BAN_MS).toISOString();
+    const reason = String(o.reason || "cheat: auto").slice(0, 80);
+    const row = normalizeBanRow({
+      name_norm: o.name ? normalizeIdentityName(o.name) : null,
+      user_id: o.user_id ? String(o.user_id) : null,
+      client_id: o.client_id ? String(o.client_id) : getClientId(),
+      ip: o.ip != null ? o.ip : clientIp,
+      match_mode: o.name ? "name_exact" : "client_id",
+      expires_at: expires,
+      reason,
+    });
+    if (!row) return null;
+    // Persist locally first so this browser is blocked even if REST insert fails.
+    const next = loadLocalBans().filter(banStillActive);
+    next.push(row);
+    saveLocalBans(next);
+    lastBanHit = {
+      banned: true,
+      reason: row.reason,
+      until: row.expires_at,
+      kind: row.user_id ? "account" : row.client_id ? "device" : "name",
+    };
+    if (configured() && bansAvailable && bansInsertOk) {
+      try {
+        const body = {
+          name_norm: row.name_norm,
+          user_id: row.user_id,
+          client_id: row.client_id,
+          ip: row.ip,
+          match_mode: row.match_mode || "name_exact",
+          expires_at: row.expires_at,
+          reason: row.reason,
+        };
+        const res = await fetch(restBase() + "/" + BANS_TABLE, {
+          method: "POST",
+          headers: anonHeaders("return=minimal"),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          // 401/403 = RLS blocked; 404 = table missing. Keep local ban either way.
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            bansInsertOk = false;
+          }
+          if (res.status === 404 || res.status === 406) bansAvailable = false;
+        } else {
+          // Refresh server list so other tabs / devices pick it up on next poll.
+          fetchBans().catch(() => {});
+        }
+      } catch (e) {}
+    }
+    return row;
+  }
+
+  async function banForCheat(identity, reason) {
+    const id = identity || {};
+    await applyCheatBan({
+      name: id.name || "",
+      user_id: id.user_id || null,
+      client_id: id.client_id || getClientId(),
+      ip: id.ip != null ? id.ip : clientIp,
+      reason: reason || "cheat: auto",
+    });
+    const hit = checkBanIdentity({
+      name: id.name || "",
+      user_id: id.user_id || null,
+      client_id: id.client_id || getClientId(),
+      ip: id.ip != null ? id.ip : clientIp,
+    });
+    const block = banBlockResult(
+      hit && hit.banned
+        ? hit
+        : { banned: true, reason: reason || "cheat: auto", until: new Date(Date.now() + AUTO_BAN_MS).toISOString(), kind: "device" }
+    );
+    block.cheated = true;
+    return block;
   }
 
   function nameMatchesBan(name, ban) {
@@ -506,9 +628,11 @@
 
   function startBanPoll() {
     if (banPollTimer) return;
+    localBans = loadLocalBans();
     fetchBans().catch(() => {});
     refreshClientIp().catch(() => {});
     banPollTimer = setInterval(() => {
+      localBans = loadLocalBans();
       fetchBans().catch(() => {});
     }, BAN_POLL_MS);
   }
@@ -1082,15 +1206,60 @@
     };
   }
 
+  /**
+   * True when replay identity matches the board #1 prefer row.
+   * run_id wins when both sides have one; else time_ms + name must agree.
+   * With no prefer fields, any replay is accepted (legacy / offline browse).
+   */
+  function replayMatchesPrefer(replay, prefer) {
+    if (!replay || !Array.isArray(replay.frames) || !replay.frames.length) return false;
+    const want = prefer || {};
+    const hasRun = !!(want.run_id && replay.run_id);
+    const hasTime = want.time_ms != null && want.time_ms !== "";
+    const hasName = !!(want.player_name && String(want.player_name).trim());
+    if (!hasRun && !hasTime && !hasName) return true;
+    if (hasRun) {
+      if (String(replay.run_id) === String(want.run_id)) return true;
+      // Prefer row named a run_id — do not accept a different run even if time/name collide.
+      return false;
+    }
+    if (hasTime && (replay.time_ms | 0) !== (want.time_ms | 0)) return false;
+    if (hasName) {
+      const a = replay.player_name;
+      const b = want.player_name;
+      if (
+        !(
+          namesFuzzyMatch(a, b) ||
+          String(a || "").toUpperCase() === String(b || "").toUpperCase()
+        )
+      ) {
+        return false;
+      }
+    }
+    return !!(hasTime || hasName);
+  }
+
+  function preferFromBoardRow(row) {
+    if (!row) return null;
+    return {
+      run_id: row.run_id || null,
+      time_ms: row.time_ms | 0,
+      player_name: row.player_name || "",
+    };
+  }
+
   /** Fetch replay for category #1. prefer = { run_id, time_ms, player_name } from board row. */
   async function fetchBestReplay(category, prefer) {
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, replay: null };
     const want = prefer || {};
     const local = loadLocalReplay(id);
+    const localOk = local && replayMatchesPrefer(local, want) ? local : null;
+
     if (!configured()) {
-      return { ok: !!local, replay: local, offline: true };
+      return { ok: !!localOk, replay: localOk, offline: true };
     }
+
     async function query(extra) {
       const url =
         restBase() +
@@ -1106,6 +1275,7 @@
       const data = await res.json();
       return Array.isArray(data) && data[0] ? data[0] : null;
     }
+
     try {
       let row = null;
       if (want.run_id) {
@@ -1119,25 +1289,22 @@
             encodeURIComponent(String(want.player_name).toUpperCase())
         );
       }
-      if (!row) row = await query("");
-      const replay = replayFromRow(row);
-      if (!replay) {
-        // Fall back to local only if it matches the #1 identity when known.
-        if (
-          local &&
-          (!want.time_ms || (local.time_ms | 0) === (want.time_ms | 0)) &&
-          (!want.player_name ||
-            namesFuzzyMatch(local.player_name, want.player_name) ||
-            String(local.player_name).toUpperCase() === String(want.player_name).toUpperCase())
-        ) {
-          return { ok: true, replay: local, source: "local" };
-        }
-        return { ok: !!local, replay: local };
+      // Only use unbound "fastest replay in table" when we have no #1 identity to match.
+      if (!row && !want.run_id && want.time_ms == null && !want.player_name) {
+        row = await query("");
       }
-      saveLocalReplay(id, replay);
-      return { ok: true, replay, source: "online" };
+
+      const replay = replayFromRow(row);
+      if (replay && replayMatchesPrefer(replay, want)) {
+        saveLocalReplay(id, replay);
+        return { ok: true, replay, source: "online" };
+      }
+      // Online row missing or mismatched — never serve a stale/wrong WR from local.
+      if (localOk) return { ok: true, replay: localOk, source: "local" };
+      return { ok: false, replay: null };
     } catch (e) {
-      return { ok: !!local, replay: local, error: "network" };
+      if (localOk) return { ok: true, replay: localOk, source: "local", error: "network" };
+      return { ok: false, replay: null, error: "network" };
     }
   }
 
@@ -1157,32 +1324,33 @@
     if (banHit.banned) return banBlockResult(banHit);
     const ms = timeMs | 0;
     if (ms < 0) return { ok: false, error: "bad time" };
-    // Anti-cheat: reject times below the category's physical minimum.
+    const cheatIdentity = {
+      name,
+      user_id: resolved.user_id || (session && session.user && session.user.id) || null,
+      client_id: getClientId(),
+      ip: clientIp,
+    };
+    // Anti-cheat: reject times below the category's physical minimum → immediate 24h ban.
     if (ms < (def.floorMs | 0)) {
-      return {
-        ok: false,
-        error: "cheat? min " + formatTime(def.floorMs),
-        cheated: true,
-        floorMs: def.floorMs | 0,
-      };
+      return banForCheat(cheatIdentity, "cheat: time below floor");
     }
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     // Replay must exist and its last sample must match the submitted clock
     // (stops posting a fake 15s time with a forged payload).
     const frames = options.replay && options.replay.frames;
     if (!frames || !frames.length) {
-      return { ok: false, error: "replay required", cheated: true };
+      return banForCheat(cheatIdentity, "cheat: invalid replay");
     }
     const lastT = frames[frames.length - 1][0] | 0;
     if (lastT < (def.floorMs | 0)) {
-      return { ok: false, error: "cheat? short replay", cheated: true };
+      return banForCheat(cheatIdentity, "cheat: invalid replay");
     }
     if (Math.abs(lastT - ms) > 2000) {
-      return { ok: false, error: "cheat? time mismatch", cheated: true };
+      return banForCheat(cheatIdentity, "cheat: invalid replay");
     }
     const steps = validateReplaySteps(category, frames);
     if (!steps.ok) {
-      return { ok: false, error: steps.error || "cheat? bad steps", cheated: true };
+      return banForCheat(cheatIdentity, "cheat: invalid replay");
     }
     setLastName(name);
     if (!configured()) {
@@ -2419,11 +2587,15 @@
     checkBanIdentity,
     getBanStatus,
     banUserMessage,
+    applyCheatBan,
+    banForCheat,
     fetchBans,
     getClientIp,
     refreshClientIp,
     uploadReplay,
     fetchBestReplay,
+    replayMatchesPrefer,
+    preferFromBoardRow,
     loadLocalReplay,
     saveLocalReplay,
     uuid,

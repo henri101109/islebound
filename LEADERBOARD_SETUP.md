@@ -14,6 +14,29 @@ That one file covers scores, accounts, PRs, online presence, chat, replays (VID)
 
 `SETUP_ALL.sql` creates `public.player_bans` and seeds a **12-hour Matteus temp ban** (expires `2026-11-05 17:47:00+00`). The client also ships a matching hard-coded fallback so the ban applies on GitHub Pages even before you re-run SQL.
 
+### Auto-ban on cheat submits
+
+When `submitScore` sees a time below the category `floorMs`, or an invalid / short / mismatched replay (step anti-cheat fail), the client **immediately** applies a **24-hour** temp ban for that player:
+
+- Persists to `localStorage` (`islebound-local-bans`) so this browser is blocked right away
+- Best-effort `POST` into `player_bans` with `name_norm` + `user_id` + `client_id` + `ip` (when known) and reason `cheat: time below floor` or `cheat: invalid replay`
+- `checkBanIdentity` then blocks submit / chat / presence / sign-in with **TEMP BANNED**
+
+Re-run `SETUP_ALL.sql` (or at least the `Insert cheat auto bans` policy) so anon can insert those rows. Without the policy, local bans still stick on that device; cross-device bans need a SQL insert:
+
+```sql
+insert into public.player_bans (name_norm, user_id, client_id, ip, match_mode, expires_at, reason)
+values (
+  'NAME HERE',
+  null,              -- or account uuid
+  'client-id-here',  -- from islebound-client-id / logs
+  null,              -- or 'x.x.x.x'
+  'name_exact',
+  now() + interval '24 hours',
+  'cheat: time below floor'
+);
+```
+
 After pasting `SETUP_ALL.sql`, optional IP ban once you know the address (Supabase **Logs → API** often shows request IPs):
 
 ```sql
@@ -25,6 +48,7 @@ Notes:
 - Browser anon clients cannot read the real TCP IP inside RLS. Name + `user_id` bans are enforced in SQL policies; IP bans are enforced by the client (ipify) against `player_bans.ip`.
 - True edge IP blocking needs a Supabase Edge Function that inspects `x-forwarded-for` / `cf-connecting-ip`.
 - Banned players see: *You're temporarily banned from online features.* (submit / chat / sign-in / presence blocked).
+- Speedrun floorMs (client anti-cheat): death/boat/coins_10/coins_25 = 5s, full_inv = 30s, fish cats = 28s, shark_cloak = 45s, serpent = 40s, coins_100 = 20s.
 
 ## Auth model (username + 4-digit PIN)
 
