@@ -38,6 +38,12 @@
     boat: { id: "boat", label: "BOAT%", floorMs: 4000 },
     full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 6000 },
     shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 15000 },
+    serpent: { id: "serpent", label: "SERPENT%", floorMs: 20000 },
+    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 18000 },
+    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 30000 },
+    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 3000 },
+    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 8000 },
+    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 30000 },
   };
 
   const NM_BOARD_DEFS = {

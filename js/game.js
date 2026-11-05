@@ -32,6 +32,8 @@
     jelly: { name: "Jellyfish", max: 24, xp: 10 },
     jelly_green: { name: "Green jellyfish", max: 24, xp: 16 },
     jelly_white: { name: "White jellyfish", max: 24, xp: 32 },
+    jelly_gold: { name: "Gold jellyfish", max: 24, xp: 48 },
+    jelly_rainbow: { name: "Rainbow jellyfish", max: 24, xp: 60 },
     fish_blue: { name: "Blue fish", max: 24, xp: 6 },
     fish_gold: { name: "Gold fish", max: 24, xp: 8 },
     fish_reef: { name: "Reef fish", max: 24, xp: 7 },
@@ -41,14 +43,30 @@
     catch_crab: { name: "Crab", max: 24, xp: 12 },
     mini_shark: { name: "Mini shark", max: 24, xp: 18 },
     shark: { name: "Shark", max: 24, xp: 36 },
+    blowfish: { name: "Blowfish", max: 24, xp: 55 },
+    megalodon: { name: "Megalodon", max: 8, xp: 100 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
     wand: { name: "Wand", max: 1, xp: 0 },
     cloak: { name: "Cloak", max: 1, xp: 0 },
+    serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
   const CATCH_RARE = ["catch_crab", "mini_shark", "jelly_green"];
   const CATCH_LEGEND = ["shark", "jelly_white", "chest"];
+  /** Super-legendary: independent sequential rolls after band (first hit wins). */
+  const CATCH_SUPER = [
+    { id: "jelly_gold", den: 200 },
+    { id: "blowfish", den: 250 },
+    { id: "jelly_rainbow", den: 300 },
+    { id: "megalodon", den: 500 },
+  ];
+  const BAIT_IDS = { cod: 1, trout: 1, salmon: 1, jelly: 1, catch_crab: 1 };
+  const MEGA_BAIT = { shark: 0.5, mini_shark: 0.25 };
+  const SERPENT_MAX_HP = 5;
+  const SERPENT_COOLDOWN = 45;
+  const SERPENT_SEGMENTS = 9;
+  const SERPENT_SEG_SPACING = 6.2;
   const TRADE_VALUE = { gem: 5, crystal: 25, jelly: 15 };
   const GEM_TRADE = { gem: 5, crystal: 25 };
   const FISH_TRADE = {
@@ -61,6 +79,10 @@
     jelly_green: 40,
     shark: 75,
     jelly_white: 80,
+    jelly_gold: 120,
+    blowfish: 140,
+    jelly_rainbow: 160,
+    megalodon: 250,
     fish_blue: 10,
     fish_gold: 15,
     fish_reef: 10,
@@ -75,6 +97,10 @@
     ["jelly_green", "GREEN"],
     ["shark", "SHARK"],
     ["jelly_white", "WHITE"],
+    ["jelly_gold", "GOLD"],
+    ["blowfish", "BLOW"],
+    ["jelly_rainbow", "RAIN"],
+    ["megalodon", "MEGA"],
   ];
 
   const keys = Object.create(null);
@@ -126,9 +152,13 @@
     "jelly",
     "jelly_green",
     "jelly_white",
+    "jelly_gold",
+    "jelly_rainbow",
     "catch_crab",
     "mini_shark",
     "shark",
+    "blowfish",
+    "megalodon",
   ];
   const walkPads = [];
   const islandSolids = [];
@@ -217,7 +247,21 @@
   let waveCycle = 0;
   let lastWaveCycle = -1;
   let guideOpen = false;
-  const SPEED_ORDER = ["shark", "jelly_white", "chest", "death", "boat", "full_inv", "shark_cloak"];
+  const SPEED_ORDER = [
+    "shark",
+    "jelly_white",
+    "chest",
+    "death",
+    "boat",
+    "full_inv",
+    "shark_cloak",
+    "serpent",
+    "blowfish",
+    "megalodon",
+    "coins_10",
+    "coins_25",
+    "coins_100",
+  ];
   let playMode = null;
   let uiScreen = "mode";
   let srCat = "shark";
@@ -331,6 +375,13 @@
   let oceanReady = false;
   let hornVoice = null;
   let xpFx = null;
+  let dayPausedAt = null;
+  let dayOffset = 0;
+  let serpent = null;
+  let serpentCoolUntil = 0;
+  let wandCool = 0;
+  const wandBolts = [];
+  let rodBaitId = null;
 
   function rand(min, max) {
     return min + Math.random() * (max - min);
@@ -2089,6 +2140,9 @@
       if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
         finishSpeedrun();
       }
+      if (playMode === "speedrun" && srCat === "serpent" && id === "serpent_heart") {
+        finishSpeedrun();
+      }
       return true;
     }
     const empty = inventory.findIndex((s) => !s);
@@ -2099,6 +2153,9 @@
       if (api && api.noteNmEvent) api.noteNmEvent("sharks", 1);
     }
     if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
+      finishSpeedrun();
+    }
+    if (playMode === "speedrun" && srCat === "serpent" && id === "serpent_heart") {
       finishSpeedrun();
     }
     return true;
@@ -2291,6 +2348,7 @@
           api.noteNmEvent("coins_high", player.coins);
         }
       }
+      checkCoinSpeedEnd();
     }
     if (xpBatch > 0) {
       gainXp(xpBatch);
@@ -2305,6 +2363,12 @@
     }
     if (chestTalk > 0) return "FIND A TREASURE MASTER TO OPEN";
     if (harborTalk > 0) return "CAN'T AFFORD";
+    if (serpent) {
+      if (cloakOn) return "SERPENT CONFUSED";
+      if (serpent.phase === "breach") return "WAND — STRIKE!";
+      return "STEER TO DODGE";
+    }
+    if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
     if (!nearestLoot || nearestLoot.id === "coin") return "";
     const def = ITEM_DEFS[nearestLoot.id];
     if (!def || canTake(nearestLoot.id)) return "";
@@ -2502,10 +2566,439 @@
     }
     if (keys[" "] && holdingShell() && player.dead <= 0) {
       startHorn();
+      trySummonSerpent();
       return;
     }
     if (loudNoiseActive) setLoudNoise(false);
     if (hornVoice && !hornVoice.released) releaseHorn();
+  }
+
+  function clearWandBolts() {
+    wandBolts.length = 0;
+  }
+
+  function endSerpentFight(reason) {
+    if (!serpent) return;
+    serpent = null;
+    clearWandBolts();
+    resumeDayClock();
+    serpentCoolUntil = time + SERPENT_COOLDOWN;
+    if (reason === "kill") {
+      grantSerpentHeart();
+    }
+  }
+
+  function grantSerpentHeart() {
+    const id = "serpent_heart";
+    const b = ownedBoat;
+    const wx = b ? b.x + b.w / 2 : player.x + player.w / 2;
+    const wy = b ? b.y + b.h / 2 : player.y;
+    if (canTake(id)) {
+      const from = worldToUi(wx, wy);
+      pickupAnims.push({
+        id,
+        t: 0,
+        fromX: from.x,
+        fromY: from.y,
+        slot: slotIndexFor(id),
+        dest: "slot",
+        value: 0,
+      });
+      return;
+    }
+    loot.push({
+      id,
+      x: wx - 4,
+      y: wy - 4,
+      taken: false,
+      born: waveCycle,
+      life: Infinity,
+      ignoreUntil: time + 0.2,
+      scene: "island",
+    });
+  }
+
+  function trySummonSerpent() {
+    if (serpent) return false;
+    if (time < serpentCoolUntil) return false;
+    if (scene !== "island" || !player.aboard || !ownedBoat || boatThrow) return false;
+    if (player.dead > 0) return false;
+    if (dockDistTiles() <= 8) return false;
+    if (isPureNight(time)) return false;
+    const b = ownedBoat;
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const ang = Math.random() * Math.PI * 2;
+    const dist = 48 + Math.random() * 28;
+    serpent = {
+      hp: SERPENT_MAX_HP,
+      phase: "intro",
+      t: 0,
+      x: cx + Math.cos(ang) * dist,
+      y: cy + Math.sin(ang) * dist,
+      ang: ang + Math.PI,
+      hurt: 0,
+      struck: false,
+      waveT: 0,
+      breachAng: ang + Math.PI,
+      splashUp: false,
+      splashDown: false,
+      segs: [],
+    };
+    for (let i = 0; i < SERPENT_SEGMENTS; i++) {
+      serpent.segs.push({ x: serpent.x, y: serpent.y });
+    }
+    clearWandBolts();
+    pauseDayClock();
+    if (rod.phase !== "idle") {
+      rod.phase = "idle";
+      rod.catchId = null;
+      rod.tugLeft = 0;
+      rodBaitId = null;
+    }
+    return true;
+  }
+
+  function toppleFromSerpent() {
+    if (!player.aboard || !ownedBoat || !serpent || cloakOn) return;
+    const b = ownedBoat;
+    const side = Math.random() < 0.5 ? -1 : 1;
+    player.aboard = false;
+    player.x = b.x + b.w / 2 - player.w / 2 + side * 16;
+    player.y = b.y + b.h - 2;
+    player.inWater = true;
+    player.submerged = 0.4;
+    hurtPlayer();
+    player.hurt = Math.max(player.hurt, 0.55);
+    shake = Math.max(shake, 9);
+    emitSplash(player.x + player.w / 2, player.y + player.h, 10);
+    if (!serpent.splashDown) {
+      serpent.splashDown = true;
+      emitSplash(serpent.x, serpent.strikeY != null ? serpent.strikeY : serpent.y + 4, 12);
+    }
+    serpent.phase = "recover";
+    serpent.t = 0;
+    serpent.struck = true;
+  }
+
+  function serpentShouldFlee() {
+    if (!serpent) return false;
+    if (scene !== "island") return true;
+    if (boatThrow) return true;
+    if (!ownedBoat) return true;
+    if (dockDistTiles() <= 3) return true;
+    if (!player.aboard) {
+      const bx = ownedBoat.x + ownedBoat.w / 2;
+      const by = ownedBoat.y + ownedBoat.h / 2;
+      const mid = playerCenter();
+      if (Math.hypot(mid.x - bx, mid.y - by) > 70) return true;
+      if (!player.inWater && !hitPad(player.x + 4, player.y + player.h - 2, walkPads)) {
+        /* on land away from boat */
+        if (Math.hypot(mid.x - bx, mid.y - by) > 36) return true;
+      }
+    }
+    return false;
+  }
+
+  function updateSerpentSegs(headX, headY, ang, dt) {
+    if (!serpent) return;
+    const segs = serpent.segs;
+    const spacing = SERPENT_SEG_SPACING;
+    segs[0].x = headX;
+    segs[0].y = headY;
+    serpent.waveT += dt;
+    const under = serpent.phase === "shadow" || serpent.phase === "intro" || serpent.phase === "recover";
+    const waveAmp = under ? 3.4 : 1.8;
+    const waveSpeed = under ? 5.2 : 6.4;
+    for (let i = 1; i < segs.length; i++) {
+      const prev = segs[i - 1];
+      const seg = segs[i];
+      let dx = seg.x - prev.x;
+      let dy = seg.y - prev.y;
+      let d = Math.hypot(dx, dy) || 1;
+      const nx = dx / d;
+      const ny = dy / d;
+      const wave = Math.sin(serpent.waveT * waveSpeed - i * 0.78) * waveAmp * (0.35 + i * 0.12);
+      const tx = prev.x + nx * spacing - ny * wave;
+      const ty = prev.y + ny * spacing + nx * wave;
+      const follow = 1 - Math.exp(-(11 - i * 0.4) * dt);
+      seg.x += (tx - seg.x) * follow;
+      seg.y += (ty - seg.y) * follow;
+      dx = seg.x - prev.x;
+      dy = seg.y - prev.y;
+      d = Math.hypot(dx, dy) || 1;
+      if (d > 0.01) {
+        seg.x = prev.x + (dx / d) * spacing;
+        seg.y = prev.y + (dy / d) * spacing;
+      } else {
+        seg.x = prev.x - Math.cos(ang) * spacing;
+        seg.y = prev.y - Math.sin(ang) * spacing;
+      }
+    }
+    serpent.x = segs[0].x;
+    serpent.y = segs[0].y;
+    serpent.ang = ang;
+  }
+
+  function serpentWanderAim(dt) {
+    const sway = Math.sin(serpent.waveT * 1.7 + serpent.t * 2.2) * 1.1;
+    const ang = serpent.ang + sway * dt * 2.4;
+    const spd = 28;
+    updateSerpentSegs(
+      serpent.x + Math.cos(ang) * spd * dt,
+      serpent.y + Math.sin(ang) * spd * dt,
+      ang,
+      dt
+    );
+  }
+
+  function serpentMissStrike(bx, by) {
+    const missAng = serpent.ang + (Math.random() < 0.5 ? 1 : -1) * (0.85 + Math.random() * 0.7);
+    const missDist = 30 + Math.random() * 20;
+    serpent.strikeX = bx + Math.cos(missAng) * missDist;
+    serpent.strikeY = by + Math.sin(missAng) * missDist;
+    serpent.breachAng = Math.atan2(serpent.strikeY - serpent.y, serpent.strikeX - serpent.x);
+  }
+
+  function updateSerpent(dt) {
+    if (!serpent) return;
+    if (serpent.hurt > 0) serpent.hurt = Math.max(0, serpent.hurt - dt);
+    if (serpentShouldFlee()) {
+      endSerpentFight("flee");
+      return;
+    }
+    const b = ownedBoat;
+    const bx = b.x + b.w / 2;
+    const by = b.y + b.h / 2;
+    const cloaked = cloakOn;
+    serpent.t += dt;
+    if (serpent.phase === "intro") {
+      if (cloaked) {
+        serpentWanderAim(dt);
+        if (serpent.t > 1.1) {
+          serpent.phase = "shadow";
+          serpent.t = 0;
+        }
+        return;
+      }
+      const ang = Math.atan2(by - serpent.y, bx - serpent.x);
+      const spd = 38;
+      updateSerpentSegs(serpent.x + Math.cos(ang) * spd * dt, serpent.y + Math.sin(ang) * spd * dt, ang, dt);
+      if (serpent.t > 1.1 || Math.hypot(serpent.x - bx, serpent.y - by) < 26) {
+        serpent.phase = "shadow";
+        serpent.t = 0;
+      }
+      return;
+    }
+    if (serpent.phase === "shadow") {
+      if (cloaked) {
+        serpentWanderAim(dt);
+        if (serpent.t > 1.35) {
+          serpent.phase = "breach";
+          serpent.t = 0;
+          serpent.struck = true;
+          serpentMissStrike(bx, by);
+          serpent.splashUp = false;
+          serpent.splashDown = false;
+        }
+        return;
+      }
+      const orbit = 22 + Math.sin(serpent.t * 2.4) * 6;
+      const wantAng = serpent.t * 1.55;
+      const tx = bx + Math.cos(wantAng) * orbit;
+      const ty = by + Math.sin(wantAng) * orbit * 0.72;
+      const ang = Math.atan2(ty - serpent.y, tx - serpent.x);
+      const spd = 55;
+      updateSerpentSegs(serpent.x + Math.cos(ang) * spd * dt, serpent.y + Math.sin(ang) * spd * dt, ang, dt);
+      if (serpent.t > 1.35) {
+        serpent.phase = "breach";
+        serpent.t = 0;
+        serpent.struck = false;
+        serpent.strikeX = bx;
+        serpent.strikeY = by;
+        serpent.breachAng = Math.atan2(by - serpent.y, bx - serpent.x);
+        serpent.splashUp = false;
+        serpent.splashDown = false;
+      }
+      return;
+    }
+    if (serpent.phase === "breach") {
+      const u = Math.min(1, serpent.t / 0.42);
+      const riseU = Math.min(1, serpent.t / 1.55);
+      const rise = Math.sin(riseU * Math.PI);
+      const ang = serpent.breachAng;
+      const wantX = serpent.strikeX + Math.cos(ang + Math.PI) * (18 * (1 - u));
+      const wantY = serpent.strikeY + Math.sin(ang + Math.PI) * (12 * (1 - u)) - rise * 14;
+      const approach = 1 - Math.exp(-7.5 * dt);
+      const hx = serpent.x + (wantX - serpent.x) * approach;
+      const hy = serpent.y + (wantY - serpent.y) * approach;
+      updateSerpentSegs(hx, hy, ang, dt);
+      if (!serpent.splashUp && serpent.t > 0.04 && rise > 0.12) {
+        serpent.splashUp = true;
+        emitSplash(serpent.strikeX, serpent.strikeY, 14);
+        emitSplash(serpent.strikeX + Math.cos(ang) * 4, serpent.strikeY + Math.sin(ang) * 3, 6);
+      }
+      if (!serpent.splashDown && serpent.t > 0.9 && rise < 0.55) {
+        serpent.splashDown = true;
+        emitSplash(serpent.x, serpent.strikeY, 13);
+        emitSplash(serpent.strikeX, serpent.strikeY + 2, 5);
+      }
+      if (!serpent.struck && serpent.t > 0.28 && serpent.t < 1.15 && player.aboard && !cloaked) {
+        if (Math.hypot(serpent.x - bx, serpent.y - by) < 16) {
+          toppleFromSerpent();
+          return;
+        }
+      }
+      if (cloaked && !serpent.struck) serpent.struck = true;
+      if (serpent.t > 1.55) {
+        if (!serpent.splashDown) {
+          serpent.splashDown = true;
+          emitSplash(serpent.x, serpent.strikeY, 12);
+        }
+        serpent.phase = "recover";
+        serpent.t = 0;
+      }
+      return;
+    }
+    if (serpent.phase === "recover") {
+      if (cloaked) {
+        serpentWanderAim(dt);
+        if (serpent.t > 0.85) {
+          serpent.phase = "shadow";
+          serpent.t = 0;
+          serpent.struck = false;
+        }
+        return;
+      }
+      const ang = Math.atan2(serpent.y - by, serpent.x - bx);
+      const spd = 42;
+      updateSerpentSegs(serpent.x + Math.cos(ang) * spd * dt, serpent.y + Math.sin(ang) * spd * dt, ang + Math.PI, dt);
+      if (serpent.t > 0.85) {
+        serpent.phase = "shadow";
+        serpent.t = 0;
+        serpent.struck = false;
+      }
+    }
+  }
+
+  function fireWandBolt() {
+    if (player.dead > 0) return;
+    if (wandCool > 0) return;
+    wandCool = 0.48;
+    const face = player.facing;
+    const ox = player.x + player.w / 2 + face * 4;
+    const oy = player.y + 3;
+    wandBolts.push({
+      x: ox,
+      y: oy,
+      vx: face * 210,
+      vy: -12,
+      life: 0.55,
+      max: 0.55,
+    });
+    useFx = { t: 0, id: "wand" };
+  }
+
+  function hurtSerpent(amount) {
+    if (!serpent || serpent.phase !== "breach") return false;
+    serpent.hp -= amount | 0;
+    serpent.hurt = 0.35;
+    shake = Math.max(shake, 5);
+    emitSplash(serpent.x, serpent.y + 4, 5);
+    if (serpent.hp <= 0) {
+      serpent.hp = 0;
+      endSerpentFight("kill");
+      return true;
+    }
+    return true;
+  }
+
+  function updateWandBolts(dt) {
+    if (wandCool > 0) wandCool = Math.max(0, wandCool - dt);
+    for (let i = wandBolts.length - 1; i >= 0; i--) {
+      const p = wandBolts[i];
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      let hit = false;
+      if (serpent && serpent.phase === "breach" && serpent.hurt <= 0.28) {
+        for (let s = 0; s < Math.min(3, serpent.segs.length); s++) {
+          const seg = serpent.segs[s];
+          if (Math.hypot(p.x - seg.x, p.y - seg.y) < 10) {
+            hurtSerpent(1);
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (hit || p.life <= 0) wandBolts.splice(i, 1);
+    }
+  }
+
+  function drawSerpent(cpos) {
+    if (!serpent || scene !== "island") return;
+    const under = serpent.phase === "shadow" || serpent.phase === "intro" || serpent.phase === "recover";
+    const flash = serpent.hurt > 0 && ((time * 18) | 0) % 2 === 0;
+    for (let i = serpent.segs.length - 1; i >= 0; i--) {
+      const seg = serpent.segs[i];
+      const x = (seg.x - cpos.x) | 0;
+      const y = (seg.y - cpos.y) | 0;
+      if (x < -20 || y < -20 || x > viewW + 20 || y > viewH + 20) continue;
+      const r = i === 0 ? 4 : 3;
+      if (under) {
+        px(x - r, y - 1, r * 2 + 1, 3, "rgba(8, 18, 28, 0.55)");
+        px(x - r + 1, y, r * 2 - 1, 1, "rgba(12, 28, 40, 0.4)");
+        continue;
+      }
+      const body = flash ? "#f4f0e0" : i === 0 ? "#2f6a58" : "#1e4a40";
+      const hi = flash ? "#ffffff" : "#4a9a7a";
+      const edge = flash ? "#c04030" : "#0e2a24";
+      px(x - r, y - r + 1, r * 2, r * 2 - 1, body);
+      px(x - r + 1, y - r, r * 2 - 2, 1, hi);
+      px(x - r, y + r - 1, r * 2, 1, edge);
+      if (i === 0) {
+        const fx = Math.cos(serpent.ang) | 0;
+        const fy = Math.sin(serpent.ang) | 0;
+        px(x + fx * 3, y + fy * 2 - 1, 2, 2, flash ? "#fff3c0" : "#c9e86a");
+        px(x + fx * 2 - 1, y + fy - 2, 1, 1, "#1a1814");
+        px(x + fx * 2 + 1, y + fy - 2, 1, 1, "#1a1814");
+        px(x - fx * 2, y - 3, 2, 2, hi);
+      }
+    }
+    if (!under && serpent.phase === "breach") {
+      const hx = (serpent.x - cpos.x) | 0;
+      const hy = (serpent.y - cpos.y + 6) | 0;
+      px(hx - 6, hy, 12, 2, "rgba(220, 240, 255, 0.35)");
+    }
+  }
+
+  function drawWandBolts(cpos) {
+    for (let i = 0; i < wandBolts.length; i++) {
+      const p = wandBolts[i];
+      const x = (p.x - cpos.x) | 0;
+      const y = (p.y - cpos.y) | 0;
+      const a = Math.max(0.2, p.life / p.max);
+      px(x - 1, y - 1, 3, 3, "#6a5088");
+      px(x, y, 1, 1, "#f4e8ff");
+      px(x - ((p.vx > 0 ? 1 : -1) * 2), y, 2, 1, a > 0.4 ? "#b890e0" : "#4a3428");
+    }
+  }
+
+  function drawSerpentBossBar() {
+    if (!serpent) return;
+    const uiW = canvas.width / SCALE_UI;
+    const w = 110;
+    const h = 14;
+    const x = ((uiW - w) / 2) | 0;
+    const y = 6;
+    px(x, y, w, h, "#2b1c12");
+    px(x + 1, y + 1, w - 2, h - 2, "#5c3a21");
+    px(x + 2, y + 2, w - 4, 4, "#3a2414");
+    drawPixText("SEA SERPENT", (x + w / 2) | 0, y + 2, "#f3e2c4", "center");
+    const inner = w - 6;
+    const fill = Math.floor((inner * Math.max(0, serpent.hp)) / SERPENT_MAX_HP);
+    px(x + 3, y + 8, inner, 3, "#1a120c");
+    if (fill > 0) px(x + 3, y + 8, fill, 3, serpent.hurt > 0 ? "#f4a090" : "#2f6a58");
   }
 
   function playCoinClink() {
@@ -2896,9 +3389,26 @@
     cabinCut.mode = "open";
   }
 
+  /** Brief cheeky blowfish gag; freezes input like cabin cuts (~2s). */
+  function startBlowfishCut() {
+    if (cabinCut.kind || fadeMode) return;
+    cabinCut.kind = "blowfish";
+    cabinCut.t = 0;
+    cabinCut.value = 0;
+    cabinCut.pack = 0;
+    cabinCut.spawned = false;
+    cabinCut.granted = false;
+    cabinCut.lid = 0;
+    cabinCut.mode = "open";
+  }
+
   function updateCabinCut(dt) {
     if (!cabinCut.kind) return;
     cabinCut.t += dt;
+    if (cabinCut.kind === "blowfish") {
+      if (cabinCut.t >= 2.05) cabinCut.kind = "";
+      return;
+    }
     if (cabinCut.kind === "classic") {
       if (cabinCut.mode === "open") {
         const creak = 0.46;
@@ -3298,16 +3808,87 @@
     };
   }
 
-  function rollBoatCatch() {
-    const band = fishBand();
+  function heldStackId() {
+    const stack = inventory[heldSlot];
+    return stack && stack.count > 0 ? stack.id : null;
+  }
+
+  function heldBaitId() {
+    const id = heldStackId();
+    return id && BAIT_IDS[id] ? id : null;
+  }
+
+  function baitBoostBand(band) {
+    let legend = band.legend * 1.25;
+    let rare = band.rare * 1.5;
+    const sum = legend + rare;
+    if (sum > 0.95) {
+      legend = (legend / sum) * 0.95;
+      rare = (rare / sum) * 0.95;
+    }
+    return { bite: band.bite, legend, rare, weak: band.weak };
+  }
+
+  function consumeRodBait() {
+    const id = rodBaitId;
+    rodBaitId = null;
+    if (!id) return;
+    if (inventory[heldSlot] && inventory[heldSlot].id === id) {
+      inventory[heldSlot].count -= 1;
+      if (inventory[heldSlot].count <= 0) inventory[heldSlot] = null;
+      return;
+    }
+    for (let i = 0; i < inventory.length; i++) {
+      const s = inventory[i];
+      if (!s || s.id !== id) continue;
+      s.count -= 1;
+      if (s.count <= 0) inventory[i] = null;
+      return;
+    }
+  }
+
+  /** Independent sequential super-legend rolls; first hit wins. Good bait multiplies odds ×1.10. */
+  function rollSuperLegend(goodBait) {
+    const mult = goodBait ? 1.1 : 1;
+    for (let i = 0; i < CATCH_SUPER.length; i++) {
+      const row = CATCH_SUPER[i];
+      if (Math.random() < (mult / row.den)) return row.id;
+    }
+    return null;
+  }
+
+  function rollBandCatch(goodBait) {
+    let band = fishBand();
+    if (goodBait) band = baitBoostBand(band);
     const r = Math.random();
-    if (r < band.legend) return CATCH_LEGEND[irand(0, CATCH_LEGEND.length - 1)];
-    if (r < band.legend + band.rare) return CATCH_RARE[irand(0, CATCH_RARE.length - 1)];
-    if (Math.random() < band.weak) return Math.random() < 0.67 ? "cod" : "trout";
-    return CATCH_COMMON[irand(0, CATCH_COMMON.length - 1)];
+    let id;
+    if (r < band.legend) id = CATCH_LEGEND[irand(0, CATCH_LEGEND.length - 1)];
+    else if (r < band.legend + band.rare) id = CATCH_RARE[irand(0, CATCH_RARE.length - 1)];
+    else if (Math.random() < band.weak) id = Math.random() < 0.67 ? "cod" : "trout";
+    else id = CATCH_COMMON[irand(0, CATCH_COMMON.length - 1)];
+    const superId = rollSuperLegend(goodBait);
+    return superId || id;
+  }
+
+  function rollBoatCatch() {
+    const held = heldStackId();
+    rodBaitId = null;
+    // 1) Heart of the Sea held → guaranteed blowfish (not consumed)
+    if (held === "serpent_heart") return "blowfish";
+    // 2–3) Shark / mini-shark held → megalodon bait (consumed only if mega lands)
+    if (held && MEGA_BAIT[held] != null) {
+      rodBaitId = held;
+      if (Math.random() < MEGA_BAIT[held]) return "megalodon";
+      return rollBandCatch(false);
+    }
+    // 4) Normal band + super-legend; common bait boosts legend/rare and +10% super
+    const bait = held && BAIT_IDS[held] ? held : null;
+    rodBaitId = bait;
+    return rollBandCatch(!!bait);
   }
 
   function tryCastRod() {
+    if (serpent) return;
     if (scene !== "island" || !player.aboard || !ownedBoat || boatThrow) return;
     if (rod.phase !== "idle" || pickupAnims.length || player.dead > 0) return;
     if (!boatIsStill()) return;
@@ -3369,11 +3950,16 @@
     return fallback;
   }
 
+  function isSharkishCatch(id) {
+    return id === "mini_shark" || id === "shark" || id === "megalodon";
+  }
+
   function updateSharkTug(dt) {
     const id = rod.catchId;
-    if (id !== "mini_shark" && id !== "shark") return;
+    if (!isSharkishCatch(id)) return;
+    const mega = id === "megalodon";
     const fighting =
-      (rod.phase === "wait" && rod.t >= rod.wait - 7) || rod.phase === "reel";
+      (rod.phase === "wait" && (mega || rod.t >= rod.wait - 7)) || rod.phase === "reel";
     if (!fighting) return;
     const b = ownedBoat;
     if (!b || boatThrow || !player.aboard) return;
@@ -3386,21 +3972,23 @@
     if (rod.tugLeft <= 0) {
       const dir = pickYankDir(b);
       if (!dir) return;
-      const tiles = id === "shark" ? 3 : 2;
+      const tiles = mega ? irand(10, 14) : id === "shark" ? 3 : 2;
       rod.tugDx = dir[0];
       rod.tugDy = dir[1];
       rod.tugLeft = tiles * TILE;
-      rod.tugV = (tiles * TILE) / (id === "shark" ? 0.46 : 0.4);
-      emitSplash(b.x + b.w / 2, b.y + b.h - 1, id === "shark" ? 8 : 4);
+      rod.tugV = (tiles * TILE) / (mega ? 0.55 : id === "shark" ? 0.46 : 0.4);
+      emitSplash(b.x + b.w / 2, b.y + b.h - 1, mega ? 14 : id === "shark" ? 8 : 4);
+      if (mega) shake = Math.max(shake, 3.2);
     }
     let left = Math.min(rod.tugLeft, rod.tugV * dt);
+    const hopMax = mega ? 4 : 2;
     while (left > 0.01) {
-      const hop = Math.min(2, left);
+      const hop = Math.min(hopMax, left);
       const nx = b.x + rod.tugDx * hop;
       const ny = b.y + rod.tugDy * hop;
       if (!hullInOpenWater(nx, ny, b.w, b.h)) {
         rod.tugLeft = 0;
-        rod.tugCool = rand(0.08, 0.2);
+        rod.tugCool = mega ? rand(0.02, 0.08) : rand(0.08, 0.2);
         break;
       }
       b.x = nx;
@@ -3410,7 +3998,7 @@
     }
     if (rod.tugLeft <= 0) {
       rod.tugLeft = 0;
-      if (rod.tugCool <= 0) rod.tugCool = rand(0.1, 0.28);
+      if (rod.tugCool <= 0) rod.tugCool = mega ? rand(0.04, 0.12) : rand(0.1, 0.28);
     }
     b.vx = 0;
     b.vy = 0;
@@ -3425,16 +4013,26 @@
     rod.bit = false;
     if (!id) {
       emitSplash(fx, fy, 3);
+      rodBaitId = null;
       return;
     }
-    emitSplash(fx, fy, 7);
+    emitSplash(fx, fy, id === "megalodon" ? 16 : 7);
     if (!ITEM_DEFS[id] || !canTake(id)) {
       chestTalk = 0;
       harborTalk = 0;
       shopTrade.refuse = 0.01;
+      rodBaitId = null;
       return;
     }
     rod.bit = true;
+    // Common bait: always consume on successful catch.
+    // Shark / mini_shark bait: only consume if megalodon actually landed.
+    if (rodBaitId && MEGA_BAIT[rodBaitId] != null) {
+      if (id === "megalodon") consumeRodBait();
+      else rodBaitId = null;
+    } else if (rodBaitId) {
+      consumeRodBait();
+    }
     const from = worldToUi(fx, fy);
     pickupAnims.push({
       id,
@@ -3445,19 +4043,21 @@
       dest: "slot",
       value: 0,
     });
+    if (id === "blowfish") startBlowfishCut();
   }
 
   function updateRod(dt) {
     if (chestTalk > 0) chestTalk = Math.max(0, chestTalk - dt);
     if (rod.phase === "idle") return;
     const sharkFight =
-      (rod.catchId === "mini_shark" || rod.catchId === "shark") &&
+      isSharkishCatch(rod.catchId) &&
       rod.phase === "wait" &&
-      rod.t >= rod.wait - 7;
+      (rod.catchId === "megalodon" || rod.t >= rod.wait - 7);
     if (!player.aboard || player.moving || (rod.phase === "wait" && !sharkFight && !boatIsStill())) {
       rod.phase = "idle";
       rod.catchId = null;
       rod.tugLeft = 0;
+      rodBaitId = null;
       return;
     }
     if (rod.phase === "wait" || rod.phase === "reel") updateSharkTug(dt);
@@ -3520,9 +4120,13 @@
     }
     if (stack.id === "shell") {
       startHorn();
+      trySummonSerpent();
       return;
     }
-    if (stack.id === "wand") return;
+    if (stack.id === "wand") {
+      fireWandBolt();
+      return;
+    }
     if (stack.id === "cloak") {
       cloakOn = !cloakOn;
       return;
@@ -5037,14 +5641,46 @@
   }
 
   function drawTinyCatch(id, x, y) {
-    if (id === "jelly" || id === "jelly_green" || id === "jelly_white") {
-      const a = id === "jelly_green" ? "#8fdc78" : id === "jelly_white" ? "#f7fbff" : "#e8b8f0";
-      const b = id === "jelly_green" ? "#3c8a34" : id === "jelly_white" ? "#c5d0de" : "#c878d8";
+    if (
+      id === "jelly" ||
+      id === "jelly_green" ||
+      id === "jelly_white" ||
+      id === "jelly_gold" ||
+      id === "jelly_rainbow"
+    ) {
+      let a = "#e8b8f0";
+      let b = "#c878d8";
+      if (id === "jelly_green") {
+        a = "#8fdc78";
+        b = "#3c8a34";
+      } else if (id === "jelly_white") {
+        a = "#f7fbff";
+        b = "#c5d0de";
+      } else if (id === "jelly_gold") {
+        a = "#ffe08a";
+        b = "#c9a227";
+      } else if (id === "jelly_rainbow") {
+        a = "#ff9ad4";
+        b = "#6ad4ff";
+      }
       px(x + 1, y, 4, 2, a);
       px(x, y + 1, 6, 2, b);
       px(x + 1, y + 3, 1, 3, a);
-      px(x + 3, y + 3, 1, 4, a);
-      px(x + 5, y + 3, 1, 2, b);
+      px(x + 3, y + 3, 1, 4, id === "jelly_rainbow" ? "#9ef07a" : a);
+      px(x + 5, y + 3, 1, 2, id === "jelly_rainbow" ? "#c9a227" : b);
+      if (id === "jelly_gold") px(x + 2, y + 1, 1, 1, "#fff8d0");
+      if (id === "jelly_rainbow") px(x + 3, y + 1, 1, 1, "#ffffff");
+      return true;
+    }
+    if (id === "blowfish") {
+      px(x + 1, y + 1, 5, 4, "#e8c878");
+      px(x + 2, y, 3, 1, "#f4dca0");
+      px(x, y + 2, 1, 2, "#c9a048");
+      px(x + 6, y + 2, 1, 2, "#c9a048");
+      px(x + 2, y + 5, 1, 1, "#8a6a28");
+      px(x + 4, y + 5, 1, 1, "#8a6a28");
+      px(x + 4, y + 2, 1, 1, "#1a1814");
+      px(x + 1, y + 3, 1, 1, "#d08060");
       return true;
     }
     if (id === "catch_crab") {
@@ -5077,23 +5713,37 @@
       px(x + 1, y + 6, 5, 1, "#141c30");
       return true;
     }
+    if (id === "serpent_heart") {
+      px(x + 1, y + 1, 2, 1, "#7ff0ea");
+      px(x + 4, y + 1, 2, 1, "#7ff0ea");
+      px(x, y + 2, 7, 2, "#2ec9c0");
+      px(x + 1, y + 4, 5, 1, "#1a8a86");
+      px(x + 2, y + 5, 3, 1, "#0e5a58");
+      px(x + 2, y + 2, 1, 1, "#e8ffff");
+      return true;
+    }
     if (
       id === "cod" ||
       id === "trout" ||
       id === "salmon" ||
       id === "shark" ||
       id === "mini_shark" ||
+      id === "megalodon" ||
       id === "fish_blue" ||
       id === "fish_gold" ||
       id === "fish_reef"
     ) {
       const pal = fishPalette(id);
-      const w = id === "shark" ? 10 : id === "mini_shark" ? 8 : 7;
+      const w = id === "megalodon" ? 11 : id === "shark" ? 10 : id === "mini_shark" ? 8 : 7;
       px(x, y + 2, w, 3, pal.body);
       px(x + w - 2, y + 1, 3, 2, pal.tail);
       px(x + 2, y + 1, 3, 1, pal.hi);
       px(x + w - 4, y + 3, 1, 1, "#1a1814");
-      if (id === "shark" || id === "mini_shark") px(x + 3, y, 1, 2, pal.hi);
+      if (id === "shark" || id === "mini_shark" || id === "megalodon") px(x + 3, y, 1, 2, pal.hi);
+      if (id === "megalodon") {
+        px(x + 1, y + 1, 2, 1, "#2a3038");
+        px(x + 4, y + 4, 3, 1, "#3a444c");
+      }
       return true;
     }
     return false;
@@ -5133,7 +5783,7 @@
       return;
     }
     if (scene === "fish") {
-      const page = ((t / 2.2) | 0) % 5;
+      const page = ((t / 2.2) | 0) % Math.ceil(FISHER_MENU.length / 2);
       const top = FISHER_MENU[page * 2];
       const bot = FISHER_MENU[page * 2 + 1];
       const w = 86;
@@ -5172,7 +5822,9 @@
     if (id === "fish_gold" || id === "salmon") return { body: "#e8c44a", tail: "#8a6a18", hi: "#fff3c0" };
     if (id === "fish_reef" || id === "trout") return { body: "#e04a32", tail: "#8a2018", hi: "#f4a090" };
     if (id === "cod") return { body: "#c5d4dc", tail: "#7a8a94", hi: "#e8f0f4" };
+    if (id === "megalodon") return { body: "#3a4854", tail: "#1a242c", hi: "#8a9aa8" };
     if (id === "shark" || id === "mini_shark") return { body: "#6a7a84", tail: "#3a4a52", hi: "#b8c4cc" };
+    if (id === "blowfish") return { body: "#e8c878", tail: "#c9a048", hi: "#f4dca0" };
     return { body: "#3a9ad4", tail: "#1a6a9a", hi: "#7fd4f0" };
   }
 
@@ -5738,12 +6390,18 @@
       const row = (i / HUD_COLS) | 0;
       const sx = x0 + col * (slot + gap);
       const sy = y0 + row * (slot + h.rowGap);
-      const sel = i === heldSlot;
+      const stack = inventory[i];
+      const wandPulse =
+        serpent &&
+        serpent.phase === "breach" &&
+        stack &&
+        stack.id === "wand" &&
+        ((time * 10) | 0) % 2 === 0;
+      const sel = i === heldSlot || wandPulse;
       px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
       px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
-      px(sx + 2, sy + 2, slot - 4, slot - 4, "#5c3a21");
+      px(sx + 2, sy + 2, slot - 4, slot - 4, wandPulse ? "#e8c44a" : "#5c3a21");
       px(sx + 4, sy + 4, slot - 8, slot - 8, "#1a120c");
-      const stack = inventory[i];
       if (!stack) continue;
       drawHudIcon(stack.id, sx, sy);
       if (stack.count > 1) drawCount(sx, sy, stack.count);
@@ -6071,10 +6729,33 @@
     return n < 0 ? 0 : n > 255 ? 255 : n;
   }
 
+  function worldDayT(t) {
+    if (dayPausedAt != null) return dayPausedAt;
+    return (t == null ? time : t) - dayOffset;
+  }
+
+  function pauseDayClock() {
+    if (dayPausedAt != null) return;
+    dayPausedAt = time - dayOffset;
+  }
+
+  function resumeDayClock() {
+    if (dayPausedAt == null) return;
+    dayOffset = time - dayPausedAt;
+    dayPausedAt = null;
+  }
+
   function dayClock(t) {
-    let u = t % DAY_LEN;
+    let u = worldDayT(t) % DAY_LEN;
     if (u < 0) u += DAY_LEN;
     return u;
+  }
+
+  function isPureNight(t) {
+    const u = dayClock(t);
+    const nightAt = DAY_HOLD + DUSK_LEN;
+    const dawnAt = nightAt + NIGHT_HOLD;
+    return u >= nightAt && u < dawnAt;
   }
 
   function nightMix(t) {
@@ -7496,6 +8177,72 @@
     }
   }
 
+  /** ~2s cheeky pixel gag: player + puffed blowfish silhouettes, then resume. */
+  function drawBlowfishCut() {
+    if (cabinCut.kind !== "blowfish") return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const u = cabinCut.t;
+    const fadeIn = Math.min(1, u / 0.18);
+    const fadeOut = u > 1.7 ? Math.max(0, 1 - (u - 1.7) / 0.35) : 1;
+    const a = fadeIn * fadeOut;
+    ctx.save();
+    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+    ctx.globalAlpha = 0.72 * a;
+    px(0, 0, uiW, uiH, "#120810");
+    ctx.globalAlpha = a;
+    const cx = (uiW / 2) | 0;
+    const cy = (uiH / 2) | 0;
+    const puff = u < 0.35 ? u / 0.35 : u < 1.35 ? 1 : Math.max(0.55, 1 - (u - 1.35) / 0.4);
+    const bob = (Math.sin(u * 14) * 1.5) | 0;
+    const lean = u > 0.25 && u < 1.55 ? 1 : 0;
+    // Player silhouette (left)
+    const px0 = cx - 28 + lean * 4;
+    const py0 = cy - 6;
+    px(px0 + 3, py0 - 10, 5, 5, "#1a1018");
+    px(px0 + 4, py0 - 9, 1, 1, "#3a2414");
+    px(px0 + 2, py0 - 5, 7, 10, "#1a1018");
+    px(px0, py0 + 1, 3, 8, "#1a1018");
+    px(px0 + 8, py0 + 1, 3, 8, "#1a1018");
+    px(px0 + 9, py0 - 2 + bob, 6, 2, "#1a1018");
+    // Blowfish (right of player, puffs up — abstract bawdy beat)
+    const bx = px0 + 12 + lean * 2;
+    const by = py0 - 2 + bob;
+    const r = (4 + puff * 7) | 0;
+    const top = by - ((r / 2) | 0);
+    const bot = by + ((r / 2) | 0);
+    px(bx, top, r + 2, r, "#e8c878");
+    px(bx + 1, top - 1, Math.max(2, r), 2, "#f4dca0");
+    px(bx + r - 1, by - 1, 2, 2, "#1a1814");
+    px(bx + 1, bot - 1, 1, 1, "#8a6a28");
+    px(bx + r - 2, bot - 1, 1, 1, "#8a6a28");
+    // Spikes / comic motion
+    if (puff > 0.6) {
+      px(bx - 2, by - 2, 1, 1, "#c9a048");
+      px(bx + r + 2, by, 1, 1, "#c9a048");
+      px(bx + ((r / 2) | 0), top - 2, 1, 1, "#c9a048");
+    }
+    // Sweat / stars (comedic, not graphic)
+    if (u > 0.4 && u < 1.6) {
+      const tw = ((u * 9) | 0) & 1;
+      px(px0 - 4, py0 - 12 - tw, 1, 1, "#9ee8ff");
+      px(px0 - 2, py0 - 14, 1, 2, "#9ee8ff");
+      px(bx + r + 4, by - 6, 2, 2, "#f3d56a");
+      px(bx + r + 6, by - 4, 1, 1, "#fff3c0");
+    }
+    if (u > 0.55 && u < 1.45) {
+      drawPixText("!!!", cx + 18, cy - 22, "#f3e2c4", "center");
+    }
+    if (u > 1.55) {
+      // Pop / deflate punchline
+      px(bx + 2, by - 1, 3, 2, "#fff3c0");
+      px(bx - 1, by + 2, 1, 1, "#e8c878");
+      px(bx + r + 1, by - 3, 1, 1, "#e8c878");
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
   function drawGuide() {
     if (!guideOpen) return;
     const uiW = canvas.width / SCALE_UI;
@@ -7508,6 +8255,10 @@
       "ENTER DROPS HELD ITEM",
       "SPACE USES HELD ITEM",
       "SHELL BLOWS THE HORN",
+      "FAR HORN WAKES SERPENT",
+      "WAND HITS BREACHING SERPENT",
+      "HOLD BAIT TO CAST BETTER",
+      "HEART / SHARK BAIT = SUPER",
       "CHEST NEEDS THE MASTER",
       "T OPENS CHEST IN CABIN",
       "T TRADES NEAR NPC",
@@ -7517,6 +8268,7 @@
       "WALK TO LOOT TO PICK UP",
       "WALK TO BOAT TO BOARD",
       "SHORE OR DOCK TO GET OUT",
+      "ESC QUITS SURVIVAL",
       "R RESETS SPEEDRUN",
       "H CLOSES THIS GUIDE",
     ];
@@ -7582,6 +8334,9 @@
       drawWorldLight(cpos, t);
       drawSplashes(cpos);
       drawFish(cpos, t);
+      if (serpent && (serpent.phase === "shadow" || serpent.phase === "intro" || serpent.phase === "recover")) {
+        drawSerpent(cpos);
+      }
       drawLoot(cpos);
       const underSkiff = !!(ownedBoat && skiffUnderDock(ownedBoat));
       if (underSkiff) {
@@ -7614,11 +8369,15 @@
           drawPlayerLit(cpos, false);
         }
       }
+      if (serpent && serpent.phase === "breach") drawSerpent(cpos);
+      drawWandBolts(cpos);
     }
     if (cloakOn) applyCloakVision(cpos, jx, jy);
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
     drawHud();
+    drawSerpentBossBar();
     drawGuide();
+    drawBlowfishCut();
     drawPickupFx();
     drawUseFx();
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
@@ -7717,12 +8476,21 @@
     if (srCat === "shark" && id === "shark") finishSpeedrun();
     else if (srCat === "jelly_white" && id === "jelly_white") finishSpeedrun();
     else if (srCat === "chest" && id === "chest") finishSpeedrun();
+    else if (srCat === "blowfish" && id === "blowfish") finishSpeedrun();
+    else if (srCat === "megalodon" && id === "megalodon") finishSpeedrun();
     else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
   }
 
   function checkBoatSpeedEnd() {
     if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
     if (srCat === "boat" && srBoughtBoat && player.aboard) finishSpeedrun();
+  }
+
+  function checkCoinSpeedEnd() {
+    if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
+    if (srCat === "coins_10" && player.coins >= 10) finishSpeedrun();
+    else if (srCat === "coins_25" && player.coins >= 25) finishSpeedrun();
+    else if (srCat === "coins_100" && player.coins >= 100) finishSpeedrun();
   }
 
   function finishSpeedrun() {
@@ -7774,6 +8542,14 @@
     cloakOn = false;
     ownedBoat = null;
     boatThrow = null;
+    if (serpent) {
+      serpent = null;
+      resumeDayClock();
+    }
+    clearWandBolts();
+    wandCool = 0;
+    rodBaitId = null;
+    serpentCoolUntil = 0;
     scene = "island";
     fade = 0;
     fadeMode = 0;
@@ -7886,6 +8662,7 @@
   }
 
   function backToModeMenu() {
+    if (serpent) endSerpentFight("flee");
     playMode = null;
     uiScreen = "mode";
     srCursor = 0;
@@ -8094,9 +8871,9 @@
     ctx.globalAlpha = 0.5;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
-    const leftW = 150;
+    const leftW = 158;
     const boardW = 188;
-    const h = Math.min(uiH - 16, 16 + SPEED_ORDER.length * 10 + 28);
+    const h = Math.min(uiH - 8, 16 + SPEED_ORDER.length * 9 + 28);
     const totalW = leftW + boardW + 10;
     const x = ((uiW - totalW) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
@@ -8105,10 +8882,10 @@
       const id = SPEED_ORDER[i];
       const key = "cat:" + i;
       const sel = srCursor === i || menuHovering(key);
-      const oy = y + 20 + i * 10;
-      if (sel) px(x + 5, oy - 2, leftW - 10, 9, "#e8c44a");
+      const oy = y + 18 + i * 9;
+      if (sel) px(x + 5, oy - 2, leftW - 10, 8, "#e8c44a");
       drawPixText((sel ? ">" : " ") + catLabel(id), x + 8, oy, sel ? "#2b1c12" : "#3a2414");
-      addMenuHit(key, x + 5, oy - 2, leftW - 10, 9, () => {
+      addMenuHit(key, x + 5, oy - 2, leftW - 10, 8, () => {
         srCursor = i;
         beginSpeedCategory(SPEED_ORDER[i]);
       }, { hover: true });
@@ -8859,6 +9636,8 @@
       updateFish(dt);
     }
     updateRod(dt);
+    updateSerpent(dt);
+    updateWandBolts(dt);
     if (fishCastT > 0) fishCastT = Math.max(0, fishCastT - dt);
     nearestLoot = findNearestLoot();
     tryAutoPickup();
@@ -8993,6 +9772,17 @@
     if (uiBlocksPlay()) return;
     if (k === "h") {
       if (!e.repeat) guideOpen = !guideOpen;
+      return;
+    }
+    if (k === "escape" && playMode === "normal" && !uiBlocksPlay()) {
+      if (guideOpen) {
+        guideOpen = false;
+        return;
+      }
+      if (cabinCut.kind) return;
+      saveGame();
+      if (serpent) endSerpentFight("flee");
+      backToModeMenu();
       return;
     }
     if (guideOpen || cabinCut.kind) return;

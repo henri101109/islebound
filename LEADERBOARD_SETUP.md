@@ -66,7 +66,13 @@ create policy "Public insert speedrun_scores"
       'death',
       'boat',
       'full_inv',
-      'shark_cloak'
+      'shark_cloak',
+      'serpent',
+      'blowfish',
+      'megalodon',
+      'coins_10',
+      'coins_25',
+      'coins_100'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -239,7 +245,13 @@ create policy "Insert speedrun_scores guests or accounts"
       'death',
       'boat',
       'full_inv',
-      'shark_cloak'
+      'shark_cloak',
+      'serpent',
+      'blowfish',
+      'megalodon',
+      'coins_10',
+      'coins_25',
+      'coins_100'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -264,7 +276,13 @@ create table if not exists public.speedrun_prs (
       'death',
       'boat',
       'full_inv',
-      'shark_cloak'
+      'shark_cloak',
+      'serpent',
+      'blowfish',
+      'megalodon',
+      'coins_10',
+      'coins_25',
+      'coins_100'
     )
   )
 );
@@ -452,6 +470,12 @@ Client: polls last 50 rows every ~2.5s; sanitize + ~1.5s send rate limit; signed
 | `boat` | Boat% |
 | `full_inv` | Full Inventory% |
 | `shark_cloak` | Shark% while invisible |
+| `serpent` | Serpent% (Heart of the Sea) |
+| `blowfish` | Blowfish% |
+| `megalodon` | Megalodon% |
+| `coins_10` | 10 Coins% |
+| `coins_25` | 25 Coins% |
+| `coins_100` | 100 Coins% |
 
 ## Normal-mode profile boards
 
