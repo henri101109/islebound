@@ -287,6 +287,19 @@
   let srBlowfishFinishT = -1;
   /** Floating hearts above player after catching a blowfish: { t, dur }. */
   let blowfishHearts = null;
+  /** Dense speedrun replay recording / #1 spectate. */
+  let srReplayFrames = [];
+  let srReplayLastT = -999;
+  let srBestReplay = null;
+  let srReplayBusy = false;
+  let replayActive = false;
+  let replayFrames = [];
+  let replayT = 0;
+  let replayMeta = null;
+  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3 };
+  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin"];
+  const REPLAY_ROD = { idle: 0, wait: 1, reel: 2 };
+  const REPLAY_ROD_INV = ["idle", "wait", "reel"];
   let authUser = "";
   let authPin = "";
   let authName = "";
@@ -8400,6 +8413,7 @@
     drawAccountHudChip();
     drawSpeedUI();
     drawIslandChat();
+    drawReplayHud();
   }
 
   function drawUseFx() {
@@ -8445,6 +8459,7 @@
 
   function uiBlocksPlay() {
     return (
+      replayActive ||
       uiScreen === "mode" ||
       uiScreen === "categories" ||
       uiScreen === "finish" ||
@@ -8456,6 +8471,307 @@
 
   function speedrunActive() {
     return playMode === "speedrun" && (srRunning || uiScreen === "ready");
+  }
+
+  function clearReplayBuffer() {
+    srReplayFrames = [];
+    srReplayLastT = -999;
+  }
+
+  function packReplayInv() {
+    const out = [];
+    for (let i = 0; i < MAX_SLOTS; i++) {
+      const s = inventory[i];
+      out.push(s && s.id ? s.id + ":" + (s.count | 0) : "");
+    }
+    return out;
+  }
+
+  function captureReplayFrame(force) {
+    if (!srTiming || replayActive) return;
+    const t = (performance.now() - srStartPerf) | 0;
+    if (!force && t - srReplayLastT < 33 && srReplayFrames.length) return;
+    srReplayLastT = t;
+    const b = ownedBoat;
+    const frame = [
+      t,
+      player.x,
+      player.y,
+      player.facing | 0,
+      player.aboard ? 1 : 0,
+      cloakOn ? 1 : 0,
+      player.coins | 0,
+      player.hp | 0,
+      b ? b.x : -1,
+      b ? b.y : -1,
+      b ? b.face | 0 : 0,
+      REPLAY_ROD[rod.phase] != null ? REPLAY_ROD[rod.phase] : 0,
+      REPLAY_SCENE[scene] != null ? REPLAY_SCENE[scene] : 0,
+      heldSlot | 0,
+      packReplayInv(),
+      serpent
+        ? [serpent.x, serpent.y, serpent.phase || "shadow", serpent.hp | 0, serpent.hurt || 0]
+        : null,
+    ];
+    srReplayFrames.push(frame);
+  }
+
+  function buildReplayPayload() {
+    if (!srReplayFrames.length) return null;
+    captureReplayFrame(true);
+    return {
+      v: 1,
+      run_id: srRunId || null,
+      category: srCat,
+      time_ms: srFinalMs | 0,
+      player_name: srName || "",
+      frames: srReplayFrames.slice(),
+    };
+  }
+
+  function applyReplayInv(pack) {
+    if (!Array.isArray(pack)) return;
+    for (let i = 0; i < MAX_SLOTS; i++) {
+      const raw = pack[i] || "";
+      if (!raw) {
+        inventory[i] = null;
+        continue;
+      }
+      const parts = String(raw).split(":");
+      const id = parts[0];
+      const count = Math.max(1, parts[1] | 0);
+      inventory[i] = ITEM_DEFS[id] ? { id, count } : null;
+    }
+  }
+
+  function applyReplaySerpent(pack) {
+    if (!pack || !Array.isArray(pack)) {
+      if (serpent) {
+        serpent = null;
+        resumeDayClock();
+      }
+      return;
+    }
+    const phase = pack[2] || "shadow";
+    if (!serpent) {
+      serpent = {
+        x: pack[0],
+        y: pack[1],
+        ang: 0,
+        phase,
+        t: 0,
+        hp: pack[3] | 0,
+        hurt: pack[4] || 0,
+        struck: false,
+        splashDown: false,
+        strikeX: pack[0],
+        strikeY: pack[1],
+        breachAng: 0,
+        waveT: 0,
+        segs: [],
+      };
+      for (let i = 0; i < SERPENT_SEGMENTS; i++) {
+        serpent.segs.push({ x: serpent.x - i * SERPENT_SEG_SPACING, y: serpent.y });
+      }
+      pauseDayClock();
+    } else {
+      serpent.x = pack[0];
+      serpent.y = pack[1];
+      serpent.phase = phase;
+      serpent.hp = pack[3] | 0;
+      serpent.hurt = pack[4] || 0;
+      if (serpent.segs && serpent.segs[0]) {
+        serpent.segs[0].x = serpent.x;
+        serpent.segs[0].y = serpent.y;
+      }
+    }
+  }
+
+  function applyReplayFrame(f) {
+    if (!f || !f.length) return;
+    player.x = f[1];
+    player.y = f[2];
+    player.facing = f[3] === -1 ? -1 : 1;
+    player.aboard = !!f[4];
+    cloakOn = !!f[5];
+    player.coins = f[6] | 0;
+    player.hp = Math.max(0, f[7] | 0);
+    player.dead = 0;
+    player.submerged = 0;
+    player.moving = false;
+    const bx = f[8];
+    const by = f[9];
+    if (bx >= 0 && by >= 0) {
+      if (!ownedBoat) {
+        ownedBoat = {
+          x: bx,
+          y: by,
+          w: 22,
+          h: 10,
+          vx: 0,
+          vy: 0,
+          tilt: 0,
+          phase: 0,
+          face: f[10] === -1 ? -1 : 1,
+          kind: "skiff",
+          landed: true,
+        };
+      } else {
+        ownedBoat.x = bx;
+        ownedBoat.y = by;
+        ownedBoat.face = f[10] === -1 ? -1 : 1;
+        ownedBoat.vx = 0;
+        ownedBoat.vy = 0;
+      }
+      if (player.aboard) seatPlayerOnBoat();
+    } else {
+      ownedBoat = null;
+      player.aboard = false;
+    }
+    const rp = REPLAY_ROD_INV[f[11] | 0] || "idle";
+    rod.phase = rp;
+    if (rp === "idle") {
+      rod.catchId = null;
+      rod.t = 0;
+    }
+    const sc = REPLAY_SCENE_INV[f[12] | 0] || "island";
+    if (sc !== scene) {
+      scene = sc;
+      doorCool = 0;
+    }
+    heldSlot = Math.max(0, Math.min(MAX_SLOTS - 1, f[13] | 0));
+    applyReplayInv(f[14]);
+    applyReplaySerpent(f[15]);
+    camera.x = player.x + player.w / 2 - viewW / 2;
+    camera.y = player.y + player.h / 2 - viewH * 0.36;
+    clampCamera();
+  }
+
+  function replayFrameAt(t) {
+    const frames = replayFrames;
+    if (!frames.length) return null;
+    if (t <= frames[0][0]) return frames[0];
+    if (t >= frames[frames.length - 1][0]) return frames[frames.length - 1];
+    let lo = 0;
+    let hi = frames.length - 1;
+    while (lo < hi - 1) {
+      const mid = (lo + hi) >> 1;
+      if (frames[mid][0] <= t) lo = mid;
+      else hi = mid;
+    }
+    const a = frames[lo];
+    const b = frames[hi];
+    const span = Math.max(1, b[0] - a[0]);
+    const u = (t - a[0]) / span;
+    // Snap discrete flags from nearer sample; lerp positions for smoothness.
+    const near = u < 0.5 ? a : b;
+    return [
+      t,
+      a[1] + (b[1] - a[1]) * u,
+      a[2] + (b[2] - a[2]) * u,
+      near[3],
+      near[4],
+      near[5],
+      near[6],
+      near[7],
+      a[8] < 0 || b[8] < 0 ? near[8] : a[8] + (b[8] - a[8]) * u,
+      a[9] < 0 || b[9] < 0 ? near[9] : a[9] + (b[9] - a[9]) * u,
+      near[10],
+      near[11],
+      near[12],
+      near[13],
+      near[14],
+      near[15],
+    ];
+  }
+
+  function stopReplay() {
+    replayActive = false;
+    replayFrames = [];
+    replayT = 0;
+    replayMeta = null;
+    if (serpent) {
+      serpent = null;
+      resumeDayClock();
+    }
+    clearWandBolts();
+    rod.phase = "idle";
+    rod.catchId = null;
+    cloakOn = false;
+    guideOpen = false;
+    chatOpen = false;
+    uiScreen = "categories";
+    playMode = "speedrun";
+    refreshSpeedBoard(srCat || SPEED_ORDER[0]);
+  }
+
+  function startReplay(payload) {
+    if (!payload || !Array.isArray(payload.frames) || !payload.frames.length) return false;
+    stopReplay();
+    chatOpen = false;
+    guideOpen = false;
+    resetSpeedrunWorld();
+    playMode = "speedrun";
+    uiScreen = null;
+    srCat = payload.category || srCat;
+    replayFrames = payload.frames;
+    replayMeta = {
+      name: payload.player_name || "?",
+      time_ms: payload.time_ms | 0,
+      category: payload.category || srCat,
+    };
+    replayT = replayFrames[0][0] | 0;
+    replayActive = true;
+    applyReplayFrame(replayFrames[0]);
+    return true;
+  }
+
+  async function playBestReplay(cat) {
+    if (srReplayBusy || replayActive) return;
+    const id = cat || srCat || SPEED_ORDER[srCursor];
+    const api = lbApi();
+    srReplayBusy = true;
+    let payload = srBestReplay && srBestReplay.category === id ? srBestReplay : null;
+    if ((!payload || !payload.frames) && api && api.fetchBestReplay) {
+      const res = await api.fetchBestReplay(id);
+      if (res && res.replay) payload = res.replay;
+    }
+    if ((!payload || !payload.frames) && api && api.loadLocalReplay) {
+      payload = api.loadLocalReplay(id);
+    }
+    srReplayBusy = false;
+    if (!payload || !payload.frames || !payload.frames.length) {
+      srBoardNote = "NO REPLAY";
+      return;
+    }
+    srBestReplay = payload;
+    startReplay(payload);
+  }
+
+  function updateReplay(dt) {
+    if (!replayActive || !replayFrames.length) return;
+    replayT += dt * 1000;
+    const lastT = replayFrames[replayFrames.length - 1][0] | 0;
+    if (replayT >= lastT) {
+      applyReplayFrame(replayFrames[replayFrames.length - 1]);
+      replayT = lastT;
+      return;
+    }
+    applyReplayFrame(replayFrameAt(replayT));
+  }
+
+  function drawReplayHud() {
+    if (!replayActive) return;
+    const uiW = canvas.width / SCALE_UI;
+    const label = "REPLAY " + catLabel(replayMeta && replayMeta.category);
+    const who = String((replayMeta && replayMeta.name) || "?").slice(0, 12);
+    const tim = formatSpeedTime((replayMeta && replayMeta.time_ms) | 0);
+    const now = formatSpeedTime(replayT | 0);
+    px(6, 6, Math.max(120, pixTextWidth(label) + 16), 28, "#3a2414");
+    px(7, 7, Math.max(118, pixTextWidth(label) + 14), 26, "#5c3a21");
+    drawPixText(label, 10, 10, "#f3e2c4");
+    drawPixText(who + "  " + tim, 10, 20, "#c9a227");
+    drawPixText(now + "  ESC EXIT", uiW - 8, 10, "#f3e2c4", "right");
   }
 
   function newSpeedRunId() {
@@ -8483,6 +8799,8 @@
     srFinalMs = 0;
     srSubmitted = false;
     if (!srRunId) srRunId = newSpeedRunId();
+    clearReplayBuffer();
+    captureReplayFrame(true);
   }
 
   function checkCatchSpeedEnd(id) {
@@ -8514,6 +8832,7 @@
     // Freeze timer this frame — all end hooks must land here.
     srBlowfishFinishT = -1;
     blowfishHearts = null;
+    captureReplayFrame(true);
     lockSpeedFinalMs();
     srRunning = false;
     uiScreen = "finish";
@@ -8610,6 +8929,7 @@
     srPbLabel = "";
     srBlowfishFinishT = -1;
     blowfishHearts = null;
+    clearReplayBuffer();
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
@@ -8626,6 +8946,7 @@
     const id = cat || srCat;
     const api = lbApi();
     srBoardNote = "LOADING...";
+    srBestReplay = null;
     if (!api) {
       srBoardRows = [];
       srBoardNote = "NO CLIENT";
@@ -8639,11 +8960,18 @@
     if (!api.configured()) {
       srBoardRows = applyBoardIdentityMerge(api.getCachedBoard(id) || [], 10);
       srBoardNote = srBoardRows.length ? "CACHED / OFFLINE" : "SET UP SUPABASE";
+      if (api.loadLocalReplay) srBestReplay = api.loadLocalReplay(id);
       return;
     }
     const res = await api.fetchTop(id, 10);
     srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
+    if (api.fetchBestReplay) {
+      try {
+        const rr = await api.fetchBestReplay(id);
+        if (rr && rr.replay && rr.replay.frames && rr.replay.frames.length) srBestReplay = rr.replay;
+      } catch (e) {}
+    }
   }
 
   function beginSpeedCategory(cat) {
@@ -8813,7 +9141,22 @@
         maxLen: nameMax,
       }) + 2;
       if (isNew) tagX += drawNewTag(tagX, yy) + 2;
-      drawPixText(timeStr, Math.max(tagX + 1, x + 108), yy, "#5c3a21");
+      const timeX = Math.max(tagX + 1, x + 100);
+      drawPixText(timeStr, timeX, yy, "#5c3a21");
+      if (i === 0) {
+        const hasVid = !!(srBestReplay && srBestReplay.frames && srBestReplay.frames.length);
+        const vx = timeX + pixTextWidth(timeStr) + 4;
+        const vidSel = menuHovering("vid:1") || hasVid;
+        if (hasVid) {
+          px(vx - 1, yy - 1, 22, 9, vidSel ? "#e8c44a" : "#5c3a21");
+          drawPixText("VID", vx + 1, yy, vidSel ? "#2b1c12" : "#f3e2c4");
+          addMenuHit("vid:1", vx - 1, yy - 1, 22, 9, () => playBestReplay(srCat || SPEED_ORDER[srCursor]), {
+            hover: true,
+          });
+        } else {
+          drawPixText("VID", vx + 1, yy, "#8a5a32");
+        }
+      }
       yy += 8;
     }
     if (srBoardNote) {
@@ -9230,9 +9573,12 @@
     srName = name;
     srSubmitting = true;
     srStatus = "SUBMITTING...";
+    const replay = buildReplayPayload();
+    if (replay) replay.player_name = name;
     const res = await api.submitScore(srCat, srFinalMs, name, {
       runId: srRunId || newSpeedRunId(),
       isAccount: !!(api.isSignedIn && api.isSignedIn()),
+      replay,
     });
     srSubmitting = false;
     if (res.ok) {
@@ -9241,6 +9587,10 @@
       srStatus = "POSTED";
       srSubmitted = true;
       srBoardNote = "";
+      if (replay && api.saveLocalReplay) {
+        api.saveLocalReplay(srCat, replay);
+        srBestReplay = replay;
+      }
       if (res.pb) {
         srPbPrev = res.pb.prev | 0;
         srPbLabel = res.pb.isFirst ? "FIRST PB" : res.pb.label;
@@ -9638,6 +9988,13 @@
     if (Math.abs(zoom - zoomTarget) < 0.004) zoom = zoomTarget;
     viewW = canvas.width / zoom;
     viewH = canvas.height / zoom;
+    if (replayActive) {
+      updateReplay(dt);
+      updateOcean();
+      draw(time);
+      requestAnimationFrame(loop);
+      return;
+    }
     updateFade(dt);
     updateDoors(dt);
     updatePlayer(dt);
@@ -9660,6 +10017,7 @@
     updateRod(dt);
     updateSerpent(dt);
     updateWandBolts(dt);
+    if (srTiming) captureReplayFrame(false);
     if (fishCastT > 0) fishCastT = Math.max(0, fishCastT - dt);
     nearestLoot = findNearestLoot();
     tryAutoPickup();
@@ -9695,6 +10053,14 @@
     keys[k] = true;
     ensureAudio();
     if (k === "z") e.preventDefault();
+    if (replayActive) {
+      if (k === "escape" || k === "tab") {
+        e.preventDefault();
+        stopReplay();
+      }
+      e.preventDefault();
+      return;
+    }
     if (
       [
         "arrowup",

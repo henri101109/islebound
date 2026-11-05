@@ -648,6 +648,111 @@
     };
   }
 
+  const REPLAY_TABLE = "speedrun_replays";
+  const REPLAY_CACHE_PREFIX = "islebound-replay-";
+
+  function saveLocalReplay(category, payload) {
+    try {
+      localStorage.setItem(REPLAY_CACHE_PREFIX + category, JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function loadLocalReplay(category) {
+    try {
+      const raw = localStorage.getItem(REPLAY_CACHE_PREFIX + category);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.frames) || !data.frames.length) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function uploadReplay(payload) {
+    if (!configured() || !payload || !Array.isArray(payload.frames) || !payload.frames.length) {
+      return { ok: false, error: "no replay" };
+    }
+    const body = {
+      run_id: payload.run_id || null,
+      category: payload.category,
+      time_ms: payload.time_ms | 0,
+      player_name: sanitizeName(payload.player_name) || "RUNNER",
+      frames: payload.frames,
+    };
+    saveLocalReplay(body.category, {
+      v: 1,
+      run_id: body.run_id,
+      category: body.category,
+      time_ms: body.time_ms,
+      player_name: body.player_name,
+      frames: body.frames,
+    });
+    try {
+      const res = await fetch(restBase() + "/" + REPLAY_TABLE, {
+        method: "POST",
+        headers: anonHeaders("return=minimal"),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let detail = "http " + res.status;
+        try {
+          const err = await res.json();
+          if (err && err.message) detail = err.message;
+        } catch (e) {}
+        return { ok: false, error: detail, local: true };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "network", local: true };
+    }
+  }
+
+  async function fetchBestReplay(category) {
+    const id = CATEGORIES[category] ? category : null;
+    if (!id) return { ok: false, replay: null };
+    const local = loadLocalReplay(id);
+    if (!configured()) {
+      return { ok: !!local, replay: local, offline: true };
+    }
+    try {
+      const url =
+        restBase() +
+        "/" +
+        REPLAY_TABLE +
+        "?category=eq." +
+        encodeURIComponent(id) +
+        "&select=run_id,category,time_ms,player_name,frames,created_at" +
+        "&order=time_ms.asc" +
+        "&limit=1";
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        return { ok: !!local, replay: local, error: "http " + res.status };
+      }
+      const data = await res.json();
+      const row = Array.isArray(data) && data[0] ? data[0] : null;
+      if (!row || !Array.isArray(row.frames) || !row.frames.length) {
+        return { ok: !!local, replay: local };
+      }
+      const replay = {
+        v: 1,
+        run_id: row.run_id,
+        category: row.category,
+        time_ms: row.time_ms | 0,
+        player_name: row.player_name,
+        frames: row.frames,
+      };
+      // Prefer online #1; keep local if somehow faster and different.
+      if (local && (local.time_ms | 0) < (replay.time_ms | 0)) {
+        return { ok: true, replay: local, source: "local-better" };
+      }
+      saveLocalReplay(id, replay);
+      return { ok: true, replay, source: "online" };
+    } catch (e) {
+      return { ok: !!local, replay: local, error: "network" };
+    }
+  }
+
   async function submitScore(category, timeMs, playerName, opts) {
     const def = CATEGORIES[category];
     if (!def) return { ok: false, error: "bad category" };
@@ -660,6 +765,16 @@
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     setLastName(name);
     if (!configured()) {
+      if (options.replay && options.replay.frames) {
+        saveLocalReplay(category, {
+          v: 1,
+          run_id: options.runId || null,
+          category,
+          time_ms: ms,
+          player_name: name,
+          frames: options.replay.frames,
+        });
+      }
       return { ok: false, error: "leaderboard not configured", offline: true };
     }
     const body = {
@@ -681,7 +796,17 @@
       }
     }
     if (scoresSchema === "legacy") {
-      return submitScoreLegacy(category, ms, name);
+      const legacy = await submitScoreLegacy(category, ms, name);
+      if (legacy.ok && options.replay && options.replay.frames) {
+        await uploadReplay({
+          run_id: options.runId || null,
+          category,
+          time_ms: ms,
+          player_name: name,
+          frames: options.replay.frames,
+        });
+      }
+      return legacy;
     }
     try {
       const res = await fetch(restBase() + "/" + TABLE, {
@@ -705,6 +830,15 @@
       scoresSchema = "full";
       await upsertPr(category, ms);
       if (session && session.user) await bumpProfileCounters({ submits: 1 });
+      if (options.replay && options.replay.frames) {
+        await uploadReplay({
+          run_id: options.runId || body.run_id || null,
+          category,
+          time_ms: ms,
+          player_name: name,
+          frames: options.replay.frames,
+        });
+      }
       const board = await fetchTop(category, 10);
       return { ok: true, rows: board.rows || [], pb: pbInfo(category, ms), resolved };
     } catch (e) {
@@ -1826,6 +1960,10 @@
     getCachedBoard,
     fetchTop,
     submitScore,
+    uploadReplay,
+    fetchBestReplay,
+    loadLocalReplay,
+    saveLocalReplay,
     uuid,
     rowIsAccount,
     isNewScoreRow,
