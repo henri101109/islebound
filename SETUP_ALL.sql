@@ -348,3 +348,31 @@ where upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) ~ 'MATTEUS'
 -- Optional: once you know Matteus' public IP (Supabase API logs / client), also run:
 -- insert into public.player_bans (ip, match_mode, expires_at, reason)
 -- values ('x.x.x.x', 'ip', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs');
+
+
+-- ========== Cosmetics hub presence + daily claims (optional; client soft-fails) ==========
+alter table public.players_online add column if not exists in_hub boolean;
+alter table public.players_online add column if not exists hub_x integer;
+alter table public.players_online add column if not exists hub_y integer;
+alter table public.players_online add column if not exists hub_face integer;
+alter table public.players_online add column if not exists face_id text;
+alter table public.players_online add column if not exists back_id text;
+alter table public.players_online add column if not exists emote text;
+
+create table if not exists public.daily_claims (
+  user_id uuid not null,
+  day_utc text not null check (char_length(day_utc) between 8 and 16),
+  item_id text not null default 'sun_idol',
+  claimed_at timestamptz not null default now(),
+  primary key (user_id, day_utc)
+);
+alter table public.daily_claims enable row level security;
+drop policy if exists "Public read daily_claims" on public.daily_claims;
+create policy "Public read daily_claims" on public.daily_claims
+  for select to anon, authenticated using (true);
+drop policy if exists "Insert own daily_claims" on public.daily_claims;
+create policy "Insert own daily_claims" on public.daily_claims
+  for insert to anon, authenticated with check (true);
+drop policy if exists "Update own daily_claims" on public.daily_claims;
+create policy "Update own daily_claims" on public.daily_claims
+  for update to anon, authenticated using (true) with check (true);

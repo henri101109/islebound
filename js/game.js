@@ -47,7 +47,10 @@
     megalodon: { name: "Megalodon", max: 8, xp: 100 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
     wand: { name: "Wand", max: 1, xp: 0 },
-    cloak: { name: "Cloak", max: 1, xp: 0 },
+    cloak: { name: "Cloak", max: 1, xp: 0, cosmetic: "back" },
+    jade_mask: { name: "Jade Mask", max: 1, xp: 20, cosmetic: "face" },
+    cape: { name: "Ember Cape", max: 1, xp: 12, cosmetic: "back" },
+    sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
@@ -139,6 +142,10 @@
   const FISH_H = 96;
   const CABIN_W = 200;
   const CABIN_H = 136;
+  const TEMPLE_W = 200;
+  const TEMPLE_H = 152;
+  const HUB_W = 220;
+  const HUB_H = 160;
   const CABIN_NPC_X = 124;
   const CABIN_NPC_Y = 80;
   const CABIN_TABLE = { x: 146, y: 74, w: 36, h: 12 };
@@ -165,6 +172,8 @@
   const shopSolids = [];
   const fishSolids = [];
   const cabinSolids = [];
+  const templeSolids = [];
+  const hubSolids = [];
   const npcs = [];
   const boats = [];
   const swimFish = [];
@@ -173,6 +182,8 @@
   let shopCanvas = null;
   let fishCanvas = null;
   let cabinCanvas = null;
+  let templeCanvas = null;
+  let hubCanvas = null;
   let shopDoor = null;
   let shopExit = null;
   let fishDoor = null;
@@ -181,6 +192,21 @@
   let cabinDoor = null;
   let cabinExit = null;
   let cabinDockExit = null;
+  let templeDoor = null;
+  let templeExit = null;
+  let templeIslandExit = null;
+  let hubDoor = null;
+  let hubExit = null;
+  let hubIslandExit = null;
+  let templePedestal = null;
+  let templeHazards = [];
+  let templeMaskTaken = false;
+  let dailyLootId = null;
+  let dailyClaimedUtc = "";
+  let hubUi = { mode: "", tip: "", tipT: 0, duelSel: 0, duoSel: 0, practice: null };
+  let hubPeers = [];
+  let hubEmote = "";
+  let hubEmoteT = 0;
   let cabinChestX = 160;
   let cabinChestY = 66;
   let cloakOn = false;
@@ -307,8 +333,8 @@
   let replayMeta = null;
   /** Brief fade-from-black when starting / switching spectate replay. */
   let replayCutT = 0;
-  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3 };
-  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin"];
+  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3, temple: 4, hub: 5 };
+  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin", "temple", "hub"];
   const REPLAY_ROD = { idle: 0, wait: 1, reel: 2 };
   const REPLAY_ROD_INV = ["idle", "wait", "reel"];
   let authUser = "";
@@ -340,7 +366,11 @@
       },
       {
         title: "ITEMS",
-        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "SPACE USES HELD", "ENTER DROPS HELD"],
+        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "9 FACE  0 BACK", "ENTER DROPS OR EQUIPS"],
+      },
+      {
+        title: "COSMETICS",
+        lines: ["HOLD MASK/CAPE", "ENTER EQUIPS SLOT", "CLOAK BACK = LOOK", "SPACE STILL STEALTH"],
       },
       {
         title: "FISH",
@@ -348,11 +378,11 @@
       },
       {
         title: "ISLAND",
-        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "CABIN HAS A CHEST", "T OPENS CHEST THERE"],
+        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "TEMPLE IN JUNGLE", "HUB GATE NEAR PATH"],
       },
       {
         title: "GOALS",
-        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "SHELL BLOWS HORN", "WAND HITS SERPENT"],
+        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "JADE MASK IN TEMPLE", "DAILY IDOL NEAR PATH"],
       },
     ],
     speedrun: [
@@ -452,6 +482,10 @@
   let shake = 0;
   const pickupAnims = [];
   let heldSlot = 0;
+  /** Equipped cosmetics (ids); bag stays 1-8. */
+  const cosmetics = { face: null, back: null };
+  /** null = bag slot heldSlot; "face"/"back" when keys 9/0 select cosmetic slots. */
+  let cosSelect = null;
   let useFx = null;
   let audioCtx = null;
   let oceanGain = null;
@@ -558,18 +592,28 @@
   }
 
   function isIndoor() {
-    return scene === "shop" || scene === "fish" || scene === "cabin";
+    return (
+      scene === "shop" ||
+      scene === "fish" ||
+      scene === "cabin" ||
+      scene === "temple" ||
+      scene === "hub"
+    );
   }
 
   function indoorW() {
     if (scene === "fish") return FISH_W;
     if (scene === "cabin") return CABIN_W;
+    if (scene === "temple") return TEMPLE_W;
+    if (scene === "hub") return HUB_W;
     return SHOP_W;
   }
 
   function indoorH() {
     if (scene === "fish") return FISH_H;
     if (scene === "cabin") return CABIN_H;
+    if (scene === "temple") return TEMPLE_H;
+    if (scene === "hub") return HUB_H;
     return SHOP_H;
   }
 
@@ -944,6 +988,8 @@
     if (scene === "shop") return !!hitPad(px, py, shopSolids);
     if (scene === "fish") return !!hitPad(px, py, fishSolids);
     if (scene === "cabin") return !!hitPad(px, py, cabinSolids);
+    if (scene === "temple") return !!hitPad(px, py, templeSolids);
+    if (scene === "hub") return !!hitPad(px, py, hubSolids);
     if (hitPad(px, py, islandSolids)) return true;
     for (const rock of rocks) {
       if (px > rock.x && px < rock.x + rock.w && py > rock.y && py < rock.y + rock.h) {
@@ -963,6 +1009,12 @@
     }
     if (scene === "cabin") {
       return px >= 16 && py >= 36 && px < CABIN_W - 16 && py < CABIN_H - 4;
+    }
+    if (scene === "temple") {
+      return px >= 8 && py >= 10 && px < TEMPLE_W - 8 && py < TEMPLE_H - 6;
+    }
+    if (scene === "hub") {
+      return px >= 10 && py >= 12 && px < HUB_W - 10 && py < HUB_H - 6;
     }
     if (hitPad(px, py, walkPads)) return true;
     if (landPresent(px) && py < northCliffY(px)) return false;
@@ -2050,13 +2102,21 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput()) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || hubUi.mode === "menu") {
       dx = 0;
       dy = 0;
       player.moving = false;
     }
 
-    if (player.dead <= 0 && !fadeMode && !guideOpen && !cabinCut.kind && !uiBlocksPlay() && !chatCapturesInput()) {
+    if (
+      player.dead <= 0 &&
+      !fadeMode &&
+      !guideOpen &&
+      !cabinCut.kind &&
+      !uiBlocksPlay() &&
+      !chatCapturesInput() &&
+      hubUi.mode !== "menu"
+    ) {
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
       } else {
@@ -2208,6 +2268,29 @@
     return best;
   }
 
+  function isCosmeticId(id) {
+    const def = ITEM_DEFS[id];
+    return !!(def && def.cosmetic);
+  }
+
+  function cosmeticKindOf(id) {
+    const def = ITEM_DEFS[id];
+    return def && def.cosmetic ? def.cosmetic : null;
+  }
+
+  function bagFilledForFullInv() {
+    for (let i = 0; i < inventory.length; i++) {
+      const s = inventory[i];
+      if (!s || isCosmeticId(s.id)) return false;
+    }
+    return true;
+  }
+
+  function ownsCloak() {
+    if (cosmetics.back === "cloak") return true;
+    return inventory.some((s) => s && s.id === "cloak");
+  }
+
   function addToInventory(id) {
     const def = ITEM_DEFS[id];
     const existing = inventory.findIndex((s) => s && s.id === id);
@@ -2218,7 +2301,7 @@
         const api = lbApi();
         if (api && api.noteNmEvent) api.noteNmEvent("sharks", 1);
       }
-      if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
+      if (playMode === "speedrun" && srCat === "full_inv" && bagFilledForFullInv()) {
         finishSpeedrun();
       }
       if (playMode === "speedrun" && srCat === "serpent" && id === "serpent_heart") {
@@ -2233,7 +2316,7 @@
       const api = lbApi();
       if (api && api.noteNmEvent) api.noteNmEvent("sharks", 1);
     }
-    if (playMode === "speedrun" && srCat === "full_inv" && inventory.every((s) => !!s)) {
+    if (playMode === "speedrun" && srCat === "full_inv" && bagFilledForFullInv()) {
       finishSpeedrun();
     }
     if (playMode === "speedrun" && srCat === "serpent" && id === "serpent_heart") {
@@ -2414,7 +2497,8 @@
       if (a.dest === "coins") coinBatch += a.value | 0;
       else if (a.dest !== "miss") {
         addToInventory(a.id);
-        xpBatch += ITEM_DEFS[a.id].xp | 0;
+        onItemCollected(a.id);
+        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
         slotBatch = a.slot;
       }
       pickupAnims.splice(i, 1);
@@ -2434,8 +2518,15 @@
     if (xpBatch > 0) {
       gainXp(xpBatch);
       playXpChime();
-      if (slotBatch >= 0) heldSlot = slotBatch;
+      if (slotBatch >= 0) {
+        heldSlot = slotBatch;
+        cosSelect = null;
+      }
     }
+  }
+
+  function onItemCollected(id) {
+    if (id === "sun_idol") noteDailyClaim(utcDayKey());
   }
 
   function promptText() {
@@ -3833,8 +3924,58 @@
     return false;
   }
 
+  function putIdInBag(id) {
+    if (!id || !ITEM_DEFS[id]) return false;
+    const existing = inventory.findIndex((s) => s && s.id === id);
+    if (existing >= 0) {
+      if (inventory[existing].count >= ITEM_DEFS[id].max) return false;
+      inventory[existing].count += 1;
+      return true;
+    }
+    const empty = inventory.findIndex((s) => !s);
+    if (empty < 0) return false;
+    inventory[empty] = { id, count: 1 };
+    return true;
+  }
+
+  function unequipCosmetic(kind) {
+    const id = cosmetics[kind];
+    if (!id) return false;
+    if (!putIdInBag(id)) return false;
+    cosmetics[kind] = null;
+    if (id === "cloak" && !ownsCloak()) cloakOn = false;
+    return true;
+  }
+
+  function tryEquipHeldCosmetic() {
+    if (cosSelect === "face" || cosSelect === "back") {
+      if (!cosmetics[cosSelect]) return false;
+      if (!unequipCosmetic(cosSelect)) return false;
+      cosSelect = null;
+      return true;
+    }
+    const stack = inventory[heldSlot];
+    if (!stack || !isCosmeticId(stack.id)) return false;
+    const kind = cosmeticKindOf(stack.id);
+    if (!kind) return false;
+    const id = stack.id;
+    const prev = cosmetics[kind];
+    stack.count -= 1;
+    if (stack.count <= 0) inventory[heldSlot] = null;
+    if (prev) {
+      if (!putIdInBag(prev)) {
+        // Swap: put previous into the freed/held slot
+        if (!inventory[heldSlot]) inventory[heldSlot] = { id: prev, count: 1 };
+        else putIdInBag(prev);
+      }
+    }
+    cosmetics[kind] = id;
+    return true;
+  }
+
   function onEnter() {
     if (player.dead > 0) return;
+    if (tryEquipHeldCosmetic()) return;
     if (isIndoor()) {
       dropHeld();
       return;
@@ -4187,8 +4328,13 @@
 
   function dropHeld() {
     if (player.dead > 0 || player.aboard) return;
+    if (cosSelect) return;
     const stack = inventory[heldSlot];
     if (!stack) return;
+    if (isCosmeticId(stack.id)) {
+      // Cosmetics equip via Enter; prevent accidental outdoor drops unless indoor trade
+      if (!isIndoor()) return;
+    }
     const pos = findDropPos(stack.id);
     const id = stack.id;
     stack.count -= 1;
@@ -4217,8 +4363,15 @@
 
   function useHeld() {
     if (player.dead > 0) return;
-    const stack = inventory[heldSlot];
-    if (!stack) return;
+    if (cosSelect === "back" && cosmetics.back === "cloak") {
+      cloakOn = !cloakOn;
+      return;
+    }
+    const stack = !cosSelect ? inventory[heldSlot] : null;
+    if (!stack) {
+      if (cosmetics.back === "cloak") cloakOn = !cloakOn;
+      return;
+    }
     if (stack.id === "chest") {
       if (tryCabinChestTrade()) return;
       chestTalk = 2.4;
@@ -5153,6 +5306,317 @@
     seedCabinFish();
   }
 
+  function utcDayKey() {
+    const d = new Date();
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0") + "-" + String(d.getUTCDate()).padStart(2, "0");
+  }
+
+  function hashStr(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) / 4294967296;
+  }
+
+  function paintStoneBlock(g, x, y, w, h, shade) {
+    const base = shade || "#6a6258";
+    const hi = "#8a8278";
+    const lo = "#3a3834";
+    pxi(g, x, y, w, h, base);
+    pxi(g, x, y, w, 1, hi);
+    pxi(g, x, y + h - 1, w, 1, lo);
+    pxi(g, x, y, 1, h, hi);
+    pxi(g, x + w - 1, y, 1, h, lo);
+  }
+
+  function bakeTempleInterior() {
+    templeCanvas = document.createElement("canvas");
+    templeCanvas.width = TEMPLE_W;
+    templeCanvas.height = TEMPLE_H;
+    const g = templeCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, TEMPLE_W, TEMPLE_H, "#1a1814");
+    for (let y = 8; y < TEMPLE_H - 8; y++) {
+      for (let x = 8; x < TEMPLE_W - 8; x++) {
+        const n = hash(x + 3, y + 7);
+        let col = ((x / 8) | 0) % 2 === ((y / 8) | 0) % 2 ? "#4a463e" : "#3a3834";
+        if (n > 0.93) col = "#5a564e";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    // Outer walls
+    paintStoneBlock(g, 0, 0, TEMPLE_W, 10, "#5a564e");
+    paintStoneBlock(g, 0, 0, 10, TEMPLE_H, "#5a564e");
+    paintStoneBlock(g, TEMPLE_W - 10, 0, 10, TEMPLE_H, "#5a564e");
+    paintStoneBlock(g, 0, TEMPLE_H - 10, TEMPLE_W, 10, "#3a3834");
+    // Short maze walls (2–4 min walk) — corridor to pedestal
+    const walls = [
+      { x: 28, y: 24, w: 10, h: 72 },
+      { x: 28, y: 24, w: 64, h: 10 },
+      { x: 82, y: 24, w: 10, h: 40 },
+      { x: 52, y: 54, w: 40, h: 10 },
+      { x: 52, y: 54, w: 10, h: 48 },
+      { x: 52, y: 92, w: 56, h: 10 },
+      { x: 108, y: 40, w: 10, h: 62 },
+      { x: 118, y: 40, w: 42, h: 10 },
+      { x: 150, y: 40, w: 10, h: 72 },
+      { x: 118, y: 102, w: 42, h: 10 },
+      { x: 70, y: 110, w: 10, h: 22 },
+    ];
+    templeSolids.length = 0;
+    templeSolids.push({ x: 0, y: 0, w: TEMPLE_W, h: 10 });
+    templeSolids.push({ x: 0, y: 0, w: 10, h: TEMPLE_H });
+    templeSolids.push({ x: TEMPLE_W - 10, y: 0, w: 10, h: TEMPLE_H });
+    templeSolids.push({ x: 0, y: TEMPLE_H - 10, w: 88, h: 10 });
+    templeSolids.push({ x: 112, y: TEMPLE_H - 10, w: TEMPLE_W - 112, h: 10 });
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      paintStoneBlock(g, w.x, w.y, w.w, w.h, "#6a6258");
+      templeSolids.push({ x: w.x, y: w.y, w: w.w, h: w.h });
+    }
+    // Soft hazard pads (spike tiles)
+    templeHazards = [
+      { x: 42, y: 70, w: 8, h: 8 },
+      { x: 96, y: 70, w: 8, h: 8 },
+      { x: 130, y: 70, w: 8, h: 8 },
+    ];
+    for (let i = 0; i < templeHazards.length; i++) {
+      const hz = templeHazards[i];
+      pxi(g, hz.x, hz.y, hz.w, hz.h, "#2a1810");
+      pxi(g, hz.x + 2, hz.y + 1, 1, 5, "#8a6a42");
+      pxi(g, hz.x + 5, hz.y + 2, 1, 4, "#c4a070");
+    }
+    // Pedestal + jade glow at end of maze
+    templePedestal = { x: 128, y: 56, w: 16, h: 12 };
+    paintStoneBlock(g, templePedestal.x, templePedestal.y + 4, 16, 8, "#5a564e");
+    pxi(g, templePedestal.x + 2, templePedestal.y, 12, 6, "#3a8a4a");
+    pxi(g, templePedestal.x + 4, templePedestal.y + 1, 8, 4, "#4ec86a");
+    pxi(g, templePedestal.x + 6, templePedestal.y + 2, 4, 2, "#b8f0c8");
+    // Door gap
+    const doorX = 92;
+    pxi(g, doorX, TEMPLE_H - 14, 20, 14, "#100c0a");
+    pxi(g, doorX + 2, TEMPLE_H - 12, 16, 2, "#5a564e");
+    templeExit = { x: doorX, y: TEMPLE_H - 14, w: 20, h: 14 };
+  }
+
+  function bakeHubInterior() {
+    hubCanvas = document.createElement("canvas");
+    hubCanvas.width = HUB_W;
+    hubCanvas.height = HUB_H;
+    const g = hubCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    pxi(g, 0, 0, HUB_W, HUB_H, "#2a2418");
+    for (let y = 14; y < HUB_H - 10; y++) {
+      for (let x = 12; x < HUB_W - 12; x++) {
+        const n = hash(x * 3, y * 5);
+        let col = ((x + y) & 2) ? "#6a5a3a" : "#5a4a2e";
+        if (n > 0.94) col = "#7a6a48";
+        pxi(g, x, y, 1, 1, col);
+      }
+    }
+    paintStoneBlock(g, 0, 0, HUB_W, 12, "#4a463e");
+    paintStoneBlock(g, 0, 0, 12, HUB_H, "#4a463e");
+    paintStoneBlock(g, HUB_W - 12, 0, 12, HUB_H, "#4a463e");
+    paintStoneBlock(g, 0, HUB_H - 12, HUB_W, 12, "#3a3834");
+    // Plaza fountain
+    pxi(g, 96, 56, 28, 28, "#3a6a8a");
+    pxi(g, 100, 60, 20, 20, "#5a9aba");
+    pxi(g, 106, 66, 8, 8, "#c8e8f8");
+    pxi(g, 108, 52, 4, 8, "#8ab0c4");
+    // Duel ring + duo benches
+    pxi(g, 24, 40, 40, 40, "#3a2414");
+    pxi(g, 28, 44, 32, 32, "#5a3a21");
+    pxi(g, 36, 52, 16, 16, "#8a5a32");
+    withInk(g, () => {
+      drawPixText("DUEL", 32, 48, "#f3e2c4");
+      drawPixText("DUO", 168, 48, "#f3e2c4");
+    });
+    pxi(g, 160, 40, 36, 12, "#5a3420");
+    pxi(g, 160, 68, 36, 12, "#5a3420");
+    hubSolids.length = 0;
+    hubSolids.push({ x: 0, y: 0, w: HUB_W, h: 12 });
+    hubSolids.push({ x: 0, y: 0, w: 12, h: HUB_H });
+    hubSolids.push({ x: HUB_W - 12, y: 0, w: 12, h: HUB_H });
+    hubSolids.push({ x: 0, y: HUB_H - 12, w: 96, h: 12 });
+    hubSolids.push({ x: 124, y: HUB_H - 12, w: HUB_W - 124, h: 12 });
+    hubSolids.push({ x: 96, y: 56, w: 28, h: 28 });
+    hubSolids.push({ x: 160, y: 40, w: 36, h: 12 });
+    hubSolids.push({ x: 160, y: 68, w: 36, h: 12 });
+    const doorX = 100;
+    pxi(g, doorX, HUB_H - 16, 24, 16, "#100c0a");
+    hubExit = { x: doorX, y: HUB_H - 16, w: 24, h: 16 };
+  }
+
+  function paintMayanTemple(g, x, y, w, h, door) {
+    // Stepped pyramid silhouette
+    const steps = [
+      [0, 18, w, h - 18],
+      [8, 10, w - 16, h - 28],
+      [16, 4, w - 32, h - 36],
+      [24, 0, w - 48, 8],
+    ];
+    for (let s = 0; s < steps.length; s++) {
+      const st = steps[s];
+      paintStoneBlock(g, x + st[0], y + st[1], st[2], st[3], s % 2 ? "#6a6258" : "#5a564e");
+    }
+    // Glyph band
+    pxi(g, x + 10, y + 28, w - 20, 4, "#3a8a4a");
+    for (let i = 0; i < 5; i++) pxi(g, x + 14 + i * 10, y + 29, 4, 2, "#b8f0c8");
+    const dx = door.x - x;
+    const dy = door.y - y;
+    pxi(g, x + dx - 1, y + dy - 1, door.w + 2, door.h + 1, "#2a1810");
+    pxi(g, x + dx, y + dy, door.w, door.h, "#100c0a");
+    pxi(g, x + dx + door.w - 3, y + dy + ((door.h / 2) | 0), 1, 1, "#c9a227");
+  }
+
+  function paintHubGate(g, x, y, w, h, door) {
+    paintStoneBlock(g, x, y, w, h, "#4a463e");
+    pxi(g, x + 4, y + 6, w - 8, 4, "#c9a227");
+    withInk(g, () => drawPixText("HUB", x + 8, y + 8, "#1a120c"));
+    const dx = door.x - x;
+    const dy = door.y - y;
+    pxi(g, x + dx, y + dy, door.w, door.h, "#100c0a");
+  }
+
+  function placeTempleAndHub(pier) {
+    // Inland from dock — short jungle walk, off the main beach speedrun line
+    const tx = pier.x + 28;
+    const rest = restShoreY(tx + 24);
+    const ty = rest - 118;
+    const temple = { x: tx, y: ty, w: 56, h: 48 };
+    const tDoor = { x: temple.x + 22, y: temple.y + temple.h - 10, w: 12, h: 10 };
+    const hx = pier.x + 100;
+    const hy = rest - 78;
+    const hubB = { x: hx, y: hy, w: 40, h: 36 };
+    const hDoor = { x: hubB.x + 14, y: hubB.y + hubB.h - 9, w: 12, h: 9 };
+
+    islandSolids.push({ x: temple.x, y: temple.y, w: temple.w, h: temple.h - 10 });
+    islandSolids.push({ x: temple.x, y: temple.y + temple.h - 10, w: tDoor.x - temple.x, h: 6 });
+    islandSolids.push({
+      x: tDoor.x + tDoor.w,
+      y: temple.y + temple.h - 10,
+      w: temple.x + temple.w - (tDoor.x + tDoor.w),
+      h: 6,
+    });
+    islandSolids.push({ x: hubB.x, y: hubB.y, w: hubB.w, h: hubB.h - 9 });
+    islandSolids.push({ x: hubB.x, y: hubB.y + hubB.h - 9, w: hDoor.x - hubB.x, h: 6 });
+    islandSolids.push({
+      x: hDoor.x + hDoor.w,
+      y: hubB.y + hubB.h - 9,
+      w: hubB.x + hubB.w - (hDoor.x + hDoor.w),
+      h: 6,
+    });
+
+    walkPads.push({ x: tDoor.x - 4, y: tDoor.y, w: tDoor.w + 8, h: 16 });
+    walkPads.push({ x: hDoor.x - 4, y: hDoor.y, w: hDoor.w + 8, h: 14 });
+    keepouts.push({ x: temple.x - 16, y: temple.y - 12, w: temple.w + 32, h: temple.h + 28 });
+    keepouts.push({ x: hubB.x - 12, y: hubB.y - 10, w: hubB.w + 24, h: hubB.h + 22 });
+
+    templeDoor = { x: tDoor.x, y: tDoor.y, w: tDoor.w, h: tDoor.h + 4 };
+    templeIslandExit = { x: tDoor.x + tDoor.w + 6, y: tDoor.y + 4 };
+    hubDoor = { x: hDoor.x, y: hDoor.y, w: hDoor.w, h: hDoor.h + 2 };
+    hubIslandExit = { x: hDoor.x + hDoor.w + 6, y: hDoor.y + 4 };
+
+    // Extend building canvas to include temple + hub (redraw onto larger canvas)
+    const pad = 10;
+    const nx0 = Math.min(bldgOX, temple.x - pad, hubB.x - pad);
+    const ny0 = Math.min(bldgOY, temple.y - 4, hubB.y - 4);
+    const nx1 = Math.max(bldgOX + (bldgCanvas ? bldgCanvas.width : 0), temple.x + temple.w + pad, hubB.x + hubB.w + pad);
+    const ny1 = Math.max(bldgOY + (bldgCanvas ? bldgCanvas.height : 0), temple.y + temple.h + 8, hubB.y + hubB.h + 8);
+    const nc = document.createElement("canvas");
+    nc.width = Math.max(1, nx1 - nx0);
+    nc.height = Math.max(1, ny1 - ny0);
+    const ng = nc.getContext("2d");
+    ng.imageSmoothingEnabled = false;
+    if (bldgCanvas) ng.drawImage(bldgCanvas, bldgOX - nx0, bldgOY - ny0);
+    paintMayanTemple(ng, temple.x - nx0, temple.y - ny0, temple.w, temple.h, {
+      x: tDoor.x - nx0,
+      y: tDoor.y - ny0,
+      w: tDoor.w,
+      h: tDoor.h,
+    });
+    paintHubGate(ng, hubB.x - nx0, hubB.y - ny0, hubB.w, hubB.h, {
+      x: hDoor.x - nx0,
+      y: hDoor.y - ny0,
+      w: hDoor.w,
+      h: hDoor.h,
+    });
+    bldgOX = nx0;
+    bldgOY = ny0;
+    bldgCanvas = nc;
+
+    bakeTempleInterior();
+    bakeHubInterior();
+    spawnDailyIdol(temple, hubB);
+    clearTreesNear(temple);
+    clearTreesNear(hubB);
+  }
+
+  function clearTreesNear(r) {
+    for (let i = trees.length - 1; i >= 0; i--) {
+      const t = trees[i];
+      if (t.x > r.x - 18 && t.x < r.x + r.w + 18 && t.y > r.y - 10 && t.y < r.y + r.h + 20) {
+        trees.splice(i, 1);
+      }
+    }
+    for (let i = palms.length - 1; i >= 0; i--) {
+      const p = palms[i];
+      if (p.x > r.x - 18 && p.x < r.x + r.w + 18 && p.y > r.y - 10 && p.y < r.y + r.h + 20) {
+        palms.splice(i, 1);
+      }
+    }
+  }
+
+  function spawnDailyIdol(temple, hubB) {
+    const day = utcDayKey();
+    dailyLootId = null;
+    // Ember cape on temple path (visual cosmetic; cloak stays stealth ability)
+    if (playMode !== "speedrun" && !loot.some((L) => L && L.id === "cape" && !L.taken)) {
+      loot.push({
+        id: "cape",
+        x: temple.x - 14,
+        y: temple.y + temple.h + 10,
+        taken: false,
+        born: waveCycle,
+        life: Infinity,
+        scene: "island",
+      });
+    }
+    // Guests: session-only; accounts: once per UTC day via leaderboard claim helper
+    let claimed = false;
+    try {
+      const local = localStorage.getItem("islebound-daily-claim") || "";
+      if (local === day) claimed = true;
+    } catch (e) {}
+    if (claimed || playMode === "speedrun") return;
+    const u = hashStr(day + "-idol");
+    const ax = temple.x + temple.w + 8 + ((u * 36) | 0);
+    const ay = temple.y + temple.h + 6 + (((1 - u) * 20) | 0);
+    loot.push({
+      id: "sun_idol",
+      x: ax,
+      y: ay,
+      taken: false,
+      born: waveCycle,
+      life: Infinity,
+      scene: "island",
+      daily: day,
+    });
+    dailyLootId = day;
+  }
+
+  function noteDailyClaim(day) {
+    dailyClaimedUtc = day || utcDayKey();
+    try {
+      localStorage.setItem("islebound-daily-claim", dailyClaimedUtc);
+    } catch (e) {}
+    const api = lbApi();
+    if (api && api.claimDailyIdol) api.claimDailyIdol(dailyClaimedUtc);
+  }
+
+
   function paintMooredBoat(g, deck, hatch) {
     const x = deck.x;
     const y = deck.y;
@@ -5352,6 +5816,7 @@
     bakeShopInterior();
     bakeFishInterior();
     bakeCabinInterior();
+    placeTempleAndHub(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
       const p = palms[i];
       if (p.x > shop.x - 20 && p.x < hut.x + hut.w + 20 && p.y > hut.y - 10 && p.y < pier.y + 24) {
@@ -5425,8 +5890,15 @@
     player.y = placed.y;
     player.inWater = false;
     player.submerged = 0;
-    player.facing = next.scene === "shop" || next.scene === "fish" || next.scene === "cabin" ? 1 : -1;
-    if (next.scene === "cabin") player.aboard = false;
+    player.facing =
+      next.scene === "shop" ||
+      next.scene === "fish" ||
+      next.scene === "cabin" ||
+      next.scene === "temple" ||
+      next.scene === "hub"
+        ? 1
+        : -1;
+    if (next.scene === "cabin" || next.scene === "temple" || next.scene === "hub") player.aboard = false;
     doorCool = 0.85;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
@@ -5480,6 +5952,23 @@
     }
     if (scene === "cabin" && cabinExit && playerHits(cabinExit)) {
       beginFade("island", { x: cabinDockExit.x, y: cabinDockExit.y });
+    }
+    if (scene === "island" && templeDoor && playerHits(templeDoor)) {
+      beginFade("temple", { x: 98, y: TEMPLE_H - 40 });
+    }
+    if (scene === "temple" && templeExit && playerHits(templeExit)) {
+      beginFade("island", { x: templeIslandExit.x, y: templeIslandExit.y });
+    }
+    if (scene === "island" && hubDoor && playerHits(hubDoor)) {
+      beginFade("hub", { x: (HUB_W / 2 - 4) | 0, y: HUB_H - 40 });
+      hubUi.mode = "";
+      hubUi.tip = "TAB CHAT · E EMOTE · T MENU";
+      hubUi.tipT = 4;
+    }
+    if (scene === "hub" && hubExit && playerHits(hubExit)) {
+      beginFade("island", { x: hubIslandExit.x, y: hubIslandExit.y });
+      hubUi.mode = "";
+      hubUi.practice = null;
     }
   }
 
@@ -5836,6 +6325,28 @@
       px(x, y + 3, 7, 4, "#243860");
       px(x + 1, y + 2, 4, 1, "#3a5080");
       px(x + 1, y + 6, 5, 1, "#141c30");
+      return true;
+    }
+    if (id === "jade_mask") {
+      px(x + 1, y + 1, 5, 5, "#2a8a4a");
+      px(x + 2, y + 2, 3, 2, "#3ec86a");
+      px(x + 1, y + 3, 1, 1, "#0e3a20");
+      px(x + 4, y + 3, 1, 1, "#0e3a20");
+      px(x + 3, y + 2, 1, 1, "#b8f0c8");
+      return true;
+    }
+    if (id === "cape") {
+      px(x + 1, y + 1, 4, 6, "#c43a28");
+      px(x, y + 2, 2, 6, "#8a2020");
+      px(x + 2, y + 2, 2, 4, "#e04a32");
+      px(x + 3, y + 3, 1, 2, "#f0a060");
+      return true;
+    }
+    if (id === "sun_idol") {
+      px(x + 2, y, 3, 1, "#ffe08a");
+      px(x + 1, y + 1, 5, 4, "#e8c44a");
+      px(x + 2, y + 2, 3, 2, "#fff3c0");
+      px(x + 2, y + 5, 3, 2, "#c9a227");
       return true;
     }
     if (id === "serpent_heart") {
@@ -6218,15 +6729,48 @@
     }
   }
 
+  function drawCapePixels(sway, damp) {
+    const id = cosmetics.back;
+    if (!id) return;
+    const s = (sway * (damp == null ? 1 : damp)) | 0;
+    if (id === "cape") {
+      px(-5 + s, -6, 3, 8, "#8a2020");
+      px(-6 + s, -5, 2, 9, "#c43a28");
+      px(-4 + s, -4, 2, 7, "#e04a32");
+      px(-5 + s, 2, 3, 1, "#5a1010");
+      px(-3 + s, -3, 1, 2, "#f0a060");
+    } else if (id === "cloak") {
+      px(-5 + s, -6, 3, 9, "#1a2848");
+      px(-6 + s, -5, 2, 10, "#243860");
+      px(-4 + s, -4, 2, 8, "#3a5080");
+      px(-5 + s, 3, 3, 1, "#141c30");
+    }
+  }
+
+  function drawFaceCosmetic() {
+    const id = cosmetics.face;
+    if (!id) return;
+    if (id === "jade_mask") {
+      px(-2, -11, 5, 4, "#2a8a4a");
+      px(-1, -10, 3, 2, "#3ec86a");
+      px(-2, -9, 1, 1, "#0e3a20");
+      px(1, -9, 1, 1, "#0e3a20");
+      px(-1, -8, 3, 1, "#1a5a34");
+      px(0, -10, 1, 1, "#b8f0c8");
+    }
+  }
+
   function drawPlayer(cpos) {
     const f = player.frame;
     const face = player.facing;
+    let boatDamp = 1;
 
     ink.save();
     if (cloakOn) ink.globalAlpha = 0.06;
     if (player.aboard && ownedBoat && scene === "island") {
       const b = ownedBoat;
       const bob = skiffBob(b, time);
+      boatDamp = 0.35;
       ink.translate(b.x - cpos.x + b.w / 2, b.y - cpos.y + b.h + bob);
       ink.rotate(b.tilt || 0);
       ink.scale(b.face || 1, 1);
@@ -6240,6 +6784,10 @@
     }
 
     const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
+    const sway =
+      (player.moving ? Math.sin(time * 10 + f) * 1.4 + step * 0.4 : Math.sin(time * 2.2) * 0.7) *
+      boatDamp;
+    drawCapePixels(sway, 1);
     const hurt = player.hurt > 0;
     const shirt = hurt ? "#8a3a3a" : "#b8c4d4";
     const vest = hurt ? "#6a3038" : "#3a6a9a";
@@ -6249,6 +6797,7 @@
     px(-2, -11, 5, 5, "#e8c39a");
     px(-1, -9, 1, 1, "#2a1810");
     px(1, -8, 1, 1, "#d4a07a");
+    drawFaceCosmetic();
     px(-3, -6, 6, 6, vest);
     px(-3, -6, 6, 2, shirt);
     px(-2, -4, 4, 3, vest);
@@ -6522,7 +7071,7 @@
         stack &&
         stack.id === "wand" &&
         ((time * 10) | 0) % 2 === 0;
-      const sel = i === heldSlot || wandPulse;
+      const sel = (!cosSelect && i === heldSlot) || wandPulse;
       px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
       px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
       px(sx + 2, sy + 2, slot - 4, slot - 4, wandPulse ? "#e8c44a" : "#5c3a21");
@@ -6530,6 +7079,25 @@
       if (!stack) continue;
       drawHudIcon(stack.id, sx, sy);
       if (stack.count > 1) drawCount(sx, sy, stack.count);
+    }
+
+    // Cosmetic slots 9 / 0 — off to the side of the 2×4 bag
+    const cosGap = 6;
+    const cosX = x0 - (slot + cosGap) - 2;
+    const cosKinds = ["face", "back"];
+    const cosKeys = ["9", "0"];
+    for (let ci = 0; ci < 2; ci++) {
+      const kind = cosKinds[ci];
+      const sy = y0 + ci * (slot + h.rowGap);
+      const sx = cosX;
+      const sel = cosSelect === kind;
+      px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
+      px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
+      px(sx + 2, sy + 2, slot - 4, slot - 4, "#3a2414");
+      px(sx + 4, sy + 4, slot - 8, slot - 8, "#1a120c");
+      const cid = cosmetics[kind];
+      if (cid) drawHudIcon(cid, sx, sy);
+      drawPixText(cosKeys[ci], sx + 2, sy + slot - 7, sel ? "#3a2414" : "#8a6a42");
     }
 
     const inner = barW - 4;
@@ -7743,7 +8311,7 @@
     ) {
       mode = "menu";
     } else if (playMode === "normal") {
-      mode = "normal";
+      mode = scene === "hub" ? "hub" : "normal";
     } else if (playMode === "speedrun") {
       mode = "speedrun";
       if (uiScreen === "categories") cat = SPEED_ORDER[srCursor] || srCat;
@@ -8344,6 +8912,252 @@
     ctx.restore();
   }
 
+
+  function drawTemplePedestal(cpos, t) {
+    if (!templePedestal || templeMaskTaken) return;
+    const x = (templePedestal.x - cpos.x) | 0;
+    const y = (templePedestal.y - cpos.y) | 0;
+    const pulse = 0.55 + Math.sin(t * 4) * 0.25;
+    ctx.globalAlpha = pulse;
+    px(x + 3, y - 2, 10, 2, "#b8f0c8");
+    px(x + 4, y - 6, 8, 4, "#3ec86a");
+    px(x + 5, y - 5, 2, 1, "#0e3a20");
+    px(x + 9, y - 5, 2, 1, "#0e3a20");
+    ctx.globalAlpha = 1;
+    const mid = playerCenter();
+    if (
+      Math.hypot(mid.x - (templePedestal.x + 8), mid.y - (templePedestal.y + 4)) < 18 &&
+      !templeMaskTaken
+    ) {
+      if (canTake("jade_mask") || inventory.some((s) => s && s.id === "jade_mask") || cosmetics.face === "jade_mask") {
+        templeMaskTaken = true;
+        if (cosmetics.face !== "jade_mask" && !inventory.some((s) => s && s.id === "jade_mask")) {
+          loot.push({
+            id: "jade_mask",
+            x: templePedestal.x + 4,
+            y: templePedestal.y - 4,
+            taken: false,
+            born: waveCycle,
+            life: Infinity,
+            scene: "temple",
+          });
+        }
+      }
+    }
+  }
+
+  function updateTempleHazards(dt) {
+    if (scene !== "temple" || player.dead > 0 || player.hurt > 0) return;
+    const fx = player.x + player.w / 2;
+    const fy = player.y + player.h - 2;
+    for (let i = 0; i < templeHazards.length; i++) {
+      const hz = templeHazards[i];
+      if (fx >= hz.x && fx < hz.x + hz.w && fy >= hz.y && fy < hz.y + hz.h) {
+        player.hp = Math.max(0, player.hp - 1);
+        player.hurt = 0.7;
+        shake = Math.max(shake, 3);
+        if (player.hp <= 0) player.dead = 2.2;
+        break;
+      }
+    }
+  }
+
+  function drawMiniPlayerAt(sx, sy, face, faceId, backId, name, alpha) {
+    ink.save();
+    ink.globalAlpha = alpha == null ? 1 : alpha;
+    ink.translate(sx + 4, sy + 13);
+    ink.scale(face || 1, 1);
+    // cape
+    if (backId === "cape") {
+      px(-5, -6, 3, 8, "#8a2020");
+      px(-6, -5, 2, 9, "#c43a28");
+    } else if (backId === "cloak") {
+      px(-5, -6, 3, 9, "#1a2848");
+      px(-6, -5, 2, 10, "#243860");
+    }
+    px(-3, -13, 6, 2, "#c43a28");
+    px(-2, -11, 5, 5, "#e8c39a");
+    if (faceId === "jade_mask") {
+      px(-2, -11, 5, 4, "#2a8a4a");
+      px(-1, -10, 3, 2, "#3ec86a");
+    }
+    px(-3, -6, 6, 6, "#3a6a9a");
+    px(-3, 1, 2, 3, "#2a4a78");
+    px(0, 1, 2, 3, "#2a4a78");
+    ink.restore();
+    if (name) {
+      ctx.globalAlpha = alpha == null ? 0.9 : alpha;
+      drawPixText(String(name).slice(0, 10), sx + 4, sy - 6, "#f3e2c4", "center");
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function refreshHubPeers() {
+    hubPeers = [];
+    if (scene !== "hub") return;
+    const api = lbApi();
+    if (!api || !api.getOnlinePresence) return;
+    const rows = api.getOnlinePresence() || [];
+    const me = api.getClientId ? api.getClientId() : "";
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r.client_id === me) continue;
+      if (r.in_hub === false) continue;
+      // Prefer hub pose columns; else fan out in plaza by index
+      let hx = r.hub_x;
+      let hy = r.hub_y;
+      if (typeof hx !== "number" || typeof hy !== "number") {
+        hx = 40 + (i % 6) * 28;
+        hy = 36 + ((i / 6) | 0) * 24;
+      }
+      hubPeers.push({
+        x: hx,
+        y: hy,
+        facing: r.hub_face === -1 ? -1 : 1,
+        face: r.face_id || null,
+        back: r.back_id || null,
+        name: r.username || "GUEST",
+        emote: r.emote || "",
+      });
+    }
+  }
+
+  function syncHubPresencePose() {
+    const api = lbApi();
+    if (!api || typeof api.setHubPresence !== "function") return;
+    if (scene !== "hub") {
+      api.setHubPresence(null);
+      return;
+    }
+    api.setHubPresence({
+      x: player.x | 0,
+      y: player.y | 0,
+      face: player.facing | 0,
+      face_id: cosmetics.face,
+      back_id: cosmetics.back,
+      emote: hubEmoteT > 0 ? hubEmote : "",
+    });
+  }
+
+  function drawHubPeers(cpos, t) {
+    refreshHubPeers();
+    for (let i = 0; i < hubPeers.length; i++) {
+      const p = hubPeers[i];
+      const sx = (p.x - cpos.x) | 0;
+      const sy = (p.y - cpos.y) | 0;
+      drawMiniPlayerAt(sx, sy, p.facing, p.face, p.back, p.name, 0.92);
+      if (p.emote) {
+        drawPixText(p.emote, sx + 4, sy - 14, "#ffe08a", "center");
+      }
+    }
+  }
+
+  function drawHubEmote(cpos) {
+    const x = (player.x - cpos.x + 4) | 0;
+    const y = (player.y - cpos.y - 10) | 0;
+    drawPixText(hubEmote || "!", x, y, "#ffe08a", "center");
+  }
+
+  function drawHubPractice(cpos, t) {
+    const pr = hubUi.practice;
+    if (!pr) return;
+    if (pr.kind === "duel") {
+      const x = (pr.x - cpos.x) | 0;
+      const y = (pr.y - cpos.y) | 0;
+      const bob = (Math.sin(t * 6) * 2) | 0;
+      px(x, y + bob, 8, 10, "#6a5088");
+      px(x + 2, y - 4 + bob, 4, 4, "#c9a227");
+      if (Math.hypot(player.x + 4 - pr.x, player.y + 7 - pr.y) < 14) {
+        hubUi.tip = "PRACTICE HIT!";
+        hubUi.tipT = 1.2;
+        pr.hp = (pr.hp | 0) - 1;
+        pr.x = 30 + Math.random() * 40;
+        pr.y = 48 + Math.random() * 30;
+        if (pr.hp <= 0) {
+          hubUi.practice = null;
+          hubUi.tip = "DUEL PRACTICE CLEAR";
+          hubUi.tipT = 2.5;
+          gainXp(4);
+        }
+      }
+    }
+  }
+
+  function drawHubOverlay() {
+    if (scene !== "hub" || uiBlocksPlay()) return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    if (hubUi.tipT > 0 && hubUi.tip) {
+      drawPixText(hubUi.tip, (uiW / 2) | 0, 10, "#f3e2c4", "center");
+    }
+    if (hubUi.mode === "menu") {
+      const w = 120;
+      const h = 68;
+      const x = ((uiW - w) / 2) | 0;
+      const y = ((uiH - h) / 2) | 0;
+      px(x, y, w, h, "#3a2414");
+      px(x + 1, y + 1, w - 2, h - 2, "#8a5a32");
+      px(x + 3, y + 3, w - 6, h - 6, "#c4a574");
+      drawPixText("HUB PLAZA", (x + w / 2) | 0, y + 8, "#3a2414", "center");
+      const opts = ["PRACTICE DUEL", "INVITE DUEL", "PAIR DUO", "CLOSE"];
+      for (let i = 0; i < opts.length; i++) {
+        const sel = hubUi.duelSel === i;
+        drawPixText((sel ? "> " : "  ") + opts[i], x + 10, y + 22 + i * 10, sel ? "#1a120c" : "#5a3a21");
+      }
+    }
+    // Online roster strip
+    const api = lbApi();
+    const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
+    if (n != null) drawPixText("ONLINE " + n, uiW - 6, 8, "#c9a227", "right");
+  }
+
+  function handleHubMenuKey(k) {
+    if (scene !== "hub") return false;
+    if (k === "t" && !hubUi.mode) {
+      hubUi.mode = "menu";
+      hubUi.duelSel = 0;
+      return true;
+    }
+    if (hubUi.mode !== "menu") return false;
+    if (k === "arrowup" || k === "w") {
+      hubUi.duelSel = (hubUi.duelSel + 3) % 4;
+      return true;
+    }
+    if (k === "arrowdown" || k === "s") {
+      hubUi.duelSel = (hubUi.duelSel + 1) % 4;
+      return true;
+    }
+    if (k === "escape") {
+      hubUi.mode = "";
+      return true;
+    }
+    if (k === "enter" || k === " ") {
+      const i = hubUi.duelSel;
+      if (i === 0) {
+        hubUi.practice = { kind: "duel", x: 44, y: 56, hp: 3 };
+        hubUi.tip = "WALK INTO THE TARGET";
+        hubUi.tipT = 3;
+        hubUi.mode = "";
+      } else if (i === 1) {
+        hubUi.tip = "DUEL INVITE STUB — NEED LIVE SYNC";
+        hubUi.tipT = 3;
+        hubUi.mode = "";
+      } else if (i === 2) {
+        hubUi.tip = "DUO PAIR STUB — COMING SOON";
+        hubUi.tipT = 3;
+        hubUi.mode = "";
+      } else hubUi.mode = "";
+      return true;
+    }
+    return false;
+  }
+
+  function tryHubEmote() {
+    if (scene !== "hub") return;
+    hubEmote = ["!", "HI", "GG", "~"][irand(0, 3)];
+    hubEmoteT = 2.2;
+  }
+
   function drawGuide() {
     if (!guideOpen) return;
     const uiW = canvas.width / SCALE_UI;
@@ -8353,22 +9167,23 @@
       "ON FOOT AND IN BOAT",
       "HOLD Z TO LOOK FAR",
       "1-4 TOP  5-8 BOTTOM",
-      "ENTER DROPS HELD ITEM",
+      "9 FACE SLOT  0 BACK SLOT",
+      "ENTER DROPS OR EQUIPS COSMETIC",
       "SPACE USES HELD ITEM",
+      "CLOAK SPACE = STEALTH",
+      "TEMPLE INLAND FROM DOCK",
+      "JADE MASK ON THE PEDESTAL",
+      "DAILY SUN IDOL NEAR PATH",
+      "HUB GATE FOR ONLINE PLAZA",
+      "HUB: T MENU  E EMOTE",
       "SHELL BLOWS THE HORN",
       "FAR HORN WAKES SERPENT",
       "WAND HITS BREACHING SERPENT",
       "HOLD BAIT TO CAST BETTER",
-      "HEART / SHARK BAIT = SUPER",
-      "CHEST NEEDS THE MASTER",
       "T OPENS CHEST IN CABIN",
       "T TRADES NEAR NPC",
       "C / F CASTS THE ROD",
       "TAB OPENS ISLAND CHAT",
-      "CLOSE DOCK GOOD FAR LEGEND",
-      "WALK TO LOOT TO PICK UP",
-      "WALK TO BOAT TO BOARD",
-      "SHORE OR DOCK TO GET OUT",
       "ESC QUITS SURVIVAL",
       "R RESETS SPEEDRUN",
       "H CLOSES THIS GUIDE",
@@ -8402,9 +9217,24 @@
     ctx.imageSmoothingEnabled = false;
     ctx.setTransform(zoom, 0, 0, zoom, jx, jy);
     if (isIndoor()) {
-      px(0, 0, viewW, viewH, scene === "cabin" ? "#071018" : "#2a1c12");
+      px(
+        0,
+        0,
+        viewW,
+        viewH,
+        scene === "cabin" ? "#071018" : scene === "temple" ? "#12100c" : scene === "hub" ? "#1a1810" : "#2a1c12"
+      );
       if (scene === "cabin") drawCabinSea(cpos, t);
-      const room = scene === "fish" ? fishCanvas : scene === "cabin" ? cabinCanvas : shopCanvas;
+      const room =
+        scene === "fish"
+          ? fishCanvas
+          : scene === "cabin"
+            ? cabinCanvas
+            : scene === "temple"
+              ? templeCanvas
+              : scene === "hub"
+                ? hubCanvas
+                : shopCanvas;
       const rw = indoorW();
       const rh = indoorH();
       if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
@@ -8415,12 +9245,18 @@
         drawChestSpill(cpos);
         drawCabinLampFlicker(cpos);
       }
+      if (scene === "temple") drawTemplePedestal(cpos, t);
+      if (scene === "hub") {
+        drawHubPeers(cpos, t);
+        drawHubPractice(cpos, t);
+      }
       for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
       if (scene === "cabin") drawWardenMagic(cpos, t);
-      else drawShopkeeperBubble(cpos, t);
+      else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
       if (scene === "cabin") drawCabinMotes(cpos);
+      if (hubEmoteT > 0 && scene === "hub") drawHubEmote(cpos);
     } else {
       px(0, 0, viewW, viewH, WATER_BLUE);
       drawLand(cpos);
@@ -8477,6 +9313,7 @@
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
     drawHud();
     drawSerpentBossBar();
+    drawHubOverlay();
     drawGuide();
     drawBlowfishHearts();
     drawPickupFx();
@@ -9178,6 +10015,13 @@
     player.moving = false;
     player.facing = 1;
     cloakOn = false;
+    cosmetics.face = null;
+    cosmetics.back = null;
+    cosSelect = null;
+    templeMaskTaken = false;
+    hubUi.mode = "";
+    hubUi.practice = null;
+    hubEmoteT = 0;
     ownedBoat = null;
     boatThrow = null;
     if (serpent) {
@@ -9340,6 +10184,17 @@
     playMode = "normal";
     uiScreen = null;
     loadGame();
+    // Respect daily claim after load
+    try {
+      const day = utcDayKey();
+      const local = localStorage.getItem("islebound-daily-claim") || dailyClaimedUtc || "";
+      if (local === day) {
+        dailyClaimedUtc = day;
+        for (let i = loot.length - 1; i >= 0; i--) {
+          if (loot[i] && loot[i].id === "sun_idol") loot.splice(i, 1);
+        }
+      }
+    } catch (e) {}
     const api = lbApi();
     if (api && api.loadLocalNmStats) {
       const st = api.loadLocalNmStats();
@@ -10347,6 +11202,9 @@
         aboard: !!player.aboard,
         scene,
         cloak: cloakOn,
+        cosmetics: { face: cosmetics.face, back: cosmetics.back },
+        templeMaskTaken: !!templeMaskTaken,
+        dailyClaimedUtc: dailyClaimedUtc || "",
         boat: ownedBoat
           ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
           : null,
@@ -10376,11 +11234,22 @@
     if (typeof data.y === "number") player.y = data.y;
     if (data.facing === -1 || data.facing === 1) player.facing = data.facing;
     player.aboard = !!data.aboard;
-    if (data.scene === "shop" || data.scene === "fish" || data.scene === "cabin" || data.scene === "island") {
+    if (
+      data.scene === "shop" ||
+      data.scene === "fish" ||
+      data.scene === "cabin" ||
+      data.scene === "island" ||
+      data.scene === "temple" ||
+      data.scene === "hub"
+    ) {
       scene = data.scene;
     }
-    cloakOn = !!data.cloak && inventory.some((s) => s && s.id === "cloak");
-    if (scene === "cabin") player.aboard = false;
+    cosmetics.face = data.cosmetics && ITEM_DEFS[data.cosmetics.face] ? data.cosmetics.face : null;
+    cosmetics.back = data.cosmetics && ITEM_DEFS[data.cosmetics.back] ? data.cosmetics.back : null;
+    templeMaskTaken = !!data.templeMaskTaken;
+    dailyClaimedUtc = data.dailyClaimedUtc ? String(data.dailyClaimedUtc) : "";
+    cloakOn = !!data.cloak && ownsCloak();
+    if (scene === "cabin" || scene === "temple" || scene === "hub") player.aboard = false;
     if (data.boat && typeof data.boat.x === "number") {
       ownedBoat = {
         x: data.boat.x,
@@ -10422,6 +11291,14 @@
     updateDoors(dt);
     updatePlayer(dt);
     updatePickup(dt);
+    updateTempleHazards(dt);
+    if (hubUi.tipT > 0) hubUi.tipT = Math.max(0, hubUi.tipT - dt);
+    if (hubEmoteT > 0) hubEmoteT = Math.max(0, hubEmoteT - dt);
+    if (scene === "hub") {
+      syncHubPresencePose();
+    } else {
+      syncHubPresencePose();
+    }
     updateXpFx(dt);
     updateHorn();
     updateUseFx(dt);
@@ -10501,11 +11378,14 @@
         "6",
         "7",
         "8",
+        "9",
+        "0",
         "t",
         "f",
         "c",
         "h",
         "r",
+        "e",
         "escape",
         "tab",
         "backspace",
@@ -10591,6 +11471,10 @@
         guideOpen = false;
         return;
       }
+      if (hubUi.mode === "menu") {
+        hubUi.mode = "";
+        return;
+      }
       if (cabinCut.kind) return;
       saveGame();
       if (serpent) endSerpentFight("flee");
@@ -10598,14 +11482,31 @@
       return;
     }
     if (guideOpen || cabinCut.kind) return;
+    if (!e.repeat && handleHubMenuKey(k)) return;
     if (e.repeat) {
-      if (k === "enter" && isIndoor()) dropHeld();
+      if (k === "enter" && isIndoor() && !cosSelect) dropHeld();
       return;
     }
-    if (k >= "1" && k <= "8") heldSlot = k.charCodeAt(0) - 49;
+    if (k >= "1" && k <= "8") {
+      heldSlot = k.charCodeAt(0) - 49;
+      cosSelect = null;
+    }
+    if (k === "9") {
+      cosSelect = "face";
+    }
+    if (k === "0") {
+      cosSelect = "back";
+    }
     if (k === "enter") onEnter();
-    if (k === " ") useHeld();
-    if (k === "t") tryTradeKey();
+    if (k === " ") {
+      if (hubUi.mode === "menu") handleHubMenuKey(k);
+      else useHeld();
+    }
+    if (k === "t") {
+      if (scene === "hub") handleHubMenuKey(k);
+      else tryTradeKey();
+    }
+    if (k === "e" && scene === "hub") tryHubEmote();
     if (k === "c" || k === "f") tryCastRod();
   });
   window.addEventListener("keyup", (e) => {
@@ -10734,7 +11635,13 @@
 
   function zoomGoal() {
     const goingShop =
-      fadeMode && fadeNext && (fadeNext.scene === "shop" || fadeNext.scene === "fish" || fadeNext.scene === "cabin");
+      fadeMode &&
+      fadeNext &&
+      (fadeNext.scene === "shop" ||
+        fadeNext.scene === "fish" ||
+        fadeNext.scene === "cabin" ||
+        fadeNext.scene === "temple" ||
+        fadeNext.scene === "hub");
     const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
     if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
     return keys.z ? SCALE_FAR : SCALE_DEFAULT;
