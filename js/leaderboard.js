@@ -13,6 +13,8 @@
   const PRESENCE = "players_online";
   const CHAT = "chat_messages";
   const CLIENT_ID_KEY = "islebound-client-id";
+  const CLIENT_IP_KEY = "islebound-client-ip";
+  const BANS_TABLE = "player_bans";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
   const PRESENCE_HEARTBEAT_MS = 12000; // keep board dots roughly fresh while menus are open
   const PRESENCE_ONLINE_MS = 75000; // last_seen within this = online
@@ -20,6 +22,31 @@
   const CHAT_RATE_MS = 1500;
   const CHAT_BODY_MAX = 80;
   const CHAT_FETCH_LIMIT = 50;
+  const BAN_POLL_MS = 60000;
+  // Friendly copy for banned players (shown in HUD / chat status).
+  const BAN_USER_MSG = "You're temporarily banned from online features.";
+  // Client-side fallback so Matteus stays blocked even before SETUP SQL runs.
+  // Window: 2026-11-05 05:47 UTC → +12h = 17:47 UTC.
+  const HARD_BANS = [
+    {
+      name_norm: "MATTEUS",
+      match_mode: "name_fuzzy",
+      expires_at: "2026-11-05T17:47:00.000Z",
+      reason: "cheat WRs",
+    },
+    {
+      name_norm: "MATTEUS O",
+      match_mode: "name_exact",
+      expires_at: "2026-11-05T17:47:00.000Z",
+      reason: "cheat WRs",
+    },
+    {
+      name_norm: "OWENS",
+      match_mode: "name_exact",
+      expires_at: "2026-11-05T17:47:00.000Z",
+      reason: "cheat WRs",
+    },
+  ];
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
     "HENRI P": "HENRI",
@@ -47,6 +74,116 @@
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 6000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 20000 },
   };
+
+  const FISH_STEP_CATS = {
+    shark: 1,
+    jelly_white: 1,
+    chest: 1,
+    blowfish: 1,
+    megalodon: 1,
+    shark_cloak: 1,
+  };
+
+  /**
+   * Replay step anti-cheat. Frame layout from game captureReplayFrame:
+   * [t,x,y,face,aboard,cloak,coins,hp,bx,by,bface,rod,scene,held,inv,serpent]
+   * rod: 0 idle, 1 wait, 2 reel
+   */
+  function validateReplaySteps(category, frames) {
+    if (!frames || !frames.length) return { ok: false, error: "no frames" };
+    let sawBoat = false;
+    let sawAboard = false;
+    let sawAboardBeforeRod = false;
+    let sawBoatBeforeRod = false;
+    let sawRod = false;
+    let rodWaitMs = 0;
+    let prevT = frames[0][0] | 0;
+    let sawCloak = false;
+    let sawSerpent = false;
+    let maxCoins = 0;
+    let minHp = 99;
+    let sawFullInv = false;
+    let sawHeart = false;
+    let firstRodT = -1;
+
+    for (let i = 0; i < frames.length; i++) {
+      const f = frames[i];
+      if (!f || !f.length) continue;
+      const t = f[0] | 0;
+      const dt = Math.max(0, Math.min(250, t - prevT));
+      prevT = t;
+      const aboard = !!f[4];
+      const cloak = !!f[5];
+      const coins = f[6] | 0;
+      const hp = f[7] | 0;
+      const bx = f[8];
+      const rod = f[11] | 0;
+      const inv = f[14];
+      const serp = f[15];
+
+      if (bx != null && bx >= 0) sawBoat = true;
+      if (aboard) sawAboard = true;
+      if (cloak) sawCloak = true;
+      if (serp) sawSerpent = true;
+      if (coins > maxCoins) maxCoins = coins;
+      if (hp < minHp) minHp = hp;
+
+      if (Array.isArray(inv)) {
+        let filled = 0;
+        for (let s = 0; s < inv.length; s++) {
+          const raw = inv[s] || "";
+          if (raw) filled++;
+          if (String(raw).indexOf("serpent_heart") === 0) sawHeart = true;
+          if (String(raw).indexOf("cloak") === 0) {
+            /* owned cloak at some point */
+          }
+        }
+        if (filled >= 8) sawFullInv = true;
+      }
+
+      if (rod > 0) {
+        if (firstRodT < 0) {
+          firstRodT = t;
+          sawBoatBeforeRod = sawBoat;
+          sawAboardBeforeRod = sawAboard;
+        }
+        sawRod = true;
+        if (rod === 1) rodWaitMs += dt;
+      }
+    }
+
+    if (FISH_STEP_CATS[category]) {
+      if (!sawBoatBeforeRod && !sawBoat) return { ok: false, error: "need boat first" };
+      if (!sawBoatBeforeRod) return { ok: false, error: "boat before fish" };
+      if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board boat first" };
+      if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
+      if (!sawRod) return { ok: false, error: "must cast rod" };
+      // Real cast is 15s; require most of that wait in the recording.
+      if (rodWaitMs < 12000) return { ok: false, error: "cast too short" };
+      if (category === "shark_cloak" && !sawCloak) return { ok: false, error: "need cloak on" };
+    }
+
+    if (category === "serpent") {
+      if (!sawBoat || !sawAboard) return { ok: false, error: "need boat" };
+      if (!sawSerpent) return { ok: false, error: "need serpent fight" };
+      if (!sawHeart) return { ok: false, error: "need sea heart" };
+    }
+
+    if (category === "boat") {
+      // Boat costs 10 coins; owning/boarding the boat is the proof (coin count drops after buy).
+      if (!sawBoat) return { ok: false, error: "need buy boat" };
+      if (!sawAboard) return { ok: false, error: "need board boat" };
+    }
+
+    if (category === "coins_10" && maxCoins < 10) return { ok: false, error: "need 10 coins" };
+    if (category === "coins_25" && maxCoins < 25) return { ok: false, error: "need 25 coins" };
+    if (category === "coins_100" && maxCoins < 100) return { ok: false, error: "need 100 coins" };
+
+    if (category === "full_inv" && !sawFullInv) return { ok: false, error: "need full inv" };
+    if (category === "death" && minHp > 0) return { ok: false, error: "need death" };
+
+    return { ok: true };
+  }
 
   const NM_BOARD_DEFS = {
     playtime: { id: "playtime", label: "PLAYTIME", col: "nm_playtime_ms", order: "desc" },
@@ -77,6 +214,11 @@
   let lastChatSendAt = 0;
   let chatStatus = ""; // soft-fail note for UI
   let chatListeners = [];
+  let banRows = []; // from player_bans (plus HARD_BANS merged at check time)
+  let banPollTimer = null;
+  let bansAvailable = true; // false if table missing
+  let clientIp = null;
+  let lastBanHit = null; // most recent ban check result for UI
 
   function configured() {
     return !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
@@ -146,8 +288,28 @@
     } catch (e) {}
   }
 
+  /** Strip tags / entities / js: so user strings stay inert if ever put in DOM. */
+  function stripInjectedMarkup(raw) {
+    return String(raw == null ? "" : raw)
+      .replace(/<[^>]*>/g, "")
+      .replace(/&[#a-zA-Z0-9]+;/g, "")
+      .replace(/javascript\s*:/gi, "")
+      .replace(/vbscript\s*:/gi, "")
+      .replace(/data\s*:/gi, "")
+      .replace(/on[a-z]+\s*=/gi, "");
+  }
+
+  function escapeHtml(raw) {
+    return String(raw == null ? "" : raw)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function sanitizeName(name, soft) {
-    let s = String(name || "")
+    let s = stripInjectedMarkup(String(name || ""))
       .toUpperCase()
       .replace(/[^A-Z0-9 ]/g, "")
       .replace(/\s+/g, " ")
@@ -158,11 +320,209 @@
   }
 
   function normalizeIdentityName(name) {
-    return String(name || "")
+    return stripInjectedMarkup(String(name || ""))
       .toUpperCase()
       .replace(/[^A-Z0-9 ]/g, "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  /* ---------- Bans (account / name / client_id / IP) ---------- */
+
+  function banStillActive(b) {
+    if (!b) return false;
+    if (!b.expires_at) return true;
+    const t = Date.parse(b.expires_at);
+    if (!Number.isFinite(t)) return true;
+    return t > Date.now();
+  }
+
+  function normalizeBanRow(r) {
+    if (!r) return null;
+    return {
+      id: r.id != null ? r.id : null,
+      name_norm: r.name_norm ? normalizeIdentityName(r.name_norm) : null,
+      user_id: r.user_id ? String(r.user_id) : null,
+      client_id: r.client_id ? String(r.client_id) : null,
+      ip: r.ip ? String(r.ip).trim() : null,
+      match_mode: String(r.match_mode || "name_fuzzy"),
+      expires_at: r.expires_at || null,
+      reason: r.reason ? String(r.reason).slice(0, 80) : null,
+    };
+  }
+
+  function allActiveBans() {
+    const out = [];
+    const seen = {};
+    function push(raw) {
+      const b = normalizeBanRow(raw);
+      if (!b || !banStillActive(b)) return;
+      const key =
+        (b.user_id || "") +
+        "|" +
+        (b.client_id || "") +
+        "|" +
+        (b.ip || "") +
+        "|" +
+        (b.name_norm || "") +
+        "|" +
+        (b.match_mode || "") +
+        "|" +
+        (b.expires_at || "");
+      if (seen[key]) return;
+      seen[key] = 1;
+      out.push(b);
+    }
+    for (let i = 0; i < HARD_BANS.length; i++) push(HARD_BANS[i]);
+    for (let i = 0; i < banRows.length; i++) push(banRows[i]);
+    return out;
+  }
+
+  function nameMatchesBan(name, ban) {
+    const n = normalizeIdentityName(name);
+    const target = normalizeIdentityName(ban && ban.name_norm);
+    if (!n || !target) return false;
+    const mode = (ban && ban.match_mode) || "name_fuzzy";
+    if (mode === "name_exact" || mode === "exact") return n === target;
+    if (mode === "name_prefix" || mode === "prefix") {
+      return n === target || n.indexOf(target + " ") === 0;
+    }
+    // name_fuzzy (default): exact, shared first token, or existing alias fuzzy match
+    if (n === target) return true;
+    const ta = nameTokens(n);
+    const tb = nameTokens(target);
+    if (ta[0] && tb[0] && ta[0].length >= 4 && ta[0] === tb[0]) return true;
+    if (namesFuzzyMatch(n, target)) return true;
+    return false;
+  }
+
+  function banUserMessage(hit) {
+    if (!hit || !hit.banned) return "";
+    let msg = BAN_USER_MSG;
+    if (hit.until) {
+      const ms = Date.parse(hit.until) - Date.now();
+      if (ms > 0) {
+        const hrs = Math.max(1, Math.ceil(ms / 3600000));
+        msg += hrs === 1 ? " Try again in about an hour." : " Try again in about " + hrs + " hours.";
+      }
+    }
+    return msg;
+  }
+
+  function checkBanIdentity(opts) {
+    const o = opts || {};
+    const name = o.name || "";
+    const uid = o.user_id || null;
+    const cid = o.client_id || getClientId();
+    const ip = o.ip != null ? o.ip : clientIp;
+    const bans = allActiveBans();
+    for (let i = 0; i < bans.length; i++) {
+      const b = bans[i];
+      if (b.user_id && uid && String(b.user_id) === String(uid)) {
+        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "account" };
+        return lastBanHit;
+      }
+      if (b.client_id && cid && String(b.client_id) === String(cid)) {
+        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "device" };
+        return lastBanHit;
+      }
+      if (b.ip && ip && String(b.ip) === String(ip)) {
+        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "ip" };
+        return lastBanHit;
+      }
+      if (b.name_norm && name && nameMatchesBan(name, b)) {
+        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "name" };
+        return lastBanHit;
+      }
+    }
+    lastBanHit = { banned: false };
+    return lastBanHit;
+  }
+
+  function getBanStatus(opts) {
+    return checkBanIdentity(opts || {
+      name: displayName() || getLastName() || "",
+      user_id: session && session.user ? session.user.id : null,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+  }
+
+  function getClientIp() {
+    return clientIp;
+  }
+
+  async function refreshClientIp() {
+    try {
+      const cached = localStorage.getItem(CLIENT_IP_KEY);
+      if (cached && /^\d{1,3}(\.\d{1,3}){3}$/.test(cached)) clientIp = cached;
+    } catch (e) {}
+    try {
+      const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+      if (!res.ok) return clientIp;
+      const data = await res.json();
+      const ip = data && data.ip ? String(data.ip).trim() : "";
+      if (ip) {
+        clientIp = ip;
+        try {
+          localStorage.setItem(CLIENT_IP_KEY, ip);
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return clientIp;
+  }
+
+  async function fetchBans() {
+    if (!configured()) return banRows;
+    if (!bansAvailable) return banRows;
+    const url =
+      restBase() +
+      "/" +
+      BANS_TABLE +
+      "?select=id,name_norm,user_id,client_id,ip,match_mode,expires_at,reason" +
+      "&or=(expires_at.is.null,expires_at.gt." +
+      encodeURIComponent(new Date().toISOString()) +
+      ")" +
+      "&limit=200";
+    try {
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 406) bansAvailable = false;
+        return banRows;
+      }
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : [];
+      const out = [];
+      for (let i = 0; i < rows.length; i++) {
+        const n = normalizeBanRow(rows[i]);
+        if (n && banStillActive(n)) out.push(n);
+      }
+      banRows = out;
+      return banRows;
+    } catch (e) {
+      return banRows;
+    }
+  }
+
+  function startBanPoll() {
+    if (banPollTimer) return;
+    fetchBans().catch(() => {});
+    refreshClientIp().catch(() => {});
+    banPollTimer = setInterval(() => {
+      fetchBans().catch(() => {});
+    }, BAN_POLL_MS);
+  }
+
+  function banBlockResult(hit) {
+    const msg = banUserMessage(hit) || BAN_USER_MSG;
+    return {
+      ok: false,
+      banned: true,
+      error: msg,
+      shortError: "TEMP BANNED",
+      until: hit && hit.until,
+      kind: hit && hit.kind,
+    };
   }
 
   function nameTokens(name) {
@@ -788,6 +1148,13 @@
     const resolved = await resolveSubmitIdentity(playerName);
     const name = resolved.name || sanitizeName(playerName);
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
+    const banHit = checkBanIdentity({
+      name,
+      user_id: resolved.user_id || (session && session.user && session.user.id) || null,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+    if (banHit.banned) return banBlockResult(banHit);
     const ms = timeMs | 0;
     if (ms < 0) return { ok: false, error: "bad time" };
     // Anti-cheat: reject times below the category's physical minimum.
@@ -812,6 +1179,10 @@
     }
     if (Math.abs(lastT - ms) > 2000) {
       return { ok: false, error: "cheat? time mismatch", cheated: true };
+    }
+    const steps = validateReplaySteps(category, frames);
+    if (!steps.ok) {
+      return { ok: false, error: steps.error || "cheat? bad steps", cheated: true };
     }
     setLastName(name);
     if (!configured()) {
@@ -1057,6 +1428,8 @@
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
     if (!code) return { ok: false, error: "pin must be 4 digits" };
     if (!configured()) return { ok: false, error: "not configured" };
+    const banHit = checkBanIdentity({ name, client_id: getClientId(), ip: clientIp });
+    if (banHit.banned) return banBlockResult(banHit);
     const existing = await fetchAccountByUsername(name);
     if (!existing.ok) return existing;
     if (existing.account) return { ok: false, error: "username taken" };
@@ -1104,6 +1477,13 @@
     if (!found.ok) return found;
     if (!found.account) return { ok: false, error: "no account" };
     const acc = found.account;
+    const banHit = checkBanIdentity({
+      name: sanitizeName(acc.username, true) || name,
+      user_id: acc.id,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+    if (banHit.banned) return banBlockResult(banHit);
     const expect = await hashPin(code, acc.pin_salt);
     if (expect !== acc.pin_hash) return { ok: false, error: "wrong pin" };
     setLastName(sanitizeName(acc.username, true) || name);
@@ -1581,12 +1961,20 @@
 
   async function upsertPresence() {
     if (!configured() || !presenceAvailable) return { ok: false };
+    const uname = presenceUsername();
+    const uid = presenceUserId();
+    const banHit = checkBanIdentity({
+      name: uname || "",
+      user_id: uid,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+    if (banHit.banned) return { ok: false, banned: true };
     const body = {
       client_id: getClientId(),
       last_seen: new Date().toISOString(),
-      username: presenceUsername(),
+      username: uname,
     };
-    const uid = presenceUserId();
     if (uid) body.user_id = uid;
     if (presenceHasMode) {
       body.mode = presenceActivity.mode || "menu";
@@ -1749,10 +2137,14 @@
   /* ---------- Island chat (global group) ---------- */
 
   function sanitizeChatBody(body) {
-    let s = String(body || "")
-      .replace(/[\u0000-\u001f\u007f]/g, "")
+    let s = stripInjectedMarkup(String(body || ""))
+      .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\ufeff]/g, "")
+      .replace(/[<>`]/g, "")
       .replace(/\s+/g, " ")
       .trim();
+    // Keep readable chat text; drop leftover control / bidi tricks.
+    s = s.replace(/[^\t\x20-\x7e\u00a0-\u024f\u1e00-\u1eff]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
     if (s.length > CHAT_BODY_MAX) s = s.slice(0, CHAT_BODY_MAX);
     return s;
   }
@@ -1893,6 +2285,16 @@
     if (!body || body.length < 1) return { ok: false, error: "empty" };
     const name = chatSenderName();
     if (!name) return { ok: false, error: "set name" };
+    const banHit = checkBanIdentity({
+      name,
+      user_id: presenceUserId(),
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+    if (banHit.banned) {
+      const block = banBlockResult(banHit);
+      return { ok: false, banned: true, error: "banned", message: block.error, until: block.until };
+    }
     const now = Date.now();
     if (now - lastChatSendAt < CHAT_RATE_MS) return { ok: false, error: "slow down" };
     const row = {
@@ -1978,6 +2380,7 @@
   Promise.resolve(initAuth())
     .catch(() => {})
     .then(() => {
+      startBanPoll();
       startPresence();
       startChatPoll();
     });
@@ -1999,6 +2402,8 @@
     formatNmValue,
     sanitizeName,
     sanitizePin,
+    stripInjectedMarkup,
+    escapeHtml,
     normalizeIdentityName,
     namesFuzzyMatch,
     matchIdentity,
@@ -2010,6 +2415,13 @@
     getCachedBoard,
     fetchTop,
     submitScore,
+    validateReplaySteps,
+    checkBanIdentity,
+    getBanStatus,
+    banUserMessage,
+    fetchBans,
+    getClientIp,
+    refreshClientIp,
     uploadReplay,
     fetchBestReplay,
     loadLocalReplay,

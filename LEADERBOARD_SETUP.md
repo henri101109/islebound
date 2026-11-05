@@ -8,7 +8,23 @@ Islebound posts and reads scores over Supabase REST. The game works without this
 2. Paste **everything** in [`SETUP_ALL.sql`](./SETUP_ALL.sql) → **Run**
 3. Hard-refresh https://henri101109.github.io/islebound/
 
-That one file covers scores, accounts, PRs, online presence, chat, replays (VID), and all speedrun categories.
+That one file covers scores, accounts, PRs, online presence, chat, replays (VID), bans, and all speedrun categories.
+
+## Bans (name / account / client_id / IP)
+
+`SETUP_ALL.sql` creates `public.player_bans` and seeds a **12-hour Matteus temp ban** (expires `2026-11-05 17:47:00+00`). The client also ships a matching hard-coded fallback so the ban applies on GitHub Pages even before you re-run SQL.
+
+After pasting `SETUP_ALL.sql`, optional IP ban once you know the address (Supabase **Logs → API** often shows request IPs):
+
+```sql
+insert into public.player_bans (ip, match_mode, expires_at, reason)
+values ('x.x.x.x', 'ip', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs');
+```
+
+Notes:
+- Browser anon clients cannot read the real TCP IP inside RLS. Name + `user_id` bans are enforced in SQL policies; IP bans are enforced by the client (ipify) against `player_bans.ip`.
+- True edge IP blocking needs a Supabase Edge Function that inspects `x-forwarded-for` / `cf-connecting-ip`.
+- Banned players see: *You're temporarily banned from online features.* (submit / chat / sign-in / presence blocked).
 
 ## Auth model (username + 4-digit PIN)
 

@@ -7887,9 +7887,11 @@
       markChatRead();
     } else {
       const err = (res && res.error) || "fail";
-      if (err === "set name") chatStatusNote = "SET NAME IN ACCOUNT";
+      if (res && res.banned) chatStatusNote = "TEMP BANNED";
+      else if (err === "set name") chatStatusNote = "SET NAME IN ACCOUNT";
       else if (err === "slow down") chatStatusNote = "WAIT…";
       else if (err === "setup" || (res && res.missing)) chatStatusNote = "RUN SETUP SQL";
+      else if (err === "banned") chatStatusNote = "TEMP BANNED";
       else chatStatusNote = String(err).toUpperCase().slice(0, 18);
     }
   }
@@ -9602,6 +9604,10 @@
         srPbPrev = res.pb.prev | 0;
         srPbLabel = res.pb.isFirst ? "FIRST PB" : res.pb.label;
       }
+    } else if (res.banned) {
+      srStatus = "TEMP BANNED";
+      srBoardNote = String(res.error || "You're temporarily banned from online features.").slice(0, 64);
+      srSubmitted = false;
     } else {
       srStatus = (res.error || "FAILED").toUpperCase().slice(0, 22);
       if (res.rows) srBoardRows = applyBoardIdentityMerge(res.rows, 10);
@@ -9676,14 +9682,15 @@
       }
       if (authMode === "signin") {
         res = await api.signIn(authUser, authPin);
-        authStatus = res.ok ? "SIGNED IN" : (res.error || "FAILED").toUpperCase().slice(0, 24);
         if (res.ok) {
+          authStatus = "SIGNED IN";
           srName = api.displayName() || authUser;
           guestNameLocked = true;
           authMode = "menu";
           srCursor = 0;
           authPin = "";
-        }
+        } else if (res.banned) authStatus = "TEMP BANNED";
+        else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
         res = await api.signUp(authUser, authPin);
         if (res.ok) {
@@ -9693,7 +9700,8 @@
           authMode = "menu";
           srCursor = 0;
           authPin = "";
-        } else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
+        } else if (res.banned) authStatus = "TEMP BANNED";
+        else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
     }
     authBusy = false;
