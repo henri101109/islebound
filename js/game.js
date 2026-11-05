@@ -184,6 +184,10 @@
   let cabinCanvas = null;
   let templeCanvas = null;
   let hubCanvas = null;
+  let templeWorldCanvas = null;
+  let templeWorldOX = 0;
+  let templeWorldOY = 0;
+  let mazeInfo = null;
   let shopDoor = null;
   let shopExit = null;
   let fishDoor = null;
@@ -375,11 +379,11 @@
       },
       {
         title: "ISLAND",
-        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "TEMPLE DEEP IN JUNGLE", "HUB IS ITS OWN MODE"],
+        lines: ["SHOP BUYS THE BOAT", "T TRADES NEAR NPC", "TEMPLE: WEST JUNGLE", "HUB IS A MENU MODE"],
       },
       {
         title: "TEMPLE",
-        lines: ["WALK FAR INLAND", "DENSE JUNGLE RING", "HUGE MAZE INSIDE", "JADE MASK AT END"],
+        lines: ["WEST OF THE DOCK", "DEEP INLAND, IN TREES", "HUGE MAZE, NO TRAPS", "JADE MASK AT THE END"],
       },
       {
         title: "GOALS",
@@ -419,7 +423,7 @@
       },
       {
         title: "HANGOUT",
-        lines: ["JUST WALK AND CHAT", "COSMETICS SHOW UP", "DOOR ALSO EXITS", "PICK HUB FROM MENU"],
+        lines: ["WALK, CHAT, LOOK AROUND", "COSMETICS SHOW UP", "DOOR OR ESC EXITS", "OPEN FROM THE MENU"],
       },
     ],
   };
@@ -2541,8 +2545,26 @@
     }
   }
 
+  function tryAutoEquipCosmetic(id) {
+    const kind = cosmeticKindOf(id);
+    if (!kind) return;
+    if (cosmetics[kind]) return;
+    // Pull the just-bagged stack onto the empty cosmetic slot
+    for (let i = 0; i < inventory.length; i++) {
+      const s = inventory[i];
+      if (!s || s.id !== id) continue;
+      s.count -= 1;
+      if (s.count <= 0) inventory[i] = null;
+      cosmetics[kind] = id;
+      cosTip = kind === "back" ? "CAPE ON" : "MASK ON";
+      cosTipT = 1.4;
+      return;
+    }
+  }
+
   function onItemCollected(id) {
     if (id === "sun_idol") noteDailyClaim(utcDayKey());
+    if (isCosmeticId(id)) tryAutoEquipCosmetic(id);
   }
 
   function promptText() {
@@ -6961,18 +6983,31 @@
   function drawCapePixels(sway, damp) {
     const id = cosmetics.back;
     if (!id) return;
-    const s = (sway * (damp == null ? 1 : damp)) | 0;
+    const d = damp == null ? 1 : damp;
+    const s = (sway * d) | 0;
+    const s2 = ((sway * 0.55 + Math.sin(time * 3.1) * 0.8) * d) | 0;
     if (id === "cape") {
-      px(-5 + s, -6, 3, 8, "#8a2020");
-      px(-6 + s, -5, 2, 9, "#c43a28");
-      px(-4 + s, -4, 2, 7, "#e04a32");
-      px(-5 + s, 2, 3, 1, "#5a1010");
-      px(-3 + s, -3, 1, 2, "#f0a060");
+      // Ember cape — hangs off the back, clearly past the body silhouette
+      px(-4, -7, 3, 2, "#c9a227");
+      px(-3, -8, 2, 1, "#e8c44a");
+      px(-8 + s, -6, 5, 3, "#8a2020");
+      px(-9 + s, -4, 5, 8, "#a82820");
+      px(-10 + s2, -2, 4, 8, "#c43a28");
+      px(-8 + s, -3, 4, 9, "#e04a32");
+      px(-7 + s, -5, 2, 3, "#f06040");
+      px(-6 + s, -4, 1, 2, "#f0a060");
+      px(-11 + s2, 5, 5, 2, "#6a1410");
+      px(-9 + s, 6, 4, 2, "#8a2020");
+      px(-10 + s2, 7, 3, 1, "#5a1010");
     } else if (id === "cloak") {
-      px(-5 + s, -6, 3, 9, "#1a2848");
-      px(-6 + s, -5, 2, 10, "#243860");
-      px(-4 + s, -4, 2, 8, "#3a5080");
-      px(-5 + s, 3, 3, 1, "#141c30");
+      px(-4, -7, 3, 2, "#3a5080");
+      px(-8 + s, -6, 5, 3, "#1a2848");
+      px(-9 + s, -4, 5, 9, "#1e3058");
+      px(-10 + s2, -2, 4, 9, "#243860");
+      px(-8 + s, -3, 4, 10, "#2a4470");
+      px(-7 + s, -5, 2, 3, "#3a5080");
+      px(-11 + s2, 6, 5, 2, "#101828");
+      px(-9 + s, 7, 4, 1, "#141c30");
     }
   }
 
@@ -7035,6 +7070,15 @@
     px(3, -5, 2, 4, vest);
     px(-5, -2, 2, 2, "#e8c39a");
     px(3, -2, 2, 2, "#e8c39a");
+    // Cape clasp on top of shoulders so the wear reads clearly
+    if (cosmetics.back === "cape") {
+      px(-4, -7, 3, 2, "#c9a227");
+      px(-3, -8, 2, 1, "#e8c44a");
+      px(-5, -6, 2, 2, "#8a2020");
+    } else if (cosmetics.back === "cloak") {
+      px(-4, -7, 3, 2, "#3a5080");
+      px(-5, -6, 2, 2, "#1a2848");
+    }
     if (player.aboard) {
       px(-3, 1, 2, 1, "#2a4a78");
       px(0, 1, 2, 1, "#2a4a78");
@@ -9233,11 +9277,17 @@
     ink.translate(sx + 4, sy + 13);
     ink.scale(face || 1, 1);
     if (backId === "cape") {
-      px(-5, -6, 3, 8, "#8a2020");
-      px(-6, -5, 2, 9, "#c43a28");
+      px(-4, -7, 3, 2, "#c9a227");
+      px(-8, -6, 5, 3, "#8a2020");
+      px(-9, -4, 5, 8, "#c43a28");
+      px(-8, -3, 4, 9, "#e04a32");
+      px(-10, 5, 5, 2, "#6a1410");
     } else if (backId === "cloak") {
-      px(-5, -6, 3, 9, "#1a2848");
-      px(-6, -5, 2, 10, "#243860");
+      px(-4, -7, 3, 2, "#3a5080");
+      px(-8, -6, 5, 3, "#1a2848");
+      px(-9, -4, 5, 9, "#243860");
+      px(-8, -3, 4, 10, "#2a4470");
+      px(-10, 6, 5, 2, "#101828");
     }
     px(-3, -13, 6, 2, "#c43a28");
     px(-2, -11, 5, 5, "#e8c39a");
@@ -9385,12 +9435,15 @@
       "ENTER DROPS OR EQUIPS COSMETIC",
       "SPACE USES HELD ITEM",
       "CLOAK SPACE = STEALTH",
-      "TEMPLE DEEP IN THE JUNGLE",
-      "HUGE MAZE — NO TRAPS",
-      "JADE MASK ON THE PEDESTAL",
-      "DAILY SUN IDOL NEAR PATH",
-      "HUB MODE = SHARED PLAZA",
-      "HUB: E EMOTE  ESC LEAVES",
+      "TEMPLE IS DEEP WEST JUNGLE",
+      "WALK INLAND, NOT THE BEACH",
+      "HUGE MAZE WITH NO TRAPS",
+      "JADE MASK AT THE FAR END",
+      "GOLD EXIT LEAVES THE TEMPLE",
+      "DAILY SUN IDOL NEAR TEMPLE",
+      "HUB IS A TITLE-SCREEN MODE",
+      "OPEN HANGOUT PLAZA",
+      "HUB: TAB CHAT, E EMOTE, ESC",
       "SHELL BLOWS THE HORN",
       "FAR HORN WAKES SERPENT",
       "WAND HITS BREACHING SERPENT",
