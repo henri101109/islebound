@@ -708,14 +708,28 @@
     }
   }
 
-  async function fetchBestReplay(category) {
+  function replayFromRow(row) {
+    if (!row || !Array.isArray(row.frames) || !row.frames.length) return null;
+    return {
+      v: 1,
+      run_id: row.run_id,
+      category: row.category,
+      time_ms: row.time_ms | 0,
+      player_name: row.player_name,
+      frames: row.frames,
+    };
+  }
+
+  /** Fetch replay for category #1. prefer = { run_id, time_ms, player_name } from board row. */
+  async function fetchBestReplay(category, prefer) {
     const id = CATEGORIES[category] ? category : null;
     if (!id) return { ok: false, replay: null };
+    const want = prefer || {};
     const local = loadLocalReplay(id);
     if (!configured()) {
       return { ok: !!local, replay: local, offline: true };
     }
-    try {
+    async function query(extra) {
       const url =
         restBase() +
         "/" +
@@ -723,28 +737,40 @@
         "?category=eq." +
         encodeURIComponent(id) +
         "&select=run_id,category,time_ms,player_name,frames,created_at" +
-        "&order=time_ms.asc" +
-        "&limit=1";
+        (extra || "") +
+        "&order=time_ms.asc&limit=1";
       const res = await fetch(url, { headers: anonHeaders() });
-      if (!res.ok) {
-        return { ok: !!local, replay: local, error: "http " + res.status };
-      }
+      if (!res.ok) return null;
       const data = await res.json();
-      const row = Array.isArray(data) && data[0] ? data[0] : null;
-      if (!row || !Array.isArray(row.frames) || !row.frames.length) {
-        return { ok: !!local, replay: local };
+      return Array.isArray(data) && data[0] ? data[0] : null;
+    }
+    try {
+      let row = null;
+      if (want.run_id) {
+        row = await query("&run_id=eq." + encodeURIComponent(want.run_id));
       }
-      const replay = {
-        v: 1,
-        run_id: row.run_id,
-        category: row.category,
-        time_ms: row.time_ms | 0,
-        player_name: row.player_name,
-        frames: row.frames,
-      };
-      // Prefer online #1; keep local if somehow faster and different.
-      if (local && (local.time_ms | 0) < (replay.time_ms | 0)) {
-        return { ok: true, replay: local, source: "local-better" };
+      if (!row && want.time_ms != null && want.player_name) {
+        row = await query(
+          "&time_ms=eq." +
+            (want.time_ms | 0) +
+            "&player_name=eq." +
+            encodeURIComponent(String(want.player_name).toUpperCase())
+        );
+      }
+      if (!row) row = await query("");
+      const replay = replayFromRow(row);
+      if (!replay) {
+        // Fall back to local only if it matches the #1 identity when known.
+        if (
+          local &&
+          (!want.time_ms || (local.time_ms | 0) === (want.time_ms | 0)) &&
+          (!want.player_name ||
+            namesFuzzyMatch(local.player_name, want.player_name) ||
+            String(local.player_name).toUpperCase() === String(want.player_name).toUpperCase())
+        ) {
+          return { ok: true, replay: local, source: "local" };
+        }
+        return { ok: !!local, replay: local };
       }
       saveLocalReplay(id, replay);
       return { ok: true, replay, source: "online" };

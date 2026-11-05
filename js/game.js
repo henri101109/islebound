@@ -8968,7 +8968,14 @@
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
     if (api.fetchBestReplay) {
       try {
-        const rr = await api.fetchBestReplay(id);
+        const top = srBoardRows && srBoardRows[0] ? srBoardRows[0] : null;
+        const rr = await api.fetchBestReplay(id, top
+          ? {
+              run_id: top.run_id || null,
+              time_ms: top.time_ms | 0,
+              player_name: top.player_name || "",
+            }
+          : null);
         if (rr && rr.replay && rr.replay.frames && rr.replay.frames.length) srBestReplay = rr.replay;
       } catch (e) {}
     }

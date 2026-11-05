@@ -2,6 +2,14 @@
 
 Islebound posts and reads scores over Supabase REST. The game works without this — speedrun mode still runs locally — but live boards / accounts stay empty until you configure a project and run the SQL below.
 
+## Easiest path (do this)
+
+1. Open Supabase → **SQL Editor**
+2. Paste **everything** in [`SETUP_ALL.sql`](./SETUP_ALL.sql) → **Run**
+3. Hard-refresh https://henri101109.github.io/islebound/
+
+That one file covers scores, accounts, PRs, online presence, chat, replays (VID), and all speedrun categories.
+
 ## Auth model (username + 4-digit PIN)
 
 Accounts do **not** use Supabase Auth email/password/magic-link.
