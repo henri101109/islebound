@@ -4399,6 +4399,12 @@
     if (!boatNearBerth(b, 22)) b.docked = false;
   }
 
+  function releaseBoatFromBerth(b, cool) {
+    if (!b) return;
+    b.docked = false;
+    b.berthIgnore = Math.max(b.berthIgnore || 0, cool == null ? 1.35 : cool);
+  }
+
   /** Standable spot on the T-head just north of the slip. */
   function berthStandSpot() {
     if (!boatBerth) return null;
@@ -4432,42 +4438,52 @@
     return true;
   }
 
-  /** Soft magnet into the finger-tip slip when close and slow; WASD shoves off. */
+  /**
+   * Soft magnet into the slip only when approaching and not shoving off.
+   * After releaseBoatFromBerth, berthIgnore blocks re-attach until you leave / cool down.
+   */
   function updateBoatBerthSnap(dt, dx, dy) {
     const b = ownedBoat;
     if (!b || !boatBerth || boatThrow || !b.landed) return;
+    if (b.berthIgnore > 0) b.berthIgnore = Math.max(0, b.berthIgnore - dt);
     clearBerthIfAway(b);
     const moving = dx !== 0 || dy !== 0;
     if (b.docked) {
       if (moving) {
-        b.docked = false;
+        releaseBoatFromBerth(b, 1.5);
         return;
       }
       settleBoatInBerth(b);
       return;
     }
-    if (!boatNearBerth(b, 32)) return;
+    if (b.berthIgnore > 0) return;
+    if (!boatNearBerth(b, 28)) return;
     const tx = boatBerth.x;
     const ty = boatBerth.y;
     const ox = tx - b.x;
     const oy = ty - b.y;
-    const dist = Math.hypot(ox, oy);
+    const dist = Math.hypot(ox, oy) || 0.001;
     const spd = Math.hypot(b.vx || 0, b.vy || 0);
-    // Shoving hard away from the slip cancels the magnet.
+    // Any shove away from the slip cancels the magnet (no speed gate).
     if (moving) {
-      const away = ox * dx + oy * dy;
-      if (away < -0.2 && spd > 18) return;
+      const toward = (ox * dx + oy * dy) / (dist * (Math.hypot(dx, dy) || 1));
+      if (toward < 0.15) return;
     }
-    if (spd > 55 && dist > 10) return;
-    const pull = Math.min(1, dt * (moving ? 2.8 : 5.2));
+    // Coasting out after a shove — do not yank back.
+    if (!moving && spd > 12) {
+      const vToward = (ox * (b.vx || 0) + oy * (b.vy || 0)) / dist;
+      if (vToward < 0) return;
+    }
+    if (spd > 48) return;
+    const pull = Math.min(1, dt * (moving ? 2.2 : 4.2));
     const nx = b.x + ox * pull;
     const ny = b.y + oy * pull;
     if (boatHullOk(nx, b.y, b.w, b.h)) b.x = nx;
     if (boatHullOk(b.x, ny, b.w, b.h)) b.y = ny;
-    b.vx = (b.vx || 0) * (1 - Math.min(1, dt * 6));
-    b.vy = (b.vy || 0) * (1 - Math.min(1, dt * 6));
+    b.vx = (b.vx || 0) * (1 - Math.min(1, dt * 5));
+    b.vy = (b.vy || 0) * (1 - Math.min(1, dt * 5));
     b.tilt *= 1 - Math.min(1, dt * 8);
-    if (dist < 2.4 && Math.hypot(b.vx || 0, b.vy || 0) < 14) settleBoatInBerth(b);
+    if (dist < 2.2 && Math.hypot(b.vx || 0, b.vy || 0) < 10 && !moving) settleBoatInBerth(b);
   }
 
   function seatPlayerOnBoat() {
@@ -4510,12 +4526,12 @@
     if (b.docked && moving) {
       // Push toward the T-head → hop off and leave the skiff docked.
       if (dy < 0 && tryStepOffAtBerth()) return;
-      b.docked = false;
+      releaseBoatFromBerth(b, 1.5);
     }
     const len = Math.hypot(dx, dy) || 1;
     const acc = 140;
     if (moving) {
-      if (b.docked) b.docked = false;
+      if (b.docked) releaseBoatFromBerth(b, 1.5);
       b.vx = (b.vx || 0) + (dx / len) * acc * dt;
       b.vy = (b.vy || 0) + (dy / len) * acc * dt;
       if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
