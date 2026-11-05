@@ -30,22 +30,22 @@
     "MATTEUS OWENS": "MATTEUS O",
   };
 
-  // floorMs = cheat floor (impossible-or-near under normal rules).
-  // Fishing cats include the hard 15s cast wait; keep below known legit WRs.
+  // floorMs = absolute minimum under normal rules (boat + sail + 15s cast, etc.).
+  // ~15.7s fish times are cheated (cast alone is 15s; boat/sail still required).
   const CATEGORIES = {
-    shark: { id: "shark", label: "SHARK%", floorMs: 15000 },
-    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 15000 },
-    chest: { id: "chest", label: "CHEST%", floorMs: 15000 },
+    shark: { id: "shark", label: "SHARK%", floorMs: 28000 },
+    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 28000 },
+    chest: { id: "chest", label: "CHEST%", floorMs: 28000 },
     death: { id: "death", label: "DEATH%", floorMs: 800 },
-    boat: { id: "boat", label: "BOAT%", floorMs: 3000 },
-    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 2000 },
-    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 16000 },
-    serpent: { id: "serpent", label: "SERPENT%", floorMs: 18000 },
-    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 15000 },
-    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 15000 },
-    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 2000 },
-    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
-    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
+    boat: { id: "boat", label: "BOAT%", floorMs: 4000 },
+    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 4000 },
+    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 45000 },
+    serpent: { id: "serpent", label: "SERPENT%", floorMs: 40000 },
+    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 28000 },
+    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 28000 },
+    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 2500 },
+    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 6000 },
+    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 20000 },
   };
 
   const NM_BOARD_DEFS = {
@@ -800,6 +800,19 @@
       };
     }
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
+    // Replay must exist and its last sample must match the submitted clock
+    // (stops posting a fake 15s time with a forged payload).
+    const frames = options.replay && options.replay.frames;
+    if (!frames || !frames.length) {
+      return { ok: false, error: "replay required", cheated: true };
+    }
+    const lastT = frames[frames.length - 1][0] | 0;
+    if (lastT < (def.floorMs | 0)) {
+      return { ok: false, error: "cheat? short replay", cheated: true };
+    }
+    if (Math.abs(lastT - ms) > 2000) {
+      return { ok: false, error: "cheat? time mismatch", cheated: true };
+    }
     setLastName(name);
     if (!configured()) {
       if (options.replay && options.replay.frames) {
