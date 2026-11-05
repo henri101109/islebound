@@ -656,7 +656,7 @@
     const name = resolved.name || sanitizeName(playerName);
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
     const ms = timeMs | 0;
-    if (ms < def.floorMs) return { ok: false, error: "time too low" };
+    if (ms < 0) return { ok: false, error: "bad time" };
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     setLastName(name);
     if (!configured()) {
