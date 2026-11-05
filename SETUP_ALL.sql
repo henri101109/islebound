@@ -376,3 +376,21 @@ create policy "Insert own daily_claims" on public.daily_claims
 drop policy if exists "Update own daily_claims" on public.daily_claims;
 create policy "Update own daily_claims" on public.daily_claims
   for update to anon, authenticated using (true) with check (true);
+
+create table if not exists public.weekly_spins (
+  user_id uuid not null,
+  period_key text not null check (char_length(period_key) between 8 and 16),
+  spins_used integer not null default 0 check (spins_used >= 0 and spins_used <= 3),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, period_key)
+);
+alter table public.weekly_spins enable row level security;
+drop policy if exists "Public read weekly_spins" on public.weekly_spins;
+create policy "Public read weekly_spins" on public.weekly_spins
+  for select to anon, authenticated using (true);
+drop policy if exists "Insert own weekly_spins" on public.weekly_spins;
+create policy "Insert own weekly_spins" on public.weekly_spins
+  for insert to anon, authenticated with check (true);
+drop policy if exists "Update own weekly_spins" on public.weekly_spins;
+create policy "Update own weekly_spins" on public.weekly_spins
+  for update to anon, authenticated using (true) with check (true);

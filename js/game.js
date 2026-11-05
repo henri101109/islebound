@@ -49,6 +49,9 @@
     wand: { name: "Wand", max: 1, xp: 0 },
     cloak: { name: "Cloak", max: 1, xp: 0, cosmetic: "back" },
     jade_mask: { name: "Jade Mask", max: 1, xp: 20, cosmetic: "face" },
+    straw_hat: { name: "Straw Hat", max: 1, xp: 0, cosmetic: "face" },
+    crown: { name: "Crown", max: 1, xp: 0, cosmetic: "face" },
+    beta_crown: { name: "Beta Crown", max: 1, xp: 0, cosmetic: "face" },
     cape: { name: "Ember Cape", max: 1, xp: 12, cosmetic: "back" },
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
@@ -115,6 +118,9 @@
   const world = [];
   const loot = [];
   const inventory = [null, null, null, null, null, null, null, null];
+  const satchel = [null, null, null, null, null, null, null, null];
+  let satchelOpen = false;
+  let slotDrag = null;
   const DOCK_C = 150;
   const RIVER_X0 = DOCK_C * TILE - 300;
   let riverSpans = [];
@@ -383,7 +389,22 @@
   let nmBoardRows = [];
   let nmBoardNote = "";
   let nmCursor = 0;
-  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS"];
+  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS", "SPIN"];
+  const WEEKLY_SPIN = {
+    firstEndMs: Date.UTC(2026, 10, 11, 23, 59, 59),
+    weekMs: 7 * 24 * 60 * 60 * 1000,
+    cost: 50,
+    spins: 3,
+    prizes: [
+      { id: "straw_hat", label: "STRAW HAT", p: 0.5 },
+      { id: "crown", label: "CROWN", p: 0.3 },
+      { id: "beta_crown", label: "BETA CROWN", p: 0.2 },
+    ],
+  };
+  let spinCursor = 0;
+  let spinNote = "";
+  let spinUsed = 0;
+  let spinPeriodKey = "";
   const MODE_WALK = ["SURVIVAL", "SPEEDRUN", "HUB"];
   /** Title-screen cursor across play modes + walkthroughs. */
   let modeOpts = MODE_PLAY.concat(MODE_WALK);
@@ -401,7 +422,7 @@
       },
       {
         title: "ITEMS",
-        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "9 FACE  0 BACK", "ENTER DROPS OR EQUIPS"],
+        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "9 FACE  0 BACK", "E OPENS THE SATCHEL"],
       },
       {
         title: "COSMETICS",
@@ -446,8 +467,8 @@
         lines: ["MASK% JADE MASK", "TEMPLE MAZE, FAR END", "TOUCH THE PEDESTAL", "BAG SPACE NOT NEEDED"],
       },
       {
-        title: "DIVE",
-        lines: ["SHIP EAST OF THE DOCK", "LEVER DIVES ALONE", "HOLD WAND FOR A BUBBLE", "CHEST ON THE TOP DECK"],
+        title: "SHIP",
+        lines: ["METAL HULL OFFSHORE", "EAST OF THE DOCK", "IT ONLY BOBS", "YOU CANNOT BOARD"],
       },
       {
         title: "SUBMIT",
@@ -1109,6 +1130,46 @@
     if (hitPad(px, py, walkPads)) return false;
     if (inRiverWater(px, py)) return true;
     return !onIslandLand(px, py);
+  }
+
+  function subHullPad() {
+    if (!subHull) return null;
+    return { x: subHull.x - 2, y: subHull.y - 4, w: subHull.w + 4, h: subHull.h + 8 };
+  }
+
+  /** Feet on a dock/boat walk pad or on dry island. The offshore hull pad does not count. */
+  function dryFooting(x, y) {
+    const fx = x + 4;
+    const fy = y + player.h - 2;
+    const hull = subHullPad();
+    if (hitPad(fx, fy, walkPads)) {
+      if (hull && hitPad(fx, fy, [hull])) return false;
+      return true;
+    }
+    if (inRiverWater(fx, fy)) return false;
+    if (fy > restShoreY(x + 3) || fy > restShoreY(x + player.w - 3)) return false;
+    return onIslandLand(fx, fy);
+  }
+
+  function placeAtDock() {
+    scene = "island";
+    player.aboard = false;
+    player.inWater = false;
+    player.submerged = 0;
+    player.x = spawnX;
+    player.y = spawnY;
+    divePhase = "docked";
+  }
+
+  function rescueOffshoreSpawn() {
+    if (scene === "sub" || scene === "floor" || scene === "wreck") {
+      placeAtDock();
+      return;
+    }
+    if (scene !== "island") return;
+    if (player.aboard && ownedBoat) return;
+    if (dryFooting(player.x, player.y)) return;
+    placeAtDock();
   }
 
   function sandWidth(c) {
@@ -2475,6 +2536,314 @@
     return empty > inflightFreshSlots();
   }
 
+  function clearSatchel() {
+    for (let i = 0; i < satchel.length; i++) satchel[i] = null;
+    satchelOpen = false;
+    slotDrag = null;
+  }
+
+  function satchelHolding() {
+    for (let i = 0; i < satchel.length; i++) if (satchel[i] && satchel[i].id) return true;
+    return false;
+  }
+
+  function inflightSatchel(id) {
+    let n = 0;
+    for (let i = 0; i < pickupAnims.length; i++) {
+      if (pickupAnims[i].dest === "satchel" && pickupAnims[i].id === id) n++;
+    }
+    return n;
+  }
+
+  function canTakeList(list, id, pending) {
+    const def = ITEM_DEFS[id];
+    if (!def) return false;
+    const stack = list.find((s) => s && s.id === id);
+    const wait = pending | 0;
+    if (stack) return stack.count + wait < def.max;
+    if (wait > 0) return wait < def.max;
+    for (let i = 0; i < list.length; i++) if (!list[i]) return true;
+    return false;
+  }
+
+  function canTakeSatchel(id) {
+    if (playMode !== "normal" || id === "coin") return false;
+    return canTakeList(satchel, id, inflightSatchel(id));
+  }
+
+  function addToList(list, id) {
+    const def = ITEM_DEFS[id];
+    if (!def) return false;
+    const existing = list.findIndex((s) => s && s.id === id);
+    if (existing >= 0) {
+      if (list[existing].count >= def.max) return false;
+      list[existing].count += 1;
+      return true;
+    }
+    const empty = list.findIndex((s) => !s);
+    if (empty < 0) return false;
+    list[empty] = { id, count: 1 };
+    return true;
+  }
+
+  function addToSatchel(id) {
+    if (playMode !== "normal") return false;
+    return addToList(satchel, id);
+  }
+
+  function satchelSlotFor(id) {
+    const i = satchel.findIndex((s) => s && s.id === id);
+    if (i >= 0) return i;
+    for (let a = 0; a < pickupAnims.length; a++) {
+      if (pickupAnims[a].dest === "satchel" && pickupAnims[a].id === id) return pickupAnims[a].slot;
+    }
+    const used = Object.create(null);
+    for (let a = 0; a < pickupAnims.length; a++) {
+      const p = pickupAnims[a];
+      if (p.dest === "satchel") used[p.slot] = 1;
+    }
+    for (let s = 0; s < satchel.length; s++) {
+      if (!satchel[s] && !used[s]) return s;
+    }
+    return 0;
+  }
+
+  function listOwns(list, id) {
+    for (let i = 0; i < list.length; i++) if (list[i] && list[i].id === id) return true;
+    return false;
+  }
+
+  function moveStack(src, si, dst, di) {
+    if (src === dst && si === di) return;
+    const a = src[si];
+    if (!a) return;
+    const b = dst[di];
+    if (!b) {
+      dst[di] = a;
+      src[si] = null;
+      return;
+    }
+    if (b.id === a.id) {
+      const max = ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].max : 1;
+      const room = max - b.count;
+      if (room <= 0) return;
+      const n = Math.min(room, a.count);
+      b.count += n;
+      a.count -= n;
+      if (a.count <= 0) src[si] = null;
+      return;
+    }
+    src[si] = b;
+    dst[di] = a;
+  }
+
+  function satchelOrigin() {
+    const h = hudBarOrigin();
+    const cosGap = 6;
+    const cosW = h.slot + cosGap + 2;
+    let x = h.x0 - cosW - h.barW - 8;
+    if (x < 4) x = 4;
+    return { x, y: h.y0, slot: h.slot, gap: h.gap, rowGap: h.rowGap, barW: h.barW };
+  }
+
+  function bagSlotRect(i) {
+    const h = hudBarOrigin();
+    const col = i % HUD_COLS;
+    const row = (i / HUD_COLS) | 0;
+    return {
+      x: h.x0 + col * (h.slot + h.gap),
+      y: h.y0 + row * (h.slot + h.rowGap),
+      w: h.slot,
+      h: h.slot,
+    };
+  }
+
+  function satchelSlotRect(i) {
+    const o = satchelOrigin();
+    const col = i % HUD_COLS;
+    const row = (i / HUD_COLS) | 0;
+    return {
+      x: o.x + col * (o.slot + o.gap),
+      y: o.y + row * (o.slot + o.rowGap),
+      w: o.slot,
+      h: o.slot,
+    };
+  }
+
+  function slotAtUi(ux, uy) {
+    if (satchelOpen) {
+      for (let i = 0; i < satchel.length; i++) {
+        const r = satchelSlotRect(i);
+        if (ux >= r.x && uy >= r.y && ux < r.x + r.w && uy < r.y + r.h) return { src: "satchel", index: i };
+      }
+    }
+    for (let i = 0; i < inventory.length; i++) {
+      const r = bagSlotRect(i);
+      if (ux >= r.x && uy >= r.y && ux < r.x + r.w && uy < r.y + r.h) return { src: "bag", index: i };
+    }
+    return null;
+  }
+
+  function stackArray(src) {
+    return src === "satchel" ? satchel : inventory;
+  }
+
+  function finishSlotDrag(ux, uy) {
+    const drag = slotDrag;
+    slotDrag = null;
+    if (!drag || playMode !== "normal" || !satchelOpen) return;
+    const hit = slotAtUi(ux, uy);
+    if (!hit) return;
+    moveStack(stackArray(drag.src), drag.index, stackArray(hit.src), hit.index);
+  }
+
+  function weeklySpinPeriod(now) {
+    const t = now == null ? Date.now() : now;
+    const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    if (t <= WEEKLY_SPIN.firstEndMs) return { key: "2026-11-11", label: "UNTIL NOV 11" };
+    const start = Date.UTC(2026, 10, 12);
+    const week = Math.floor((t - start) / WEEKLY_SPIN.weekMs);
+    const end = new Date(start + (week + 1) * WEEKLY_SPIN.weekMs - 1000);
+    const key = end.toISOString().slice(0, 10);
+    return { key: key, label: "UNTIL " + months[end.getUTCMonth()] + " " + end.getUTCDate() };
+  }
+
+  function readSurvivalSave() {
+    try {
+      const data = JSON.parse(localStorage.getItem(SAVE_KEY) || "");
+      if (!data || typeof data !== "object") return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function ensureSaveSlots(list) {
+    const out = [];
+    const src = Array.isArray(list) ? list : [];
+    for (let i = 0; i < MAX_SLOTS; i++) {
+      const s = src[i];
+      out.push(s && s.id && ITEM_DEFS[s.id] ? { id: s.id, count: Math.max(1, s.count | 0) } : null);
+    }
+    return out;
+  }
+
+  function survivalOwnsId(data, id) {
+    if (data.cosmetics && data.cosmetics.face === id) return true;
+    if (data.cosmetics && data.cosmetics.back === id) return true;
+    const slots = data.slots || [];
+    const bag = data.satchel || [];
+    for (let i = 0; i < slots.length; i++) if (slots[i] && slots[i].id === id) return true;
+    for (let i = 0; i < bag.length; i++) if (bag[i] && bag[i].id === id) return true;
+    return false;
+  }
+
+  function survivalGiveId(data, id) {
+    data.slots = ensureSaveSlots(data.slots);
+    data.satchel = ensureSaveSlots(data.satchel);
+    if (addToList(data.slots, id)) return true;
+    if (addToList(data.satchel, id)) return true;
+    return false;
+  }
+
+  function survivalCoinCount() {
+    if (playMode === "normal") return player.coins | 0;
+    const data = readSurvivalSave();
+    return data ? Math.max(0, data.coins | 0) : 0;
+  }
+
+  function applySurvivalMemory(data) {
+    if (playMode !== "normal") return;
+    player.coins = Math.max(0, data.coins | 0);
+    const slots = ensureSaveSlots(data.slots);
+    const bag = ensureSaveSlots(data.satchel);
+    for (let i = 0; i < MAX_SLOTS; i++) {
+      inventory[i] = slots[i] ? { id: slots[i].id, count: slots[i].count } : null;
+      satchel[i] = bag[i] ? { id: bag[i].id, count: bag[i].count } : null;
+    }
+    if (data.cosmetics) {
+      cosmetics.face = data.cosmetics.face && ITEM_DEFS[data.cosmetics.face] ? data.cosmetics.face : null;
+      cosmetics.back = data.cosmetics.back && ITEM_DEFS[data.cosmetics.back] ? data.cosmetics.back : null;
+    }
+  }
+
+  function openSpinMenu() {
+    const period = weeklySpinPeriod();
+    uiScreen = "spin";
+    spinCursor = 0;
+    spinNote = "";
+    spinPeriodKey = period.key;
+    spinUsed = 0;
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) {
+      spinNote = "SIGN IN";
+      return;
+    }
+    if (api.getWeeklySpinsLocal) spinUsed = api.getWeeklySpinsLocal(period.key) | 0;
+    if (!api.getWeeklySpins) return;
+    api.getWeeklySpins(period.key).then((res) => {
+      if (uiScreen !== "spin" || spinPeriodKey !== period.key) return;
+      spinUsed = res && typeof res.used === "number" ? Math.max(0, Math.min(WEEKLY_SPIN.spins, res.used | 0)) : 0;
+    });
+  }
+
+  function rollWeeklyPrize() {
+    let r = Math.random();
+    for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) {
+      const p = WEEKLY_SPIN.prizes[i];
+      if (r < p.p) return p;
+      r -= p.p;
+    }
+    return WEEKLY_SPIN.prizes[WEEKLY_SPIN.prizes.length - 1];
+  }
+
+  function tryWeeklySpin() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) {
+      spinNote = "SIGN IN";
+      uiScreen = "account";
+      authMode = "menu";
+      authStatus = "";
+      srCursor = 0;
+      return;
+    }
+    const period = weeklySpinPeriod();
+    spinPeriodKey = period.key;
+    if (spinUsed >= WEEKLY_SPIN.spins) {
+      spinNote = "NEXT WEEK";
+      return;
+    }
+    const data = readSurvivalSave() || { slots: [], satchel: [], coins: 0, cosmetics: { face: null, back: null } };
+    if (playMode === "normal") {
+      data.coins = player.coins | 0;
+      data.slots = inventory.map((s) => (s && s.id ? { id: s.id, count: s.count | 0 } : null));
+      data.satchel = satchel.map((s) => (s && s.id ? { id: s.id, count: s.count | 0 } : null));
+      data.cosmetics = { face: cosmetics.face, back: cosmetics.back };
+    }
+    data.slots = ensureSaveSlots(data.slots);
+    data.satchel = ensureSaveSlots(data.satchel);
+    if (!data.cosmetics) data.cosmetics = { face: null, back: null };
+    const coins = Math.max(0, data.coins | 0);
+    if (coins < WEEKLY_SPIN.cost) {
+      spinNote = "NEED 50";
+      return;
+    }
+    const prize = rollWeeklyPrize();
+    const owned = survivalOwnsId(data, prize.id);
+    if (!owned && !survivalGiveId(data, prize.id)) {
+      spinNote = "BAG FULL";
+      return;
+    }
+    data.coins = coins - WEEKLY_SPIN.cost;
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    } catch (e) {}
+    applySurvivalMemory(data);
+    spinUsed = Math.min(WEEKLY_SPIN.spins, spinUsed + 1);
+    spinNote = owned ? "OWNED" : prize.label;
+    if (api.recordWeeklySpin) api.recordWeeklySpin(period.key, spinUsed);
+  }
+
   function slotIndexFor(id) {
     const i = inventory.findIndex((s) => s && s.id === id);
     if (i >= 0) return i;
@@ -2536,7 +2905,8 @@
   function pickup(item) {
     if (!item || item.taken || player.dead > 0) return;
     const isCoin = item.id === "coin";
-    if (!isCoin && !canTake(item.id)) return;
+    const toSatchel = !isCoin && !canTake(item.id) && canTakeSatchel(item.id);
+    if (!isCoin && !canTake(item.id) && !toSatchel) return;
     const id = item.id;
     const from = worldToUi(item.x + 6, item.y + 6);
     pickupAnims.push({
@@ -2544,8 +2914,8 @@
       t: 0,
       fromX: from.x,
       fromY: from.y,
-      slot: isCoin ? 0 : slotIndexFor(id),
-      dest: isCoin ? "coins" : "slot",
+      slot: isCoin ? 0 : toSatchel ? satchelSlotFor(id) : slotIndexFor(id),
+      dest: isCoin ? "coins" : toSatchel ? "satchel" : "slot",
       value: item.value | 0,
       pack: item.pack || 0,
     });
@@ -2563,7 +2933,7 @@
       if (item.drift) continue;
       if (item.ignoreUntil && time < item.ignoreUntil) continue;
       if (Math.hypot(item.x + 4 - mid.x, item.y + 4 - mid.y) >= rad) continue;
-      if (item.id !== "coin" && !canTake(item.id)) continue;
+      if (item.id !== "coin" && !canTake(item.id) && !canTakeSatchel(item.id)) continue;
       pickup(item);
     }
   }
@@ -2578,7 +2948,10 @@
       const doneAt = a.style === "drop" ? 1.42 : 1.7;
       if (a.t < doneAt) continue;
       if (a.dest === "coins") coinBatch += a.value | 0;
-      else if (a.dest !== "miss") {
+      else if (a.dest === "satchel") {
+        if (addToSatchel(a.id)) onItemCollected(a.id);
+        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
+      } else if (a.dest !== "miss") {
         addToInventory(a.id);
         onItemCollected(a.id);
         xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
@@ -2608,22 +2981,26 @@
     }
   }
 
+  function takeOneFrom(list, id) {
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      if (!s || s.id !== id) continue;
+      s.count -= 1;
+      if (s.count <= 0) list[i] = null;
+      return true;
+    }
+    return false;
+  }
+
   function tryAutoEquipCosmetic(id) {
     const kind = cosmeticKindOf(id);
     if (!kind) return;
     if (cosmetics[kind]) return;
-    // Pull the just-bagged stack onto the empty cosmetic slot
-    for (let i = 0; i < inventory.length; i++) {
-      const s = inventory[i];
-      if (!s || s.id !== id) continue;
-      s.count -= 1;
-      if (s.count <= 0) inventory[i] = null;
-      cosmetics[kind] = id;
-      cosTip = kind === "back" ? "CAPE ON" : "MASK ON";
-      cosTipT = 1.4;
-      if (id === "jade_mask") startJadeMaskFx();
-      return;
-    }
+    if (!takeOneFrom(inventory, id) && !takeOneFrom(satchel, id)) return;
+    cosmetics[kind] = id;
+    cosTip = kind === "back" ? "CAPE ON" : "MASK ON";
+    cosTipT = 1.4;
+    if (id === "jade_mask") startJadeMaskFx();
   }
 
   function onItemCollected(id) {
@@ -2646,7 +3023,7 @@
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
     if (!nearestLoot || nearestLoot.id === "coin") return "";
     const def = ITEM_DEFS[nearestLoot.id];
-    if (!def || canTake(nearestLoot.id)) return "";
+    if (!def || canTake(nearestLoot.id) || canTakeSatchel(nearestLoot.id)) return "";
     return `CAN'T HOLD MORE ${def.name}`;
   }
 
@@ -4062,12 +4439,14 @@
     if (!id || !ITEM_DEFS[id]) return false;
     const existing = inventory.findIndex((s) => s && s.id === id);
     if (existing >= 0) {
-      if (inventory[existing].count >= ITEM_DEFS[id].max) return false;
+      if (inventory[existing].count >= ITEM_DEFS[id].max) {
+        return playMode === "normal" ? addToSatchel(id) : false;
+      }
       inventory[existing].count += 1;
       return true;
     }
     const empty = inventory.findIndex((s) => !s);
-    if (empty < 0) return false;
+    if (empty < 0) return playMode === "normal" ? addToSatchel(id) : false;
     inventory[empty] = { id, count: 1 };
     return true;
   }
@@ -6329,6 +6708,7 @@
   }
 
   function updateDive(dt) {
+    return;
     if (diveTipT > 0) diveTipT = Math.max(0, diveTipT - dt);
     const onLever = scene === "sub" && playerFeetOn(subLever);
     const leverLocked = fadeMode || player.dead > 0 || diveTransit();
@@ -6464,6 +6844,7 @@
   }
 
   function drawAirBubble(cpos) {
+    return;
     if (!holdingWand() || !bubbleNeeded()) return;
     const bob = Math.sin(time * 5) | 0;
     const x = (player.x - cpos.x + 1) | 0;
@@ -6475,6 +6856,7 @@
   }
 
   function drawDiveWorld(cpos, t) {
+    return;
     if (scene === "sub") {
       const win = { x: 18, y: 16, w: SUB_W - 36, h: 28 };
       const x = (win.x - cpos.x) | 0;
@@ -6556,6 +6938,7 @@
   }
 
   function drawDiveHud() {
+    return;
     if (scene !== "sub" && scene !== "floor" && scene !== "wreck") return;
     if (uiBlocksPlay()) return;
     const uiW = canvas.width / SCALE_UI;
@@ -6631,8 +7014,8 @@
     fishDockExit = { x: hutDoor.x + hutDoor.w + 8, y: pier.y + 4 };
     cabinDoor = { x: moorDoor.x, y: moorDoor.y, w: moorDoor.w, h: moorDoor.h };
     cabinDockExit = { x: moorDeck.x + 8, y: pier.y + 4 };
-    subDoor = { x: subHull.x, y: subHull.y, w: subHull.w, h: ((subHull.h / 2) | 0) + 4 };
-    subIslandExit = { x: subHull.x - 40, y: subHull.y + 2 };
+    subDoor = null;
+    subIslandExit = null;
     foamBlockers.length = 0;
     dockBlit.length = 0;
     foamBlockers.push(pier, finger, boatA, rowA, rowB, ramp, moorDeck, moorHull, moorPlank);
@@ -6766,8 +7149,19 @@
       if (inKeepout(loot[i].x + 3, loot[i].y + 3)) loot.splice(i, 1);
     }
     placeBeachCrabs();
-    player.x = pier.x + 48;
-    player.y = pier.y + 4;
+    const harbor = [
+      { x: pier.x + 48, y: pier.y + 4 },
+      { x: pier.x + 40, y: rest - player.h - 10 },
+    ];
+    player.x = harbor[0].x;
+    player.y = harbor[0].y;
+    for (let i = 0; i < harbor.length; i++) {
+      if (dryFooting(harbor[i].x, harbor[i].y)) {
+        player.x = harbor[i].x;
+        player.y = harbor[i].y;
+        break;
+      }
+    }
     doorCool = 0.6;
     spawnX = player.x;
     spawnY = player.y;
@@ -6776,6 +7170,7 @@
 
   function beginFade(nextScene, spawn) {
     if (fadeMode) return;
+    if (nextScene === "sub" || nextScene === "floor" || nextScene === "wreck") return;
     fadeMode = 1;
     fade = 0;
     fadeNext = { scene: nextScene, spawn };
@@ -6886,12 +7281,6 @@
 
   function updateDoors(dt) {
     if (doorCool > 0) doorCool = Math.max(0, doorCool - dt);
-    if (bubbleFailing()) {
-      diveTip = "BUBBLE POPPED";
-      diveTipT = 1.6;
-      beginFade("sub", subRoomSpawn());
-      return;
-    }
     if (fadeMode || player.dead > 0 || doorCool > 0 || player.aboard || cabinCut.kind) return;
     if (scene === "island" && shopDoor && playerHits(shopDoor)) {
       beginFade("shop", { x: (SHOP_W / 2 - 4) | 0, y: SHOP_H - 48 });
@@ -6920,30 +7309,6 @@
     }
     if (scene === "hub" && hubExit && playerHits(hubExit) && playMode === "hub") {
       leaveHubMode();
-    }
-    if (scene === "island" && subDoor && playerHits(subDoor)) {
-      beginFade("sub", subRoomSpawn());
-    }
-    if (scene === "sub" && divePhase === "docked" && playerFeetOn(subExit)) {
-      beginFade("island", { x: subIslandExit.x, y: subIslandExit.y });
-    }
-    if (scene === "sub" && divePhase === "down" && playerFeetOn(subHatch)) {
-      if (!holdingWand()) {
-        diveTip = "NEED WAND";
-        diveTipT = 1.6;
-      } else beginFade("floor", floorEntrySpawn());
-    }
-    if (scene === "floor" && playerFeetOn(floorHatch)) {
-      beginFade("sub", subRoomSpawn());
-    }
-    if (scene === "floor" && playerFeetOn(floorWreckDoor)) {
-      if (!holdingWand()) {
-        diveTip = "NEED WAND";
-        diveTipT = 1.6;
-      } else beginFade("wreck", { x: WRECK_LADDER_X + 6, y: WRECK_H - 42 });
-    }
-    if (scene === "wreck" && playerFeetOn(wreckExit)) {
-      beginFade("floor", { x: 160, y: 100 });
     }
   }
 
@@ -7310,6 +7675,29 @@
       px(x + 1, y + 3, 1, 1, "#0e3a20");
       px(x + 4, y + 3, 1, 1, "#0e3a20");
       px(x + 3, y + 2, 1, 1, "#b8f0c8");
+      return true;
+    }
+    if (id === "straw_hat") {
+      px(x, y + 2, 8, 1, "#c4a06a");
+      px(x + 1, y + 3, 6, 2, "#e8c44a");
+      px(x + 2, y + 4, 4, 1, "#8a5a32");
+      return true;
+    }
+    if (id === "crown") {
+      px(x + 1, y + 1, 1, 3, "#c9a227");
+      px(x + 3, y, 1, 2, "#e8c44a");
+      px(x + 5, y + 1, 1, 3, "#c9a227");
+      px(x + 1, y + 4, 6, 1, "#e8c44a");
+      return true;
+    }
+    if (id === "beta_crown") {
+      px(x + 1, y + 1, 1, 3, "#c9a227");
+      px(x + 3, y, 1, 2, "#e8c44a");
+      px(x + 5, y + 1, 1, 3, "#c9a227");
+      px(x + 1, y + 4, 6, 1, "#e8c44a");
+      px(x + 1, y + 2, 1, 1, "#c43a48");
+      px(x + 3, y + 1, 1, 1, "#c43a48");
+      px(x + 5, y + 2, 1, 1, "#c43a48");
       return true;
     }
     if (id === "cape") {
@@ -7770,6 +8158,23 @@
       px(1, -9, 1, 1, "#0e3a20");
       px(-1, -8, 3, 1, "#1a5a34");
       px(0, -10, 1, 1, "#b8f0c8");
+    } else if (id === "straw_hat") {
+      px(-4, -16, 8, 1, "#c4a06a");
+      px(-3, -15, 6, 2, "#e8c44a");
+      px(-2, -14, 4, 1, "#8a5a32");
+    } else if (id === "crown") {
+      px(-3, -16, 1, 3, "#c9a227");
+      px(-1, -17, 1, 2, "#e8c44a");
+      px(1, -16, 1, 3, "#c9a227");
+      px(-3, -14, 6, 1, "#e8c44a");
+    } else if (id === "beta_crown") {
+      px(-3, -16, 1, 3, "#c9a227");
+      px(-1, -17, 1, 2, "#e8c44a");
+      px(1, -16, 1, 3, "#c9a227");
+      px(-3, -14, 6, 1, "#e8c44a");
+      px(-2, -16, 1, 1, "#c43a48");
+      px(0, -17, 1, 1, "#c43a48");
+      px(2, -16, 1, 1, "#c43a48");
     }
   }
 
@@ -8084,14 +8489,48 @@
         stack &&
         stack.id === "wand" &&
         ((time * 10) | 0) % 2 === 0;
-      const sel = (!cosSelect && i === heldSlot) || wandPulse;
+      const dragging = slotDrag && slotDrag.src === "bag" && slotDrag.index === i;
+      const sel = (!cosSelect && i === heldSlot) || wandPulse || dragging;
       px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
       px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
       px(sx + 2, sy + 2, slot - 4, slot - 4, wandPulse ? "#e8c44a" : "#5c3a21");
       px(sx + 4, sy + 4, slot - 8, slot - 8, "#1a120c");
-      if (!stack) continue;
+      if (!stack || dragging) continue;
       drawHudIcon(stack.id, sx, sy);
       if (stack.count > 1) drawCount(sx, sy, stack.count);
+    }
+
+    if (playMode === "normal" && satchelOpen) {
+      const o = satchelOrigin();
+      drawPixText("SATCHEL", o.x, o.y - 9, "#f3e2c4");
+      for (let i = 0; i < satchel.length; i++) {
+        const col = i % HUD_COLS;
+        const row = (i / HUD_COLS) | 0;
+        const sx = o.x + col * (o.slot + o.gap);
+        const sy = o.y + row * (o.slot + o.rowGap);
+        const dragging = slotDrag && slotDrag.src === "satchel" && slotDrag.index === i;
+        px(sx, sy, o.slot, o.slot, dragging ? "#c9a227" : "#2b1c12");
+        px(sx + 1, sy + 1, o.slot - 2, o.slot - 2, "#2b1c12");
+        px(sx + 2, sy + 2, o.slot - 4, o.slot - 4, "#5c3a21");
+        px(sx + 4, sy + 4, o.slot - 8, o.slot - 8, "#1a120c");
+        const stack = satchel[i];
+        if (!stack || dragging) continue;
+        drawHudIcon(stack.id, sx, sy);
+        if (stack.count > 1) drawCount(sx, sy, stack.count);
+      }
+    } else if (playMode === "normal" && !satchelOpen && satchelHolding()) {
+      drawPixText("E", x0 - 8, y0, "#e8c44a");
+    }
+    if (slotDrag) {
+      const list = stackArray(slotDrag.src);
+      const stack = list[slotDrag.index];
+      if (stack) {
+        const gx = (pointerUi.x - slot / 2) | 0;
+        const gy = (pointerUi.y - slot / 2) | 0;
+        px(gx, gy, slot, slot, "#c9a227");
+        px(gx + 2, gy + 2, slot - 4, slot - 4, "#1a120c");
+        drawHudIcon(stack.id, gx, gy);
+      }
     }
 
     // Cosmetic slots 9 / 0 — off to the side of the 2×4 bag
@@ -10025,6 +10464,14 @@
     if (faceId === "jade_mask") {
       px(-2, -11, 5, 4, "#2a8a4a");
       px(-1, -10, 3, 2, "#3ec86a");
+    } else if (faceId === "straw_hat") {
+      px(-4, -15, 8, 1, "#c4a06a");
+      px(-3, -14, 6, 2, "#e8c44a");
+    } else if (faceId === "crown" || faceId === "beta_crown") {
+      px(-3, -16, 6, 2, "#e8c44a");
+      px(-3, -16, 1, 3, "#c9a227");
+      px(2, -16, 1, 3, "#c9a227");
+      if (faceId === "beta_crown") px(-1, -16, 1, 1, "#c43a48");
     }
     px(-3, -6, 6, 6, "#3a6a9a");
     drawCapeCollar(backId);
@@ -10180,7 +10627,7 @@
       "FAR HORN WAKES SERPENT",
       "WAND HITS BREACHING SERPENT",
       "METAL SHIP OFFSHORE OF DOCK",
-      "LEVER DIVES, WAND TO EXIT",
+      "E OPENS THE SATCHEL",
       "MASK% TAKE THE JADE MASK",
       "HOLD BAIT TO CAST BETTER",
       "T OPENS CHEST IN CABIN",
@@ -10449,7 +10896,8 @@
       uiScreen === "boards" ||
       uiScreen === "account" ||
       uiScreen === "nm_boards" ||
-      uiScreen === "walkthrough"
+      uiScreen === "walkthrough" ||
+      uiScreen === "spin"
     );
   }
 
@@ -10479,14 +10927,15 @@
       srCursor = 0;
       const api = lbApi();
       if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
-    } else if (i === 4) {
+    }     else if (i === 4) {
       uiScreen = "nm_boards";
       nmCursor = 0;
       nmBoardKind = "playtime";
       refreshNmBoard(nmBoardKind);
-    } else if (i === 5) openWalkthrough("normal");
-    else if (i === 6) openWalkthrough("speedrun");
-    else if (i === 7) openWalkthrough("hub");
+    } else if (i === 5) openSpinMenu();
+    else if (i === 6) openWalkthrough("normal");
+    else if (i === 7) openWalkthrough("speedrun");
+    else if (i === 8) openWalkthrough("hub");
   }
 
   function speedrunActive() {
@@ -10655,10 +11104,17 @@
       rod.t = 0;
     }
     const sc = REPLAY_SCENE_INV[f[12] | 0] || "island";
-    if (sc !== scene) {
+    if (sc === "sub" || sc === "floor" || sc === "wreck") {
+      if (scene !== "island") {
+        scene = "island";
+        doorCool = 0;
+      }
+      player.x = spawnX;
+      player.y = spawnY;
+      player.aboard = false;
+    } else if (sc !== scene) {
       scene = sc;
       doorCool = 0;
-      if (sc === "floor") scatterFloorSharks();
     }
     heldSlot = Math.max(0, Math.min(MAX_SLOTS - 1, f[13] | 0));
     applyReplayInv(f[14]);
@@ -11095,6 +11551,7 @@
     cosSelect = null;
     templeMaskTaken = false;
     sunkenTaken = false;
+    clearSatchel();
     divePhase = "docked";
     diveT = 0;
     diveTip = "";
@@ -11519,7 +11976,7 @@
     const playW = 148;
     const walkW = 128;
     const gap = 10;
-    const h = 124;
+    const h = 136;
     const totalW = playW + walkW + gap;
     const x0 = ((uiW - totalW) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
@@ -11916,6 +12373,53 @@
     }
   }
 
+  function drawSpinScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const period = weeklySpinPeriod();
+    const api = lbApi();
+    const signed = !!(api && api.isSignedIn && api.isSignedIn());
+    const left = Math.max(0, WEEKLY_SPIN.spins - spinUsed);
+    const w = 168;
+    const h = 118;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "SPIN");
+    drawPixText(period.label, (x + w / 2) | 0, y + 22, "#5c3a21", "center");
+    drawPixText("SPINS " + left, (x + w / 2) | 0, y + 34, "#3a2414", "center");
+    drawPixText(WEEKLY_SPIN.cost + " COINS", (x + w / 2) | 0, y + 46, "#3a2414", "center");
+    let action = "SPIN";
+    if (!signed) action = "SIGN IN";
+    else if (left <= 0) action = "NEXT WEEK";
+    else if (survivalCoinCount() < WEEKLY_SPIN.cost) action = "NEED 50";
+    const spinSel = spinCursor === 0 || menuHovering("spin:go");
+    if (spinSel) px(x + 18, y + 58, w - 36, 11, "#e8c44a");
+    drawPixText((spinSel ? "> " : "  ") + action, (x + w / 2) | 0, y + 60, spinSel ? "#2b1c12" : "#3a2414", "center");
+    addMenuHit("spin:go", x + 18, y + 58, w - 36, 11, () => {
+      spinCursor = 0;
+      if (!signed) {
+        uiScreen = "account";
+        authMode = "menu";
+        authStatus = "";
+        srCursor = 0;
+        return;
+      }
+      if (left <= 0) {
+        spinNote = "NEXT WEEK";
+        return;
+      }
+      tryWeeklySpin();
+    }, { hover: true });
+    if (spinNote) drawPixText(spinNote, (x + w / 2) | 0, y + 76, "#2b1c12", "center");
+    const backSel = spinCursor === 1 || menuHovering("spin:back");
+    if (backSel) px(x + 18, y + 90, w - 36, 11, "#e8c44a");
+    drawPixText((backSel ? "> " : "  ") + "BACK", (x + w / 2) | 0, y + 92, backSel ? "#2b1c12" : "#5c3a21", "center");
+    addMenuHit("spin:back", x + 18, y + 90, w - 36, 11, () => backToModeMenu(), { hover: true });
+  }
+
   function drawSpeedUI() {
     clearMenuHits();
     if (uiScreen === "mode") drawModeSelect();
@@ -11925,6 +12429,7 @@
     else if (uiScreen === "account") drawAccountScreen();
     else if (uiScreen === "nm_boards") drawNmBoardScreen();
     else if (uiScreen === "walkthrough") drawWalkthrough();
+    else if (uiScreen === "spin") drawSpinScreen();
   }
 
   async function submitSpeedScore() {
@@ -12090,6 +12595,27 @@
         if (srCursor < MODE_PLAY.length) srCursor = Math.min(modeOpts.length - 1, srCursor + MODE_PLAY.length);
       }
       if (k === "enter" || k === " ") activateModeOpt(srCursor);
+      return true;
+    }
+    if (uiScreen === "spin") {
+      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") spinCursor = spinCursor === 0 ? 1 : 0;
+      if (k === "escape" || k === "backspace") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "enter" || k === " ") {
+        if (spinCursor === 1) backToModeMenu();
+        else {
+          const api = lbApi();
+          const signed = !!(api && api.isSignedIn && api.isSignedIn());
+          if (!signed) {
+            uiScreen = "account";
+            authMode = "menu";
+            authStatus = "";
+            srCursor = 0;
+          } else tryWeeklySpin();
+        }
+      }
       return true;
     }
     if (uiScreen === "walkthrough") {
@@ -12313,6 +12839,7 @@
       const data = {
         slots,
         heldSlot,
+        satchel: satchel.map((s) => (s && s.id ? { id: s.id, count: s.count | 0 } : null)),
         coins: player.coins | 0,
         xp: player.xp | 0,
         level: player.level | 0,
@@ -12349,6 +12876,8 @@
       inventory[i] = s && s.id && ITEM_DEFS[s.id] ? { id: s.id, count: Math.max(1, s.count | 0) } : null;
     }
     heldSlot = Math.max(0, Math.min(inventory.length - 1, data.heldSlot | 0));
+    const bag = ensureSaveSlots(data.satchel);
+    for (let i = 0; i < satchel.length; i++) satchel[i] = bag[i] ? { id: bag[i].id, count: bag[i].count } : null;
     player.coins = Math.max(0, data.coins | 0);
     player.xp = Math.max(0, data.xp | 0);
     player.level = Math.max(1, data.level | 0);
@@ -12402,6 +12931,7 @@
     } else if (player.aboard) {
       player.aboard = false;
     }
+    rescueOffshoreSpawn();
   }
 
   let last = performance.now();
@@ -12422,6 +12952,7 @@
       requestAnimationFrame(loop);
       return;
     }
+    if (scene === "sub" || scene === "floor" || scene === "wreck") placeAtDock();
     updateFade(dt);
     updateDoors(dt);
     updatePlayer(dt);
@@ -12638,6 +13169,10 @@
     if (k === " ") useHeld();
     if (k === "t") tryTradeKey();
     if (k === "e" && scene === "hub") tryHubEmote();
+    else if (k === "e" && playMode === "normal" && !uiBlocksPlay() && !guideOpen && !cabinCut.kind) {
+      satchelOpen = !satchelOpen;
+      slotDrag = null;
+    }
     if (k === "c" || k === "f") tryCastRod();
   });
   window.addEventListener("keyup", (e) => {
@@ -12690,6 +13225,10 @@
     const p = eventToUi(e);
     pointerUi.x = p.x;
     pointerUi.y = p.y;
+    if (slotDrag) {
+      canvas.style.cursor = "pointer";
+      return;
+    }
     if (!uiScreen && !chatOpen && !replaySessionOpen()) {
       menuHoverKey = "";
       canvas.style.cursor = "";
@@ -12718,6 +13257,18 @@
     }
     // Spectate / limbo (uiScreen null): only replay EXIT hits. Busy loads keep the
     // category board up so other VID chips stay clickable (newest wins).
+    if (!uiScreen && satchelOpen && playMode === "normal" && !replaySessionOpen()) {
+      const slot = slotAtUi(p.x, p.y);
+      if (slot) {
+        const list = stackArray(slot.src);
+        if (list[slot.index]) {
+          e.preventDefault();
+          slotDrag = { src: slot.src, index: slot.index };
+          pointerUi.down = true;
+          return;
+        }
+      }
+    }
     if (replayActive || (srReplayBusy && uiScreen == null)) {
       refreshMenuHover(p.x, p.y);
       const replayHit = hitMenuAt(p.x, p.y);
@@ -12734,6 +13285,13 @@
       e.preventDefault();
       hit.onClick();
     }
+  });
+
+  canvas.addEventListener("mouseup", (e) => {
+    if (!slotDrag) return;
+    const p = eventToUi(e);
+    finishSlotDrag(p.x, p.y);
+    pointerUi.down = false;
   });
 
   canvas.addEventListener("mouseleave", () => {

@@ -225,6 +225,9 @@
   let dailyClaimsAvailable = true;
   const DAILY_CLAIMS = "daily_claims";
   const DAILY_CLAIM_KEY = "islebound-daily-claim";
+  let weeklySpinsAvailable = true;
+  const WEEKLY_SPINS = "weekly_spins";
+  const WEEKLY_SPIN_KEY = "islebound-weekly-spins";
   let chatAvailable = true; // false if table missing / hard fail
   let chatMessages = []; // newest last
   let chatPollTimer = null;
@@ -2829,6 +2832,115 @@
     }
   }
 
+  function weeklySpinCache() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(WEEKLY_SPIN_KEY) || "{}");
+      return raw && typeof raw === "object" ? raw : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function weeklySpinLocal(userId, periodKey) {
+    const row = weeklySpinCache()[userId];
+    if (!row || row.period !== periodKey) return 0;
+    return Math.max(0, Math.min(3, row.used | 0));
+  }
+
+  function weeklySpinWriteLocal(userId, periodKey, used) {
+    const all = weeklySpinCache();
+    all[userId] = { period: periodKey, used: Math.max(0, Math.min(3, used | 0)) };
+    try {
+      localStorage.setItem(WEEKLY_SPIN_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+
+  function weeklyTableMissing(res, detail) {
+    const msg = String(detail || res.status || "");
+    return res.status === 404 || msg.indexOf("PGRST") >= 0 || msg.toLowerCase().indexOf("does not exist") >= 0;
+  }
+
+  function getWeeklySpinsLocal(periodKey) {
+    const period = String(periodKey || "").slice(0, 16);
+    const uid = session && session.user && session.user.id ? session.user.id : null;
+    if (!uid || !period) return 0;
+    return weeklySpinLocal(uid, period);
+  }
+
+  async function getWeeklySpins(periodKey) {
+    const period = String(periodKey || "").slice(0, 16);
+    const uid = session && session.user && session.user.id ? session.user.id : null;
+    if (!uid || !period) return { ok: false, guest: true, used: 0 };
+    let used = weeklySpinLocal(uid, period);
+    if (!configured() || !weeklySpinsAvailable) return { ok: true, local: true, used };
+    try {
+      const url =
+        restBase() +
+        "/" +
+        WEEKLY_SPINS +
+        "?user_id=eq." +
+        encodeURIComponent(uid) +
+        "&period_key=eq." +
+        encodeURIComponent(period) +
+        "&select=spins_used";
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String((err && (err.message || err.code)) || res.status);
+        if (weeklyTableMissing(res, detail)) weeklySpinsAvailable = false;
+        return { ok: true, local: true, used };
+      }
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows[0]) {
+        const remote = Math.max(0, Math.min(3, rows[0].spins_used | 0));
+        if (remote > used) {
+          used = remote;
+          weeklySpinWriteLocal(uid, period, used);
+        }
+      }
+      return { ok: true, used };
+    } catch (e) {
+      return { ok: true, local: true, used };
+    }
+  }
+
+  async function recordWeeklySpin(periodKey, used) {
+    const period = String(periodKey || "").slice(0, 16);
+    const uid = session && session.user && session.user.id ? session.user.id : null;
+    if (!uid || !period) return { ok: false };
+    const n = Math.max(0, Math.min(3, used | 0));
+    weeklySpinWriteLocal(uid, period, n);
+    if (!configured() || !weeklySpinsAvailable) return { ok: true, local: true };
+    const body = {
+      user_id: uid,
+      period_key: period,
+      spins_used: n,
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch(restBase() + "/" + WEEKLY_SPINS + "?on_conflict=user_id,period_key", {
+        method: "POST",
+        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String((err && (err.message || err.code)) || res.status);
+        if (weeklyTableMissing(res, detail)) weeklySpinsAvailable = false;
+        return { ok: true, local: true };
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: true, local: true };
+    }
+  }
+
   async function claimDailyIdol(dayKey) {
     const day = String(dayKey || "").slice(0, 16);
     if (!day) return { ok: false };
@@ -2925,6 +3037,9 @@
     hubPresenceSupported,
     claimDailyIdol,
     getDailyClaimLocal,
+    getWeeklySpins,
+    getWeeklySpinsLocal,
+    recordWeeklySpin,
     startPresence,
     stopPresence,
     tickPresence,
