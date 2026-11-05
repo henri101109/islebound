@@ -67,14 +67,14 @@
     chest: { id: "chest", label: "CHEST%", floorMs: 21900 },
     death: { id: "death", label: "DEATH%", floorMs: 5000 },
     boat: { id: "boat", label: "BOAT%", floorMs: 5000 },
-    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 30000 },
+    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 25000 },
     shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 21900 },
     serpent: { id: "serpent", label: "SERPENT%", floorMs: 21900 },
     blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 21900 },
     megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 21900 },
     coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 5000 },
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
-    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 20000 },
+    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
   };
 
   const FISH_STEP_CATS = {
