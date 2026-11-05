@@ -1291,21 +1291,25 @@
       }
     }
 
-    for (let g = 0; g < 36; g++) {
-      const c0 = ISLAND_C - ISLAND_HALF + 40 + (g / 36) * ISLAND_HALF * 1.45 + irand(-3, 3);
+    // Dense plains / jungle canopy west→mid island (was sparse open grass)
+    for (let g = 0; g < 72; g++) {
+      const c0 = ISLAND_C - ISLAND_HALF + 36 + (g / 72) * ISLAND_HALF * 1.55 + irand(-4, 4);
       const e = eastness(c0);
-      if (e > 0.7) continue;
+      if (e > 0.72) continue;
       const cliff = northCliffRow(c0);
       const shore = baseShoreRow(c0);
-      const r0 = Math.floor(cliff + 6 + hash(g, 4) * Math.max(6, shore - cliff - 16));
-      const n = e > 0.38 ? irand(2, 4) : irand(3, 7);
-      const kind = e > 0.36 ? "pine" : "leaf";
+      const span = Math.max(8, shore - cliff - 14);
+      const r0 = Math.floor(cliff + 5 + hash(g, 4) * span);
+      // More trunks on open plains (low eastness), still some on mid scrub
+      const n = e > 0.42 ? irand(3, 6) : irand(5, 10);
+      const kind = e > 0.34 ? "pine" : "leaf";
       for (let i = 0; i < n; i++) {
         const ang = (i / n) * Math.PI * 2 + hash(g, i) * 0.7;
-        const rad = 6 + hash(i * 3, g) * 18;
+        const rad = 5 + hash(i * 3, g) * 22;
         const c = Math.floor(c0 + Math.cos(ang) * (rad / TILE));
         const r = Math.floor(r0 + Math.sin(ang) * (rad / TILE) * 0.55);
         if (!inBounds(c, r) || r < northCliffRow(c) + 2) continue;
+        if (r > baseShoreRow(c) - sandWidth(c) - 2) continue;
         const t = world[r][c];
         if (t !== TILES.DIRT && t !== TILES.GRASS) continue;
         if (inRiverWater(c * TILE + 4, r * TILE + 8)) continue;
@@ -1316,6 +1320,24 @@
           kind,
         });
       }
+    }
+    // Extra scattered fillers so plains don't read as empty lawn
+    for (let i = 0; i < 90; i++) {
+      const c = (ISLAND_C - ISLAND_HALF + 48 + hash(i, 8) * (ISLAND_HALF * 1.2)) | 0;
+      if (eastness(c) > 0.55) continue;
+      const cliff = northCliffRow(c);
+      const shore = baseShoreRow(c);
+      const r = (cliff + 8 + hash(i, 13) * Math.max(6, shore - cliff - sandWidth(c) - 14)) | 0;
+      if (!inBounds(c, r)) continue;
+      const t = world[r][c];
+      if (t !== TILES.DIRT && t !== TILES.GRASS) continue;
+      if (inRiverWater(c * TILE + 4, r * TILE + 8)) continue;
+      trees.push({
+        x: Math.floor(c * TILE + 2 + hash(c, r) * 8),
+        y: Math.floor(r * TILE + 6 + hash(r, c) * 8),
+        s: 0.7 + hash(i, 21) * 0.45,
+        kind: hash(i, 27) > 0.55 ? "pine" : "leaf",
+      });
     }
 
     spawnFauna();
@@ -6790,59 +6812,114 @@
   }
 
   function plantRuinsJungle(site, portal) {
-    for (let i = 0; i < 56; i++) {
-      const ang = (i / 56) * Math.PI * 2 + hash(i, 73) * 0.5;
-      const rad = 26 + hash(i * 2, 79) * 42;
+    for (let i = 0; i < 88; i++) {
+      const ang = (i / 88) * Math.PI * 2 + hash(i, 73) * 0.5;
+      const rad = 22 + hash(i * 2, 79) * 56;
       const x = (site.x + site.w / 2 + Math.cos(ang) * rad) | 0;
-      const y = (site.y + site.h / 2 + Math.sin(ang) * rad * 0.75) | 0;
+      const y = (site.y + site.h / 2 + Math.sin(ang) * rad * 0.78) | 0;
       if (x > portal.x - 12 && x < portal.x + portal.w + 12 && y > portal.y - 6 && y < portal.y + portal.h + 30) continue;
-      if (x > site.x + 10 && x < site.x + site.w - 10 && y > site.y + 8 && y < site.y + site.h - 12) continue;
-      if (y >= restShoreY(x) - 6) continue;
+      if (x > site.x + 8 && x < site.x + site.w - 8 && y > site.y + 6 && y < site.y + site.h - 10) continue;
+      if (y >= restShoreY(x) - 10) continue;
       if (y <= northCliffY(x) + 8) continue;
       if (inRiverWater(x, y)) continue;
-      if (hash(i, 83) > 0.48) {
+      if (hash(i, 83) > 0.62) {
         palms.push({ x, y, s: 0.88 + hash(i, 5) * 0.35 });
       } else {
         trees.push({
           x,
           y,
           s: 0.9 + hash(i, 11) * 0.4,
-          kind: hash(i, 19) > 0.55 ? "pine" : "leaf",
+          kind: hash(i, 19) > 0.5 ? "pine" : "leaf",
         });
       }
     }
   }
 
+  /** Soft sand → dirt → grass ring under/around the ruins so they sit in jungle, not beach. */
+  function blendRuinsGround(site) {
+    if (!landCanvas || !site) return;
+    const g = landCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    const cx = site.x + ((site.w / 2) | 0);
+    const cy = site.y + ((site.h / 2) | 0);
+    const maxR = Math.max(site.w, site.h) * 0.92;
+    const x0 = Math.max(0, (cx - maxR - 8) | 0);
+    const y0 = Math.max(0, (cy - maxR - 8) | 0);
+    const x1 = Math.min(WORLD_W - 1, (cx + maxR + 8) | 0);
+    const y1 = Math.min(WORLD_H - 1, (cy + maxR + 8) | 0);
+    for (let wy = y0; wy <= y1; wy++) {
+      for (let wx = x0; wx <= x1; wx++) {
+        if (inRiverWater(wx, wy)) continue;
+        if (wy >= restShoreY(wx) - 2) continue;
+        if (wy <= northCliffY(wx) + 2) continue;
+        const dx = wx - cx;
+        const dy = (wy - cy) * 1.15;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > maxR) continue;
+        const u = d / maxR;
+        // Inner cleared dirt path / courtyard → moss grass → outer jungle grass
+        let col;
+        if (u < 0.28) {
+          col = hash(wx, wy) > 0.55 ? "#6a5438" : "#5a4630";
+        } else if (u < 0.52) {
+          const t = (u - 0.28) / 0.24;
+          col = t < 0.5 ? "#4a6a34" : "#3a7a38";
+          if (hash(wx, wy) > 0.82) col = "#2a5a28";
+        } else {
+          const t = (u - 0.52) / 0.48;
+          col = t < 0.45 ? "#3a8a44" : "#2a6a34";
+          if (hash(wx + 3, wy) > 0.88) col = "#4a9a48";
+        }
+        // Feather into existing land so the edge isn't a hard disk
+        if (u > 0.72) {
+          if (hash(wx, wy + 9) > 1 - (u - 0.72) / 0.28) continue;
+        }
+        pxi(g, wx, wy, 1, 1, col);
+        const c = (wx / TILE) | 0;
+        const r = (wy / TILE) | 0;
+        if (inBounds(c, r) && world[r][c] !== TILES.DEEP) {
+          world[r][c] = u < 0.35 ? TILES.DIRT : TILES.GRASS;
+        }
+      }
+    }
+  }
+
   function placeRiverRuins(pier) {
-    // Halfway dock → temple, tucked beside the river inland of the beach
+    // Halfway dock → temple, deep in the jungle (not on the beach), beside the river
     const dockC = (pier.x / TILE) | 0;
     const templeC = 318;
     const midC = ((dockC + templeC) / 2) | 0;
     let wx = midC * TILE - 48;
-    for (let tries = 0; tries < 48; tries++) {
+    let best = null;
+    for (let tries = 0; tries < 64; tries++) {
       const tx = wx + ((tries & 1 ? 1 : -1) * ((tries / 2) | 0) * 8);
-      const shore = restShoreY(tx);
-      const cliff = northCliffY(tx);
-      const ty = shore - 90;
-      if (ty <= cliff + 20) continue;
-      if (inRiverWater(tx + 64, ty + 50)) continue;
+      const shore = restShoreY(tx + 64);
+      const cliff = northCliffY(tx + 64);
+      const depth = Math.max(100, shore - cliff);
+      // Sit inland like the temple — upper third of the land band
+      const ty = cliff + Math.max(36, (depth * 0.22) | 0);
+      if (ty + 110 > shore - 28) continue;
+      if (inRiverWater(tx + 64, ty + 52)) continue;
       let nearRiver = false;
-      for (let d = -48; d <= 48; d += 8) {
-        if (inRiverWater(tx + 64 + d, ty + 56) || inRiverWater(tx + 64, ty + 56 + d)) {
+      for (let d = -56; d <= 56; d += 8) {
+        if (inRiverWater(tx + 64 + d, ty + 52) || inRiverWater(tx + 64, ty + 52 + d)) {
           nearRiver = true;
           break;
         }
       }
-      if (!nearRiver && tries < 30) continue;
-      wx = tx;
+      if (!nearRiver && tries < 40) continue;
+      best = { x: tx, y: ty, shore, cliff };
       break;
     }
-    const shore = restShoreY(wx + 64);
-    const cliff = northCliffY(wx + 64);
+    if (!best) {
+      const shore = restShoreY(wx + 64);
+      const cliff = northCliffY(wx + 64);
+      const depth = Math.max(100, shore - cliff);
+      best = { x: wx, y: cliff + Math.max(36, (depth * 0.22) | 0), shore, cliff };
+    }
     const siteW = 128;
     const siteH = 104;
-    const sy = Math.max(cliff + 22, Math.min(shore - siteH - 8, shore - 96));
-    const site = { x: wx, y: sy, w: siteW, h: siteH };
+    const site = { x: best.x, y: best.y, w: siteW, h: siteH };
     const L = ruinsGateLayout(siteW, siteH);
     ruinsSite = site;
     ruinsPortal = {
@@ -6858,6 +6935,7 @@
     ruinsOX = site.x;
     ruinsOY = site.y;
     bakeRiverRuins(siteW, siteH);
+    blendRuinsGround(site);
 
     // Solids match the painted frame: side walls, lintel, columns — mouth stays open
     islandSolids.push({ x: site.x + 2, y: site.y + L.colY + 6, w: Math.max(8, L.colLO - 4), h: 48 });
