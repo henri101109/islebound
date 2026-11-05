@@ -2352,11 +2352,21 @@
       const bx = ownedBoat.x + ownedBoat.w / 2;
       const by = ownedBoat.y + ownedBoat.h / 2;
       const now = playerCenter();
-      if (Math.hypot(now.x - bx, now.y - by) < 14) {
+      const atBerth = !!ownedBoat.docked || boatNearBerth(ownedBoat, 30);
+      const onBerthDeck =
+        !!boatBerth &&
+        hitPad(player.x + 4, player.y + player.h - 2, walkPads) &&
+        player.y + player.h >= boatBerth.y - 18 &&
+        player.y <= boatBerth.y + 6 &&
+        player.x + player.w > boatBerth.x - 10 &&
+        player.x < boatBerth.x + boatBerth.w + 10;
+      const reach = atBerth || onBerthDeck ? 28 : 14;
+      if (Math.hypot(now.x - bx, now.y - by) < reach) {
         player.aboard = true;
         seatPlayerOnBoat();
         player.inWater = false;
         player.submerged = 0;
+        if (atBerth || onBerthDeck) settleBoatInBerth(ownedBoat);
         checkBoatSpeedEnd();
       }
     }
@@ -3091,7 +3101,19 @@
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
     }
+    if (player.aboard && ownedBoat && ownedBoat.docked) return "W UP TO DOCK · WASD SAILS";
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
+    if (
+      !player.aboard &&
+      ownedBoat &&
+      (ownedBoat.docked || boatNearBerth(ownedBoat, 28)) &&
+      scene === "island"
+    ) {
+      const mid = playerCenter();
+      const bx = ownedBoat.x + ownedBoat.w / 2;
+      const by = ownedBoat.y + ownedBoat.h / 2;
+      if (Math.hypot(mid.x - bx, mid.y - by) < 34) return "WALK ONTO BOAT";
+    }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return "PORTAL DORMANT";
     }
@@ -4372,10 +4394,49 @@
     }
   }
 
+  function clearBerthIfAway(b) {
+    if (!b || !b.docked) return;
+    if (!boatNearBerth(b, 22)) b.docked = false;
+  }
+
+  /** Standable spot on the T-head just north of the slip. */
+  function berthStandSpot() {
+    if (!boatBerth) return null;
+    const tries = [
+      [(boatBerth.x + (boatBerth.w - player.w) / 2) | 0, boatBerth.y - player.h - 1],
+      [(boatBerth.x + 2) | 0, boatBerth.y - player.h - 1],
+      [(boatBerth.x + boatBerth.w - player.w - 2) | 0, boatBerth.y - player.h - 1],
+      [(boatBerth.x + (boatBerth.w - player.w) / 2) | 0, boatBerth.y - player.h - 6],
+      [(boatBerth.x - 8) | 0, boatBerth.y - 4],
+      [(boatBerth.x + boatBerth.w + 2) | 0, boatBerth.y - 4],
+    ];
+    for (let i = 0; i < tries.length; i++) {
+      const x = tries[i][0];
+      const y = tries[i][1];
+      if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) return { x, y };
+    }
+    return null;
+  }
+
+  function tryStepOffAtBerth() {
+    if (!player.aboard || !ownedBoat || !boatBerth) return false;
+    if (!ownedBoat.docked && !boatNearBerth(ownedBoat, 26)) return false;
+    const spot = berthStandSpot();
+    if (!spot) return false;
+    player.aboard = false;
+    player.x = spot.x;
+    player.y = spot.y;
+    player.inWater = false;
+    player.submerged = 0;
+    if (boatNearBerth(ownedBoat, 20)) settleBoatInBerth(ownedBoat);
+    return true;
+  }
+
   /** Soft magnet into the finger-tip slip when close and slow; WASD shoves off. */
   function updateBoatBerthSnap(dt, dx, dy) {
     const b = ownedBoat;
     if (!b || !boatBerth || boatThrow || !b.landed) return;
+    clearBerthIfAway(b);
     const moving = dx !== 0 || dy !== 0;
     if (b.docked) {
       if (moving) {
@@ -4421,6 +4482,7 @@
 
   function tryStepOffBoat(ox, oy) {
     if (!player.aboard || !ownedBoat) return false;
+    if ((ownedBoat.docked || boatNearBerth(ownedBoat, 26)) && tryStepOffAtBerth()) return true;
     const x = player.x + ox;
     const y = player.y + oy;
     if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
@@ -4439,10 +4501,16 @@
     if (!b || boatThrow) return;
     const moving = dx !== 0 || dy !== 0;
     player.moving = moving;
+    clearBerthIfAway(b);
     if (b.docked && !moving) {
       settleBoatInBerth(b);
       if (player.aboard) seatPlayerOnBoat();
       return;
+    }
+    if (b.docked && moving) {
+      // Push toward the T-head → hop off and leave the skiff docked.
+      if (dy < 0 && tryStepOffAtBerth()) return;
+      b.docked = false;
     }
     const len = Math.hypot(dx, dy) || 1;
     const acc = 140;
@@ -4548,6 +4616,7 @@
     if (scene !== "island" || !ownedBoat || boatThrow) return false;
     const mid = playerCenter();
     if (player.aboard) {
+      if (tryStepOffAtBerth()) return true;
       const spots = [
         [ownedBoat.x - 10, ownedBoat.y - 2],
         [ownedBoat.x + ownedBoat.w + 2, ownedBoat.y - 2],
@@ -4570,11 +4639,13 @@
     }
     const bx = ownedBoat.x + ownedBoat.w / 2;
     const by = ownedBoat.y + ownedBoat.h / 2;
-    if (Math.hypot(mid.x - bx, mid.y - by) < 22) {
+    const berthReach = ownedBoat.docked || boatNearBerth(ownedBoat, 30) ? 32 : 22;
+    if (Math.hypot(mid.x - bx, mid.y - by) < berthReach) {
       player.aboard = true;
       seatPlayerOnBoat();
       player.inWater = false;
       player.submerged = 0;
+      if (boatNearBerth(ownedBoat, 30)) settleBoatInBerth(ownedBoat);
       checkBoatSpeedEnd();
       return true;
     }
