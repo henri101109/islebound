@@ -283,8 +283,10 @@
   let srRunId = "";
   let srPbPrev = 0;
   let srPbLabel = "";
-  /** Countdown after blowfish cutscene before Blowfish% ends; -1 = idle. */
+  /** Countdown after blowfish heart FX before Blowfish% ends; -1 = idle. */
   let srBlowfishFinishT = -1;
+  /** Floating hearts above player after catching a blowfish: { t, dur }. */
+  let blowfishHearts = null;
   let authUser = "";
   let authPin = "";
   let authName = "";
@@ -3389,23 +3391,25 @@
     cabinCut.mode = "open";
   }
 
-  /** Brief cheeky blowfish gag; freezes input like cabin cuts (~2s). */
-  function startBlowfishCut() {
-    if (cabinCut.kind || fadeMode) return;
-    cabinCut.kind = "blowfish";
-    cabinCut.t = 0;
-    cabinCut.value = 0;
-    cabinCut.pack = 0;
-    cabinCut.spawned = false;
-    cabinCut.granted = false;
-    cabinCut.lid = 0;
-    cabinCut.mode = "open";
+  /** Hearts float above the player for ~2s after catching a blowfish (no full-screen cut). */
+  function startBlowfishHearts() {
+    blowfishHearts = { t: 0, dur: 2 };
   }
 
   function scheduleBlowfishSpeedEnd(delaySec) {
     if (playMode !== "speedrun" || srCat !== "blowfish") return;
     if (!srTiming || uiScreen === "finish") return;
     srBlowfishFinishT = Math.max(0, delaySec);
+  }
+
+  function updateBlowfishHearts(dt) {
+    if (!blowfishHearts) return;
+    blowfishHearts.t += dt;
+    if (blowfishHearts.t >= blowfishHearts.dur) {
+      blowfishHearts = null;
+      // Blowfish% ends 1s after the hearts finish.
+      scheduleBlowfishSpeedEnd(1);
+    }
   }
 
   function updateBlowfishSpeedEnd(dt) {
@@ -3424,14 +3428,6 @@
   function updateCabinCut(dt) {
     if (!cabinCut.kind) return;
     cabinCut.t += dt;
-    if (cabinCut.kind === "blowfish") {
-      if (cabinCut.t >= 2.05) {
-        cabinCut.kind = "";
-        // Blowfish% ends 1s after the gag cutscene finishes.
-        scheduleBlowfishSpeedEnd(1);
-      }
-      return;
-    }
     if (cabinCut.kind === "classic") {
       if (cabinCut.mode === "open") {
         const creak = 0.46;
@@ -4074,7 +4070,7 @@
       dest: "slot",
       value: 0,
     });
-    if (id === "blowfish") startBlowfishCut();
+    if (id === "blowfish") startBlowfishHearts();
   }
 
   function updateRod(dt) {
@@ -8227,67 +8223,35 @@
     }
   }
 
-  /** ~2s cheeky pixel gag: player + puffed blowfish silhouettes, then resume. */
-  function drawBlowfishCut() {
-    if (cabinCut.kind !== "blowfish") return;
-    const uiW = canvas.width / SCALE_UI;
-    const uiH = canvas.height / SCALE_UI;
-    const u = cabinCut.t;
-    const fadeIn = Math.min(1, u / 0.18);
-    const fadeOut = u > 1.7 ? Math.max(0, 1 - (u - 1.7) / 0.35) : 1;
-    const a = fadeIn * fadeOut;
+  function drawPixHeart(hx, hy, col) {
+    px(hx + 1, hy, 2, 1, col);
+    px(hx + 4, hy, 2, 1, col);
+    px(hx, hy + 1, 7, 2, col);
+    px(hx + 1, hy + 3, 5, 1, col);
+    px(hx + 2, hy + 4, 3, 1, col);
+    px(hx + 3, hy + 5, 1, 1, col);
+  }
+
+  /** Floating hearts above the player after a blowfish catch (~2s). */
+  function drawBlowfishHearts() {
+    if (!blowfishHearts) return;
+    const u = blowfishHearts.t;
+    const dur = blowfishHearts.dur;
+    const fade = u < 0.15 ? u / 0.15 : u > dur - 0.35 ? Math.max(0, (dur - u) / 0.35) : 1;
+    const mid = playerCenter();
+    const base = worldToUi(mid.x, mid.y - 10);
     ctx.save();
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
-    ctx.globalAlpha = 0.72 * a;
-    px(0, 0, uiW, uiH, "#120810");
-    ctx.globalAlpha = a;
-    const cx = (uiW / 2) | 0;
-    const cy = (uiH / 2) | 0;
-    const puff = u < 0.35 ? u / 0.35 : u < 1.35 ? 1 : Math.max(0.55, 1 - (u - 1.35) / 0.4);
-    const bob = (Math.sin(u * 14) * 1.5) | 0;
-    const lean = u > 0.25 && u < 1.55 ? 1 : 0;
-    // Player silhouette (left)
-    const px0 = cx - 28 + lean * 4;
-    const py0 = cy - 6;
-    px(px0 + 3, py0 - 10, 5, 5, "#1a1018");
-    px(px0 + 4, py0 - 9, 1, 1, "#3a2414");
-    px(px0 + 2, py0 - 5, 7, 10, "#1a1018");
-    px(px0, py0 + 1, 3, 8, "#1a1018");
-    px(px0 + 8, py0 + 1, 3, 8, "#1a1018");
-    px(px0 + 9, py0 - 2 + bob, 6, 2, "#1a1018");
-    // Blowfish (right of player, puffs up — abstract bawdy beat)
-    const bx = px0 + 12 + lean * 2;
-    const by = py0 - 2 + bob;
-    const r = (4 + puff * 7) | 0;
-    const top = by - ((r / 2) | 0);
-    const bot = by + ((r / 2) | 0);
-    px(bx, top, r + 2, r, "#e8c878");
-    px(bx + 1, top - 1, Math.max(2, r), 2, "#f4dca0");
-    px(bx + r - 1, by - 1, 2, 2, "#1a1814");
-    px(bx + 1, bot - 1, 1, 1, "#8a6a28");
-    px(bx + r - 2, bot - 1, 1, 1, "#8a6a28");
-    // Spikes / comic motion
-    if (puff > 0.6) {
-      px(bx - 2, by - 2, 1, 1, "#c9a048");
-      px(bx + r + 2, by, 1, 1, "#c9a048");
-      px(bx + ((r / 2) | 0), top - 2, 1, 1, "#c9a048");
-    }
-    // Sweat / stars (comedic, not graphic)
-    if (u > 0.4 && u < 1.6) {
-      const tw = ((u * 9) | 0) & 1;
-      px(px0 - 4, py0 - 12 - tw, 1, 1, "#9ee8ff");
-      px(px0 - 2, py0 - 14, 1, 2, "#9ee8ff");
-      px(bx + r + 4, by - 6, 2, 2, "#f3d56a");
-      px(bx + r + 6, by - 4, 1, 1, "#fff3c0");
-    }
-    if (u > 0.55 && u < 1.45) {
-      drawPixText("!!!", cx + 18, cy - 22, "#f3e2c4", "center");
-    }
-    if (u > 1.55) {
-      // Pop / deflate punchline
-      px(bx + 2, by - 1, 3, 2, "#fff3c0");
-      px(bx - 1, by + 2, 1, 1, "#e8c878");
-      px(bx + r + 1, by - 3, 1, 1, "#e8c878");
+    ctx.globalAlpha = fade;
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      const life = (u * 0.85 + i * 0.22) % 1.15;
+      const rise = life * 22;
+      const sway = Math.sin(u * 5 + i * 1.7) * (3 + i);
+      const hx = (base.x + sway - 3) | 0;
+      const hy = (base.y - 6 - rise) | 0;
+      const col = i & 1 ? "#ff6b7a" : "#ff9aa8";
+      drawPixHeart(hx, hy, col);
     }
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -8427,7 +8391,7 @@
     drawHud();
     drawSerpentBossBar();
     drawGuide();
-    drawBlowfishCut();
+    drawBlowfishHearts();
     drawPickupFx();
     drawUseFx();
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
@@ -8527,8 +8491,8 @@
     else if (srCat === "jelly_white" && id === "jelly_white") finishSpeedrun();
     else if (srCat === "chest" && id === "chest") finishSpeedrun();
     else if (srCat === "blowfish" && id === "blowfish") {
-      // Wait for cutscene + 1s (see updateCabinCut / scheduleBlowfishSpeedEnd).
-      if (cabinCut.kind !== "blowfish" && srBlowfishFinishT < 0) scheduleBlowfishSpeedEnd(1);
+      // Wait for hearts FX + 1s (see updateBlowfishHearts / scheduleBlowfishSpeedEnd).
+      if (!blowfishHearts && srBlowfishFinishT < 0) scheduleBlowfishSpeedEnd(1);
     } else if (srCat === "megalodon" && id === "megalodon") finishSpeedrun();
     else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
   }
@@ -8549,6 +8513,7 @@
     if (playMode !== "speedrun" || uiScreen === "finish") return;
     // Freeze timer this frame — all end hooks must land here.
     srBlowfishFinishT = -1;
+    blowfishHearts = null;
     lockSpeedFinalMs();
     srRunning = false;
     uiScreen = "finish";
@@ -8644,6 +8609,7 @@
     srPbPrev = 0;
     srPbLabel = "";
     srBlowfishFinishT = -1;
+    blowfishHearts = null;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
@@ -9683,6 +9649,7 @@
     updateShopTrade(dt);
     updateTradeCoinDrift(dt);
     updateCabinCut(dt);
+    updateBlowfishHearts(dt);
     updateBlowfishSpeedEnd(dt);
     updateCabinFish(dt);
     updateBoatThrow(dt);
