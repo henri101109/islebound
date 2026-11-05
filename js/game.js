@@ -328,7 +328,28 @@
     "mask",
   ];
   let playMode = null;
-  let uiScreen = "mode";
+  /** Cold boot shows logo card; Esc from play returns straight to "mode". */
+  let uiScreen = "logo";
+  const LOGO_FRAMES = 12;
+  const LOGO_FRAME_MS = 150;
+  const LOGO_POP_MS = 220;
+  const LOGO_HOLD_MS = 1000;
+  const LOGO_FADE_MS = 400;
+  const LOGO_FRAME_PX = 256;
+  let logoStartPerf = 0;
+  let logoSheet = null;
+  let logoSheetReady = false;
+  {
+    const img = new Image();
+    img.onload = () => {
+      logoSheet = img;
+      logoSheetReady = true;
+    };
+    img.onerror = () => {
+      logoSheetReady = false;
+    };
+    img.src = "assets/logo-pier-sheet.png";
+  }
   let srCat = "shark";
   let srRunning = false;
   let srTiming = false;
@@ -10935,6 +10956,7 @@
   function uiBlocksPlay() {
     return (
       replayActive ||
+      uiScreen === "logo" ||
       uiScreen === "mode" ||
       uiScreen === "categories" ||
       uiScreen === "finish" ||
@@ -10944,6 +10966,89 @@
       uiScreen === "walkthrough" ||
       uiScreen === "spin"
     );
+  }
+
+  function skipLogoToMode() {
+    if (uiScreen !== "logo") return;
+    uiScreen = "mode";
+    logoStartPerf = 0;
+  }
+
+  function logoElapsedMs() {
+    if (!logoStartPerf) logoStartPerf = performance.now();
+    return performance.now() - logoStartPerf;
+  }
+
+  function drawLogoCard() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const elapsed = logoElapsedMs();
+    const total = LOGO_POP_MS + LOGO_HOLD_MS + LOGO_FADE_MS;
+    if (elapsed >= total) {
+      skipLogoToMode();
+      drawModeSelect();
+      return;
+    }
+
+    let alpha = 1;
+    let scale = 1;
+    if (elapsed < LOGO_POP_MS) {
+      const u = elapsed / LOGO_POP_MS;
+      const ease = 1 - Math.pow(1 - u, 3);
+      alpha = ease;
+      scale = 0.82 + 0.18 * ease;
+    } else if (elapsed > LOGO_POP_MS + LOGO_HOLD_MS) {
+      const u = (elapsed - LOGO_POP_MS - LOGO_HOLD_MS) / LOGO_FADE_MS;
+      alpha = Math.max(0, 1 - u);
+      scale = 1 - 0.06 * u;
+    }
+
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+
+    const card = Math.min(128, ((Math.min(uiW, uiH) * 0.52) | 0));
+    const cx = (uiW / 2) | 0;
+    const cy = (uiH / 2) | 0;
+    const drawW = Math.max(8, (card * scale) | 0);
+    const drawH = drawW;
+    const x = (cx - drawW / 2) | 0;
+    const y = (cy - drawH / 2) | 0;
+    const pad = Math.max(2, ((5 * drawW) / card) | 0);
+    const art = Math.max(4, drawW - pad * 2);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // Thin wood / gold frame matching parchment panels
+    px(x, y, drawW, drawH, "#3a2414");
+    px(x + 1, y + 1, drawW - 2, drawH - 2, "#8a5a32");
+    px(x + 2, y + 2, drawW - 4, drawH - 4, "#c9a227");
+    px(x + 3, y + 3, drawW - 6, drawH - 6, "#5c3a21");
+    px(x + pad, y + pad, art, art, "#0b1a22");
+
+    if (logoSheetReady && logoSheet) {
+      const frame = ((elapsed / LOGO_FRAME_MS) | 0) % LOGO_FRAMES;
+      const sx = frame * LOGO_FRAME_PX;
+      const prevSmooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        logoSheet,
+        sx,
+        0,
+        LOGO_FRAME_PX,
+        LOGO_FRAME_PX,
+        x + pad,
+        y + pad,
+        art,
+        art
+      );
+      ctx.imageSmoothingEnabled = prevSmooth;
+    } else {
+      drawPixText("ISLEBOUND", cx, cy - 2, "#f3e2c4", "center");
+    }
+    ctx.restore();
+
+    addMenuHit("logo:skip", 0, 0, uiW, uiH, () => skipLogoToMode(), { hover: true });
   }
 
   function openWalkthrough(kind) {
@@ -12032,16 +12137,10 @@
       const sel = srCursor === i || menuHovering(key);
       const oy = y + 32 + i * 12;
       if (sel) px(x0 + 10, oy - 2, playW - 20, 11, "#e8c44a");
-      const label = (sel ? "> " : "  ") + MODE_PLAY[i];
-      if (i === 5) {
-        const tw = pixTextWidth(label);
-        const rowW = 12 + tw;
-        const lx = (x0 + playW / 2 - rowW / 2) | 0;
-        drawWeeklyRewardsIcon(lx, oy - 1);
-        drawPixText(label, lx + 12, oy, sel ? "#2b1c12" : "#3a2414");
-      } else {
-        drawPixText(label, (x0 + playW / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
-      }
+      const label = MODE_PLAY[i];
+      const lx = x0 + 14;
+      drawModeMenuIcon(label, lx, oy - 1);
+      drawPixText(label, lx + 12, oy, sel ? "#2b1c12" : "#3a2414");
       addMenuHit(key, x0 + 10, oy - 2, playW - 20, 11, () => {
         srCursor = i;
         activateModeOpt(i);
@@ -12060,7 +12159,10 @@
       if (sel) px(wx + 12, oy - 2, walkW - 24, 14, "#e8c44a");
       else px(wx + 12, oy - 2, walkW - 24, 14, "#8a5a32");
       px(wx + 13, oy - 1, walkW - 26, 12, sel ? "#e8c44a" : "#c4a574");
-      drawPixText((sel ? "> " : "  ") + MODE_WALK[i], (wx + walkW / 2) | 0, oy + 2, sel ? "#2b1c12" : "#3a2414", "center");
+      const label = MODE_WALK[i];
+      const lx = wx + 16;
+      drawModeMenuIcon(label, lx, oy + 1);
+      drawPixText(label, lx + 12, oy + 2, sel ? "#2b1c12" : "#3a2414");
       addMenuHit(key, wx + 12, oy - 2, walkW - 24, 14, () => {
         srCursor = idx;
         activateModeOpt(idx);
@@ -12131,7 +12233,8 @@
       const sel = srCursor === i || menuHovering(key);
       const oy = y + 18 + i * 9;
       if (sel) px(x + 5, oy - 2, leftW - 10, 8, "#e8c44a");
-      drawPixText((sel ? ">" : " ") + catLabel(id), x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+      drawSpeedCatIcon(id, x + 7, oy - 1);
+      drawPixText(catLabel(id), x + 18, oy, sel ? "#2b1c12" : "#3a2414");
       addMenuHit(key, x + 5, oy - 2, leftW - 10, 8, () => {
         srCursor = i;
         beginSpeedCategory(SPEED_ORDER[i]);
@@ -12253,7 +12356,7 @@
         const sel = srCursor === i || menuHovering(key);
         const oy = y + h - 40 + i * 12;
         if (sel) px(x + 24, oy - 2, w - 48, 11, "#e8c44a");
-        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        drawPixText(opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
         addMenuHit(key, x + 24, oy - 2, w - 48, 11, () => {
           srCursor = i;
           if (i === 0) setChatNotifsEnabled(!chatNotifsEnabled);
@@ -12276,7 +12379,7 @@
         const sel = srCursor === i || menuHovering(key);
         const oy = y + 20 + i * 12;
         if (sel) px(x + 18, oy - 2, w - 36, 11, "#e8c44a");
-        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        drawPixText(opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
         addMenuHit(key, x + 18, oy - 2, w - 36, 11, () => {
           srCursor = i;
           if (i === 0) {
@@ -12319,7 +12422,7 @@
         const sel = authField === i + 1 || menuHovering(key);
         const oy = y + 56 + i * 12;
         if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
-        drawPixText((sel ? "> " : "  ") + opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+        drawPixText(opts[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
         addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
           authField = i + 1;
           if (i === 0) submitAuthAction();
@@ -12356,7 +12459,7 @@
       const sel = authField === fields.length + i || menuHovering(key);
       const oy = y + 34 + fields.length * 18 + i * 12;
       if (sel) px(x + 40, oy - 2, w - 80, 11, "#e8c44a");
-      drawPixText((sel ? "> " : "  ") + actions[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
+      drawPixText(actions[i], (x + w / 2) | 0, oy, sel ? "#2b1c12" : "#3a2414", "center");
       addMenuHit(key, x + 40, oy - 2, w - 80, 11, () => {
         authField = fields.length + i;
         if (i === 0) submitAuthAction();
@@ -12392,7 +12495,7 @@
       const sel = nmCursor === i || menuHovering(key);
       const oy = y + 20 + i * 10;
       if (sel) px(x + 5, oy - 2, leftW - 10, 9, "#e8c44a");
-      drawPixText((sel ? ">" : " ") + label, x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+      drawPixText(label, x + 8, oy, sel ? "#2b1c12" : "#3a2414");
       addMenuHit(key, x + 5, oy - 2, leftW - 10, 9, () => {
         nmCursor = i;
         nmBoardKind = order[i];
@@ -12441,6 +12544,116 @@
     px(x, y + 6, 8, 1, "#3a2414");
     px(x + 6, y, 2, 2, "#e8c44a");
     px(x + 7, y - 1, 1, 1, "#f3e2c4");
+  }
+
+  /** Tiny parchment-pixel glyph for mode / walkthrough rows (8x7). */
+  function drawModeMenuIcon(kind, x, y) {
+    const k = String(kind || "").toUpperCase();
+    if (k === "NORMAL" || k === "SURVIVAL") {
+      // Island mound + tree
+      px(x + 1, y + 5, 6, 2, "#c9b07a");
+      px(x + 2, y + 4, 4, 1, "#7eae62");
+      px(x + 3, y + 1, 1, 3, "#5c3a21");
+      px(x + 2, y, 3, 2, "#3c8a34");
+      return;
+    }
+    if (k === "SPEEDRUN") {
+      // Stopwatch
+      px(x + 2, y, 4, 1, "#5c3a21");
+      px(x + 1, y + 1, 6, 6, "#8a5a32");
+      px(x + 2, y + 2, 4, 4, "#f3e2c4");
+      px(x + 4, y + 2, 1, 3, "#3a2414");
+      px(x + 4, y + 4, 2, 1, "#3a2414");
+      px(x + 3, y, 2, 1, "#c9a227");
+      return;
+    }
+    if (k === "HUB") {
+      // Door / cabin
+      px(x + 1, y + 1, 6, 6, "#8a5a32");
+      px(x + 2, y + 2, 4, 5, "#5c3a21");
+      px(x + 2, y, 4, 1, "#3a2414");
+      px(x + 5, y + 4, 1, 1, "#e8c44a");
+      return;
+    }
+    if (k === "ACCOUNT") {
+      // Person bust
+      px(x + 3, y, 2, 2, "#f3e2c4");
+      px(x + 2, y + 2, 4, 2, "#c4a574");
+      px(x + 1, y + 4, 6, 3, "#5c3a21");
+      px(x + 3, y + 1, 1, 1, "#3a2414");
+      return;
+    }
+    if (k === "STATS") {
+      // Bar chart
+      px(x + 1, y + 5, 6, 1, "#5c3a21");
+      px(x + 1, y + 3, 1, 2, "#8a5a32");
+      px(x + 3, y + 1, 1, 4, "#c9a227");
+      px(x + 5, y + 2, 1, 3, "#e8c44a");
+      return;
+    }
+    if (k === "WEEKLY REWARDS" || k === "WEEKLY") {
+      drawWeeklyRewardsIcon(x, y);
+      return;
+    }
+    px(x + 2, y + 2, 4, 4, "#8a5a32");
+  }
+
+  /** Category row glyph; reuses catch art where it fits. */
+  function drawSpeedCatIcon(id, x, y) {
+    if (id === "shark" || id === "jelly_white" || id === "chest" || id === "blowfish" || id === "megalodon") {
+      drawTinyCatch(id, x, y);
+      return;
+    }
+    if (id === "shark_cloak") {
+      drawTinyCatch("shark", x, y);
+      px(x + 5, y + 1, 2, 4, "#1a2848");
+      return;
+    }
+    if (id === "mask") {
+      drawTinyCatch("jade_mask", x, y);
+      return;
+    }
+    if (id === "serpent") {
+      // Coiled sea serpent
+      px(x + 1, y + 1, 2, 2, "#2f6a58");
+      px(x + 3, y + 2, 3, 2, "#1e4a40");
+      px(x + 5, y + 4, 2, 2, "#2f6a58");
+      px(x + 2, y, 1, 1, "#4a9a7a");
+      px(x + 6, y + 3, 1, 1, "#c9e86a");
+      return;
+    }
+    if (id === "death") {
+      // Skull
+      px(x + 2, y, 4, 1, "#f3e2c4");
+      px(x + 1, y + 1, 6, 3, "#e8d5b8");
+      px(x + 2, y + 2, 1, 1, "#3a2414");
+      px(x + 5, y + 2, 1, 1, "#3a2414");
+      px(x + 2, y + 4, 4, 2, "#c4a574");
+      px(x + 3, y + 4, 2, 1, "#3a2414");
+      return;
+    }
+    if (id === "boat") {
+      // Sailboat
+      px(x + 4, y, 1, 4, "#f3e2c4");
+      px(x + 5, y + 1, 2, 3, "#c4a574");
+      px(x + 1, y + 5, 6, 2, "#8a5a32");
+      px(x + 2, y + 4, 4, 1, "#5c3a21");
+      return;
+    }
+    if (id === "full_inv") {
+      // Full bag / pack
+      px(x + 1, y + 2, 6, 5, "#8a5a32");
+      px(x + 2, y + 1, 4, 1, "#5c3a21");
+      px(x + 2, y + 3, 1, 1, "#e8c44a");
+      px(x + 4, y + 3, 1, 1, "#c9a227");
+      px(x + 3, y + 5, 2, 1, "#3a2414");
+      return;
+    }
+    if (id === "coins_10" || id === "coins_25" || id === "coins_100") {
+      drawCoinIcon(x, y);
+      return;
+    }
+    px(x + 2, y + 2, 4, 4, "#8a5a32");
   }
 
   function drawSpinPrizeTile(x, y, w, h, prize) {
@@ -12522,7 +12735,7 @@
     else if (survivalCoinCount() < WEEKLY_SPIN.cost) action = "NEED 50";
     const spinSel = !busy && (spinCursor === 0 || menuHovering("spin:go"));
     if (spinSel) px(x + 18, y + 76, w - 36, 11, "#e8c44a");
-    drawPixText((spinSel ? "> " : "  ") + action, (x + w / 2) | 0, y + 78, spinSel ? "#2b1c12" : "#3a2414", "center");
+    drawPixText(action, (x + w / 2) | 0, y + 78, spinSel ? "#2b1c12" : "#3a2414", "center");
     addMenuHit("spin:go", x + 18, y + 76, w - 36, 11, () => {
       spinCursor = 0;
       if (busy) return;
@@ -12544,7 +12757,7 @@
     const canBack = !busy;
     const backSel = canBack && (spinCursor === 1 || menuHovering("spin:back"));
     if (backSel) px(x + 18, y + 114, w - 36, 11, "#e8c44a");
-    drawPixText((backSel ? "> " : "  ") + "BACK", (x + w / 2) | 0, y + 116, backSel ? "#2b1c12" : "#5c3a21", "center");
+    drawPixText("BACK", (x + w / 2) | 0, y + 116, backSel ? "#2b1c12" : "#5c3a21", "center");
     addMenuHit("spin:back", x + 18, y + 114, w - 36, 11, () => {
       if (spinReelBusy()) return;
       backToModeMenu();
@@ -12553,7 +12766,8 @@
 
   function drawSpeedUI() {
     clearMenuHits();
-    if (uiScreen === "mode") drawModeSelect();
+    if (uiScreen === "logo") drawLogoCard();
+    else if (uiScreen === "mode") drawModeSelect();
     else if (uiScreen === "categories") drawCategorySelect();
     else if (uiScreen === "ready") drawReadyScreen();
     else if (uiScreen === "finish") drawFinishScreen();
@@ -12716,6 +12930,10 @@
   }
 
   function onSpeedMenuKey(k) {
+    if (uiScreen === "logo") {
+      if (k === "enter" || k === " " || k === "escape" || k === "backspace") skipLogoToMode();
+      return true;
+    }
     if (uiScreen === "mode") {
       if (k === "arrowup" || k === "w") srCursor = (srCursor + modeOpts.length - 1) % modeOpts.length;
       if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % modeOpts.length;
