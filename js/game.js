@@ -221,6 +221,8 @@
   let pondPad = null;
   let pondBoat = null;
   let pondPost = null;
+  /** Animated waterfall sheets: [{ x, y, w, h }] world space. */
+  let pondFalls = [];
   /** Future: enable cast / dinghy board when true. */
   let pondFishReady = false;
   let mazeInfo = null;
@@ -1182,6 +1184,17 @@
     const rx = pondWater.rx || 1;
     const ry = pondWater.ry || 1;
     return (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) < 1;
+  }
+
+  /** Feet in the river pool — wadable, no drown damage. */
+  function playerWadingPond() {
+    if (!pondWater || scene !== "island" || player.aboard) return false;
+    const fy = player.y + player.h - 2;
+    return (
+      inPondWater(player.x + 2, fy) ||
+      inPondWater(player.x + player.w * 0.5, fy) ||
+      inPondWater(player.x + player.w - 2, fy)
+    );
   }
 
   function isWaterAt(px, py) {
@@ -2324,12 +2337,15 @@
     const mid = playerCenter();
     const feetY = player.y + player.h - 2;
     const onDock = scene === "island" && !!hitPad(player.x + 4, feetY, walkPads);
+    const wadingPond = playerWadingPond();
     if (player.aboard) {
       player.inWater = false;
     } else {
+      // Pond is wadable — counts as slow water move, but not drowning ocean/river.
       player.inWater =
         scene === "island" &&
         !onDock &&
+        !wadingPond &&
         (inRiverWater(player.x + 4, feetY) ||
           feetY > restShoreY(player.x + 3) ||
           feetY > restShoreY(player.x + player.w - 3));
@@ -2352,7 +2368,7 @@
       if (player.aboard && ownedBoat && scene === "island") {
         steerOwnedBoat(dt, dx, dy);
       } else {
-        const speed = (player.inWater ? 70 : 165) * dt;
+        const speed = (player.inWater || wadingPond ? 70 : 165) * dt;
         if (player.moving) {
           const len = Math.hypot(dx, dy) || 1;
           const nx = player.x + (dx / len) * speed;
@@ -2467,7 +2483,8 @@
       }
       return;
     }
-    if (player.aboard) {
+    if (player.aboard || playerWadingPond()) {
+      // Wadable pond: wet feet, no drown damage.
       player.submerged = 0;
       player.drownTick = 0;
     } else if (player.inWater) {
@@ -7044,7 +7061,7 @@
     }
   }
 
-  /** Paint pool water + banks onto landCanvas so it merges with the river look. */
+  /** Paint pool water + banks onto landCanvas — colors match river WATER_BLUE / WATER_DEEP. */
   function paintPondPoolOntoLand(cx, cy, rx, ry) {
     if (!landCanvas) return;
     const g = landCanvas.getContext("2d");
@@ -7058,11 +7075,12 @@
         const u = pondWaterU(wx, wy, cx, cy, rx, ry);
         const bank = pondWaterU(wx, wy, cx, cy, rx + 14, ry + 10);
         if (u < 1) {
+          // Match inland river / ocean palette (WATER_BLUE / WATER_DEEP)
           let col;
-          if (u < 0.32) col = hash(wx, wy) > 0.55 ? "#146878" : "#0e5868";
-          else if (u < 0.62) col = hash(wx, wy) > 0.5 ? "#1e8898" : "#188088";
-          else col = hash(wx, wy) > 0.45 ? "#3ab8c8" : "#2aa8b8";
-          if (hash(wx * 3, wy * 5) > 0.975) col = "#a8f0f4";
+          if (u < 0.28) col = hash(wx, wy) > 0.55 ? WATER_DEEP : "#0f6a94";
+          else if (u < 0.58) col = hash(wx, wy) > 0.5 ? WATER_BLUE : "#1a8cbc";
+          else col = hash(wx, wy) > 0.45 ? "#2a9acc" : WATER_BLUE;
+          if (hash(wx * 3, wy * 5) > 0.978) col = "#c8ecf8";
           pxi(g, wx, wy, 1, 1, col);
           const c = (wx / TILE) | 0;
           const r = (wy / TILE) | 0;
@@ -7086,16 +7104,42 @@
     }
   }
 
-  function paintPondCave(g, x, y, w, h) {
-    // Rocky overhang + dark mouth
-    pxi(g, x, y, w, 4, "#5a564e");
-    pxi(g, x + 1, y + 1, w - 2, 2, "#6a6458");
-    pxi(g, x + 2, y + 3, w - 4, h - 3, "#1a1814");
-    pxi(g, x + 3, y + 4, w - 6, h - 5, "#0a0a0c");
-    pxi(g, x + 4, y + 5, 2, 2, "#2a3a48");
-    if (hash(x, y) > 0.4) pxi(g, x + w - 6, y + 6, 2, 1, "#3a8a70");
-    pxi(g, x, y + h - 1, w, 1, "#4a463e");
-    pxi(g, x + 1, y - 1, w - 2, 1, "#2a6a34");
+  /**
+   * Cave mouth recessed into a cliff wall face (not a free-floating box).
+   * Wall band sits above the pool rim; mouth is inset with depth shading.
+   */
+  function paintPondCaveInWall(g, wallX, wallY, wallW, wallH, mouthX, mouthW, mouthH) {
+    // Cliff face strata
+    for (let iy = 0; iy < wallH; iy++) {
+      for (let ix = 0; ix < wallW; ix++) {
+        const n = hash(wallX + ix, wallY + iy);
+        let col = n > 0.66 ? "#6a6458" : n > 0.33 ? "#5a564e" : "#4a463e";
+        if (iy < 2) col = n > 0.5 ? "#3a3834" : "#4a463e";
+        if (iy > wallH - 3) col = n > 0.5 ? "#3a6a34" : "#2a5a28";
+        pxi(g, wallX + ix, wallY + iy, 1, 1, col);
+      }
+    }
+    // Moss / vine streaks on face
+    for (let i = 0; i < 8; i++) {
+      const vx = wallX + 2 + ((hash(i, wallY) * (wallW - 4)) | 0);
+      for (let k = 0; k < 5 + ((hash(i, 3) * 6) | 0); k++) {
+        pxi(g, vx + ((((hash(i + k, 5) - 0.5) * 2) | 0)), wallY + 2 + k, 1, 1, k & 1 ? "#2a6a34" : "#1a4a28");
+      }
+    }
+    // Recessed mouth (inset from face)
+    const mx = mouthX;
+    const my = wallY + 4;
+    const mw = mouthW;
+    const mh = mouthH;
+    pxi(g, mx - 1, my - 1, mw + 2, 1, "#3a3834");
+    pxi(g, mx - 1, my, 1, mh, "#2e2c28");
+    pxi(g, mx + mw, my, 1, mh, "#6a6458");
+    pxi(g, mx, my, mw, mh, "#12141a");
+    pxi(g, mx + 1, my + 1, mw - 2, mh - 2, "#0a0c10");
+    pxi(g, mx + 2, my + 2, 2, Math.max(1, mh - 4), "#1a2838");
+    // Wet lip under mouth where fall starts
+    pxi(g, mx + 1, my + mh - 1, mw - 2, 1, "#2a6a78");
+    return { x: mx + 2, y: my + mh - 1, w: Math.max(2, mw - 4), h: 1 };
   }
 
   function bakeJunglePond(siteW, siteH) {
@@ -7113,6 +7157,8 @@
     // Stone / moss rim (water itself is carved into the river + landCanvas)
     for (let a = 0; a < 140; a++) {
       const ang = (a / 140) * Math.PI * 2;
+      // Skip north arc — cliff wall replaces the rim there
+      if (ang > 4.0 && ang < 5.5) continue;
       const jag = 0.9 + hash(a, 9) * 0.16;
       const sx = (cx + Math.cos(ang) * rx * jag) | 0;
       const sy = (cy + Math.sin(ang) * ry * jag) | 0;
@@ -7122,18 +7168,59 @@
       if (hash(a, 19) > 0.72) pxi(g, sx + 1, sy + 1, 1, 1, "#8a8478");
     }
 
-    // North cliff caves + trickle falls into the pool
-    paintPondCave(g, cx - 48, cy - ry - 2, 22, 16);
-    paintPondCave(g, cx - 8, cy - ry + 2, 18, 14);
-    paintPondCave(g, cx + 28, cy - ry - 4, 20, 15);
-    for (let i = 0; i < 14; i++) {
-      pxi(g, cx - 2 + (i % 3) - 1, cy - ry - 4 + i, 1, 1, i < 4 ? "#9ae8f0" : "#4ec8d0");
-      pxi(g, cx + 34 + (i & 1), cy - ry - 2 + i, 1, 1, "#7ad8e0");
+    // Continuous north cliff wall with caves recessed into the face
+    const wallY = cy - ry - 18;
+    const wallH = 28;
+    const wallX = cx - rx + 8;
+    const wallW = rx * 2 - 16;
+    const fallLips = [];
+    // Base wall slab
+    for (let iy = 0; iy < wallH; iy++) {
+      for (let ix = 0; ix < wallW; ix++) {
+        const n = hash(wallX + ix, wallY + iy + 9);
+        let col = n > 0.7 ? "#706a60" : n > 0.4 ? "#5a564e" : "#4a463e";
+        if (iy < 3) col = n > 0.5 ? "#3a3834" : "#4a463e";
+        pxi(g, wallX + ix, wallY + iy, 1, 1, col);
+      }
+    }
+    // Cap moss on wall top
+    for (let ix = 0; ix < wallW; ix += 2) {
+      if (hash(wallX + ix, wallY) < 0.35) continue;
+      pxi(g, wallX + ix, wallY - 1, 2, 1, "#2a6a34");
+      if (hash(wallX + ix, 2) > 0.55) pxi(g, wallX + ix, wallY - 2, 1, 1, "#3a8a44");
+    }
+    fallLips.push(
+      paintPondCaveInWall(g, wallX + 10, wallY + 2, 36, wallH - 4, wallX + 18, 14, 12)
+    );
+    fallLips.push(
+      paintPondCaveInWall(g, wallX + ((wallW / 2) | 0) - 14, wallY + 4, 32, wallH - 6, wallX + ((wallW / 2) | 0) - 6, 12, 11)
+    );
+    fallLips.push(
+      paintPondCaveInWall(g, wallX + wallW - 44, wallY + 1, 34, wallH - 3, wallX + wallW - 34, 13, 12)
+    );
+    // Static waterfall sheets (animated highlights drawn later)
+    const fallsLocal = [];
+    for (let f = 0; f < fallLips.length; f++) {
+      const lip = fallLips[f];
+      if (!lip) continue;
+      const fallH = (cy - (lip.y + 1)) | 0;
+      if (fallH < 6) continue;
+      for (let iy = 0; iy < fallH; iy++) {
+        const taper = iy > fallH - 4 ? 1 : 0;
+        for (let ix = taper; ix < lip.w - taper; ix++) {
+          const col = iy < 2 ? "#c8ecf8" : iy % 3 === 0 ? "#7ec8e0" : WATER_BLUE;
+          pxi(g, lip.x + ix, lip.y + 1 + iy, 1, 1, col);
+        }
+      }
+      // Splash pool at base
+      pxi(g, lip.x - 1, lip.y + fallH, lip.w + 2, 2, "#a8d8e8");
+      fallsLocal.push({ x: lip.x, y: lip.y + 1, w: lip.w, h: fallH });
     }
 
-    // Extra boulder clusters
+    // Boulder clusters along non-north banks
     for (let i = 0; i < 18; i++) {
       const ang = (i / 18) * Math.PI * 2 + 0.3;
+      if (ang > 3.9 && ang < 5.6) continue;
       if (ang > 0.95 && ang < 2.15) continue;
       const bx = (cx + Math.cos(ang) * (rx + 2 + hash(i, 21) * 10)) | 0;
       const by = (cy + Math.sin(ang) * (ry + 1 + hash(i, 23) * 8)) | 0;
@@ -7185,10 +7272,11 @@
     }
     paintPondDinghy(g, postX - 20, postY + 2);
 
-    // Dense brush feather (leave south path)
+    // Dense brush feather (leave south path + north wall clear)
     for (let i = 0; i < 48; i++) {
       const ang = (i / 48) * Math.PI * 2 + hash(i, 51) * 0.4;
       if (ang > 0.9 && ang < 2.2) continue;
+      if (ang > 3.9 && ang < 5.6) continue;
       const rad = rx + 10 + hash(i, 53) * 22;
       const bx = (cx + Math.cos(ang) * rad) | 0;
       const by = (cy + Math.sin(ang) * rad * 0.78) | 0;
@@ -7198,7 +7286,7 @@
       if (hash(i, 57) > 0.65) paintPondReed(g, bx + 4, by + 2, 4 + ((hash(i, 59) * 3) | 0), 1);
     }
 
-    return { cx, cy, rx, ry, postX, postY };
+    return { cx, cy, rx, ry, postX, postY, falls: fallsLocal, wallX, wallY, wallW, wallH };
   }
 
   function plantPondJungle(water) {
@@ -7275,6 +7363,7 @@
     pondPad = null;
     pondBoat = null;
     pondPost = null;
+    pondFalls = [];
     if (!pier) return;
 
     const anchor = findRiverPoolAnchor(pier);
@@ -7324,15 +7413,26 @@
 
     walkPads.push(pondPad);
     islandSolids.push(pondPost);
-    // Cave mouths as light solids (north bank)
-    islandSolids.push({ x: pondWater.cx - 48, y: pondWater.cy - pondWater.ry - 2, w: 22, h: 8 });
-    islandSolids.push({ x: pondWater.cx - 8, y: pondWater.cy - pondWater.ry + 2, w: 18, h: 7 });
-    islandSolids.push({ x: pondWater.cx + 28, y: pondWater.cy - pondWater.ry - 4, w: 20, h: 8 });
+    // Full north cliff wall solid (caves are visual recesses in that face)
+    if (layout.wallW) {
+      islandSolids.push({
+        x: site.x + layout.wallX,
+        y: site.y + layout.wallY,
+        w: layout.wallW,
+        h: Math.max(10, (layout.wallH || 20) - 6),
+      });
+    }
+    pondFalls = (layout.falls || []).map((f) => ({
+      x: site.x + f.x,
+      y: site.y + f.y,
+      w: f.w,
+      h: f.h,
+    }));
     keepouts.push({
       x: pondWater.cx - pondWater.rx - 10,
-      y: pondWater.cy - pondWater.ry - 14,
+      y: pondWater.cy - pondWater.ry - 22,
       w: pondWater.rx * 2 + 20,
-      h: pondWater.ry * 2 + 28,
+      h: pondWater.ry * 2 + 36,
     });
     plantPondJungle(pondWater);
   }
@@ -7423,12 +7523,37 @@
     }
   }
 
+  function drawPondFalls(cpos, t) {
+    if (!pondFalls.length) return;
+    const flicker = (t * 10) | 0;
+    ink.save();
+    for (let i = 0; i < pondFalls.length; i++) {
+      const f = pondFalls[i];
+      const sx = (f.x - cpos.x) | 0;
+      const sy = (f.y - cpos.y) | 0;
+      if (sx > viewW + 4 || sy > viewH + 4 || sx + f.w < -4 || sy + f.h < -4) continue;
+      for (let iy = 0; iy < f.h; iy++) {
+        const streak = (iy + flicker + i * 3) % 5;
+        ink.globalAlpha = 0.25 + (streak === 0 ? 0.45 : streak === 1 ? 0.2 : 0.08);
+        const col = streak === 0 ? "#ffffff" : streak === 1 ? "#c8ecf8" : "#7ec8e0";
+        const ox = ((hash(i, iy + flicker) - 0.5) * 2) | 0;
+        px(sx + 1 + ox, sy + iy, Math.max(1, f.w - 2), 1, col);
+      }
+      // Base splash bloom
+      ink.globalAlpha = 0.35 + 0.25 * Math.sin(t * 6 + i);
+      px(sx - 1, sy + f.h - 1, f.w + 2, 1, "#e8f6ff");
+      px(sx, sy + f.h, f.w, 1, "#ffffff");
+    }
+    ink.restore();
+  }
+
   function drawPond(cpos, t) {
     if (!pondCanvas || !pondSite) return;
     const dx = pondOX - cpos.x;
     const dy = pondOY - cpos.y;
     if (dx > viewW + 8 || dy > viewH + 8 || dx + pondCanvas.width < -8 || dy + pondCanvas.height < -8) return;
     ctx.drawImage(pondCanvas, dx, dy);
+    drawPondFalls(cpos, t);
     drawPondTide(cpos, t);
     if (!pondBoat) return;
     const bob = Math.sin(t * 1.8) > 0 ? 1 : 0;
