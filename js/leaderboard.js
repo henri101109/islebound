@@ -5,6 +5,7 @@
   const SESSION_KEY = "islebound-auth-session";
   const PR_CACHE_KEY = "islebound-speedrun-prs";
   const NM_LOCAL_KEY = "islebound-nm-stats";
+  const SR_LOCAL_KEY = "islebound-sr-stats";
   const NM_BOARD_CACHE = "islebound-nm-boards";
   const TABLE = "speedrun_scores";
   const PROFILES = "profiles";
@@ -59,8 +60,8 @@
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
     mask: { id: "mask", label: "MASK%", floorMs: 22000 },
     // Pond dinghy: walk inland + cast wait 3–7s (ocean cast is 13.5s).
-    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: 8500 },
-    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: 8500 },
+    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: 9900 },
+    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: 9900 },
   };
 
   const FISH_STEP_CATS = {
@@ -677,8 +678,8 @@
 
   function startBanPoll() {
     if (banPollTimer) return;
-    // Owner unban: strip Henri local auto-ban immediately on this device.
-    clearLocalBansForNames(["HENRI"]);
+    // Owner unban: strip local auto-bans immediately on this device.
+    clearLocalBansForNames(["HENRI", "ANDREW"]);
     localBans = loadLocalBans();
     fetchBans().catch(() => {});
     refreshClientIp().catch(() => {});
@@ -2018,10 +2019,168 @@
     await bumpProfileCounters({ runs: 1 });
   }
 
+  function emptySrStats() {
+    return { playtime_ms: 0, runs: 0, submits: 0 };
+  }
+
+  function loadLocalSrStats() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SR_LOCAL_KEY) || "{}") || {};
+      return Object.assign(emptySrStats(), raw);
+    } catch (e) {
+      return emptySrStats();
+    }
+  }
+
+  function saveLocalSrStats(stats) {
+    try {
+      localStorage.setItem(SR_LOCAL_KEY, JSON.stringify(stats || emptySrStats()));
+    } catch (e) {}
+  }
+
+  function noteSrEvent(kind, value) {
+    const local = loadLocalSrStats();
+    if (kind === "playtime") local.playtime_ms = (local.playtime_ms | 0) + (value | 0);
+    else if (kind === "runs") local.runs = (local.runs | 0) + (value | 0 || 1);
+    else if (kind === "submits") local.submits = (local.submits | 0) + (value | 0 || 1);
+    saveLocalSrStats(local);
+    return local;
+  }
+
+  function listLocalPrs() {
+    const out = [];
+    const cats = Object.keys(CATEGORIES);
+    for (let i = 0; i < cats.length; i++) {
+      const id = cats[i];
+      const ms = getLocalPr(id) | 0;
+      if (ms > 0) out.push({ category: id, label: CATEGORIES[id].label, time_ms: ms });
+    }
+    out.sort((a, b) => (a.time_ms | 0) - (b.time_ms | 0));
+    return out;
+  }
+
+  /** Build a local name → profile card index from caches / presence / self. */
+  function buildLocalProfileIndex() {
+    const map = {};
+    function touch(name, patch) {
+      const n = sanitizeName(name, true);
+      if (!n) return;
+      if (!map[n]) {
+        map[n] = {
+          name: n,
+          is_account: false,
+          nm_playtime_ms: 0,
+          sr_playtime_ms: 0,
+          prs: {},
+        };
+      }
+      const row = map[n];
+      if (patch) {
+        if (patch.is_account) row.is_account = true;
+        if (patch.nm_playtime_ms != null) {
+          row.nm_playtime_ms = Math.max(row.nm_playtime_ms | 0, patch.nm_playtime_ms | 0);
+        }
+        if (patch.sr_playtime_ms != null) {
+          row.sr_playtime_ms = Math.max(row.sr_playtime_ms | 0, patch.sr_playtime_ms | 0);
+        }
+        if (patch.category && patch.time_ms > 0) {
+          const prev = row.prs[patch.category] | 0;
+          if (!prev || patch.time_ms < prev) row.prs[patch.category] = patch.time_ms | 0;
+        }
+      }
+    }
+
+    // Self
+    const me = displayName() || getLastName() || "";
+    if (me) {
+      const nm = loadLocalNmStats();
+      const sr = loadLocalSrStats();
+      touch(me, {
+        is_account: !!(session && session.user),
+        nm_playtime_ms: nm.playtime_ms | 0,
+        sr_playtime_ms: sr.playtime_ms | 0,
+      });
+      const myPrs = listLocalPrs();
+      for (let i = 0; i < myPrs.length; i++) {
+        touch(me, { category: myPrs[i].category, time_ms: myPrs[i].time_ms });
+      }
+    }
+
+    // Speedrun board caches
+    const cats = Object.keys(CATEGORIES);
+    for (let i = 0; i < cats.length; i++) {
+      const cat = cats[i];
+      const rows = getCachedBoard(cat);
+      for (let j = 0; j < rows.length; j++) {
+        const r = rows[j];
+        if (!r) continue;
+        touch(r.player_name || r.name, {
+          is_account: !!r.is_account || !!r.user_id,
+          category: cat,
+          time_ms: r.time_ms | 0,
+        });
+      }
+    }
+
+    // NM board caches
+    const nmCache = loadNmBoardCache();
+    for (const kind in nmCache) {
+      const pack = nmCache[kind];
+      const rows = pack && Array.isArray(pack.rows) ? pack.rows : [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r) continue;
+        const patch = { is_account: true };
+        if (kind === "playtime") patch.nm_playtime_ms = r.value | 0;
+        touch(r.player_name, patch);
+      }
+    }
+
+    // Online presence
+    for (let i = 0; i < (onlinePresence || []).length; i++) {
+      const p = onlinePresence[i];
+      if (p && p.username) touch(p.username, { is_account: !!p.user_id });
+    }
+
+    // Identity directory
+    const ids = identityCache.rows || [];
+    for (let i = 0; i < ids.length; i++) {
+      const row = ids[i];
+      if (row && (row.display_name || row.username)) {
+        touch(row.display_name || row.username, { is_account: true });
+      }
+    }
+
+    return map;
+  }
+
+  function searchLocalProfiles(query) {
+    const q = String(query || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, "")
+      .trim();
+    const map = buildLocalProfileIndex();
+    const names = Object.keys(map).sort();
+    const out = [];
+    for (let i = 0; i < names.length; i++) {
+      if (!q || names[i].indexOf(q) >= 0) out.push(map[names[i]]);
+      if (out.length >= 40) break;
+    }
+    return out;
+  }
+
+  function getLocalProfileCard(name) {
+    const n = sanitizeName(name, true);
+    if (!n) return null;
+    const map = buildLocalProfileIndex();
+    return map[n] || null;
+  }
+
   async function addPlaytime(ms, mode) {
     const add = Math.max(0, ms | 0);
     if (!add) return;
     if (mode === "speedrun") {
+      noteSrEvent("playtime", add);
       if (session && session.user) {
         await ensureProfile();
         if (profile) await updateProfile({ playtime_ms: (profile.playtime_ms | 0) + add });
@@ -3194,7 +3353,12 @@
     recordSpeedrunFinish,
     addPlaytime,
     noteNmEvent,
+    noteSrEvent,
     loadLocalNmStats,
+    loadLocalSrStats,
+    listLocalPrs,
+    searchLocalProfiles,
+    getLocalProfileCard,
     syncNmStatsToProfile,
     fetchNmBoard,
   };

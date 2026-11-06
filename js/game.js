@@ -49,12 +49,15 @@
     megalodon: { name: "Megalodon", max: 8, xp: 100 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
     wand: { name: "Wand", max: 1, xp: 0 },
-    cloak: { name: "Cloak", max: 1, xp: 0, cosmetic: "back" },
-    jade_mask: { name: "Jade Mask", max: 1, xp: 20, cosmetic: "face" },
-    straw_hat: { name: "Straw Hat", max: 1, xp: 0, cosmetic: "face" },
-    crown: { name: "Crown", max: 1, xp: 0, cosmetic: "face" },
-    beta_crown: { name: "Beta Crown", max: 1, xp: 0, cosmetic: "face" },
-    cape: { name: "Ember Cape", max: 1, xp: 12, cosmetic: "back" },
+    cloak: { name: "Cloak", label: "CLOAK", max: 1, xp: 0, cosmetic: "back" },
+    jade_mask: { name: "Jade Mask", label: "MASK", max: 1, xp: 20, cosmetic: "face" },
+    straw_hat: { name: "Straw Hat", label: "STRAW", max: 1, xp: 0, cosmetic: "face" },
+    crown: { name: "Crown", label: "CROWN", max: 1, xp: 0, cosmetic: "face" },
+    beta_crown: { name: "Beta Crown", label: "BETA", max: 1, xp: 0, cosmetic: "face" },
+    cape: { name: "Ember Cape", label: "EMBER", max: 1, xp: 12, cosmetic: "back" },
+    job_app_cloak: { name: "Job App Cloak", label: "JOBAPP", max: 1, xp: 0, cosmetic: "back" },
+    american_cloak: { name: "American Cloak", label: "USA", max: 1, xp: 0, cosmetic: "back" },
+    jelly_cape: { name: "Jellyfish Cape", label: "JELLY", max: 1, xp: 0, cosmetic: "back" },
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
     sunken_chest: { name: "Sunken chest", max: 1, xp: 50 },
@@ -486,11 +489,11 @@
       },
       {
         title: "ITEMS",
-        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "9 FACE  0 BACK", "E OPENS THE SATCHEL"],
+        lines: ["1-4 TOP ROW", "5-8 BOTTOM ROW", "BAG IS FOR LOOT", "E OPENS THE SATCHEL"],
       },
       {
         title: "COSMETICS",
-        lines: ["HOLD MASK/CAPE", "ENTER EQUIPS SLOT", "CLOAK BACK = LOOK", "SPACE STILL STEALTH"],
+        lines: ["EQUIP IN MAIN MENU", "DRAG TO FACE/BACK", "SKINS ON THE LOCKER", "CLOAK SPACE = STEALTH"],
       },
       {
         title: "FISH",
@@ -632,9 +635,124 @@
   let shake = 0;
   const pickupAnims = [];
   let heldSlot = 0;
-  /** Equipped cosmetics (ids); bag stays 1-8. */
+  /** Equipped cosmetics (ids) — locker profile, shared across modes. */
   const cosmetics = { face: null, back: null };
-  /** null = bag slot heldSlot; "face"/"back" when keys 9/0 select cosmetic slots. */
+  /** Owned cosmetic ids (not inventory). */
+  let ownedCosmetics = [];
+  /** Body skin id. */
+  let playerSkin = "classic";
+  let ownedSkins = ["classic"];
+  /** Returning players (existing save) get all launch skins once. */
+  let skinsGrantedLegacy = false;
+  const LOCKER_PROFILE_KEY = "islebound-locker-profile";
+  const SKIN_DEFS = {
+    classic: { id: "classic", label: "CLASSIC" },
+    jakob: { id: "jakob", label: "JAKOB" },
+    fisherman_joe: { id: "fisherman_joe", label: "JOE" },
+    beta_alien: { id: "beta_alien", label: "ALIEN" },
+    usain_bolt: { id: "usain_bolt", label: "BOLT" },
+    among_us_red: { id: "among_us_red", label: "CREW" },
+    homer: { id: "homer", label: "HOMER" },
+    indiana_jones: { id: "indiana_jones", label: "INDY" },
+  };
+  const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
+  const QUEST_SKIN_IDS = ["usain_bolt", "among_us_red", "homer", "indiana_jones"];
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS);
+  /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
+  const SKIN_LOCKED_BACK = { jakob: "norway_flag", usain_bolt: "jamaica_flag" };
+  /** Nov monthly quest progress (persisted in locker profile). */
+  let questMaskRuns = 0;
+  let questDone = {};
+  let questClaimed = {};
+  let questTip = "";
+  let questTipT = 0;
+  let questCursor = 0;
+  const NOV_QUESTS = [
+    {
+      id: "bolt",
+      title: "SUB 9.58 DEATH",
+      desc: "FINISH DEATH% UNDER 9.58S",
+      rewardKind: "skin",
+      rewardId: "usain_bolt",
+      rewardLabel: "BOLT SKIN",
+    },
+    {
+      id: "crew",
+      title: "SUB 45S BLOWFISH",
+      desc: "FINISH BLOWFISH% UNDER 45S",
+      rewardKind: "skin",
+      rewardId: "among_us_red",
+      rewardLabel: "CREW SKIN",
+    },
+    {
+      id: "homer",
+      title: "SUB 1:30 MEGA",
+      desc: "FINISH MEGALODON% UNDER 1:30",
+      rewardKind: "skin",
+      rewardId: "homer",
+      rewardLabel: "HOMER SKIN",
+    },
+    {
+      id: "indy",
+      title: "5 MASK RUNS",
+      desc: "COMPLETE 5 MASK% RUNS",
+      rewardKind: "skin",
+      rewardId: "indiana_jones",
+      rewardLabel: "INDY SKIN",
+      progress: () => Math.min(5, questMaskRuns | 0) + "/5",
+    },
+    {
+      id: "jobapp",
+      title: "INVIS SHARK",
+      desc: "COMPLETE AN INVIS SHARK% RUN",
+      rewardKind: "cosmetic",
+      rewardId: "job_app_cloak",
+      rewardLabel: "JOBAPP CAPE",
+    },
+    {
+      id: "usa",
+      title: "MAKE ACCOUNT",
+      desc: "SIGN IN OR CREATE AN ACCOUNT",
+      rewardKind: "cosmetic",
+      rewardId: "american_cloak",
+      rewardLabel: "USA CAPE",
+    },
+    {
+      id: "jelly",
+      title: "SUB 35S JELLY",
+      desc: "FINISH WHITE JELLY% UNDER 35S",
+      rewardKind: "cosmetic",
+      rewardId: "jelly_cape",
+      rewardLabel: "JELLY CAPE",
+    },
+  ];
+
+  function skinLockedBack(skin) {
+    return SKIN_LOCKED_BACK[skin] || null;
+  }
+
+  function effectiveBack(skin, backId) {
+    return skinLockedBack(skin) || backId || null;
+  }
+
+  function backSlotLocked(skin) {
+    return !!skinLockedBack(skin || playerSkin);
+  }
+  /** Locker UI drag: { id, type: "cosmetic"|"skin", kind, startX, startY }. */
+  let lockerDrag = null;
+  let lockerHits = [];
+  /** Hovered locker grid item for live mannequin preview. */
+  let lockerHover = null;
+  /** Locker browse tab: "skins" | "cosmetics". */
+  let lockerTab = "skins";
+  /** STATS board mode: "survival" | "speedrun". */
+  let statsMode = "survival";
+  /** Profiles browser state. */
+  let profileSearch = "";
+  let profileResults = [];
+  let profileFocus = null;
+  let profileField = 0;
+  /** null = bag slot heldSlot; face/back select disabled in-game (locker only). */
   let cosSelect = null;
   let cosTip = "";
   let cosTipT = 0;
@@ -2568,12 +2686,366 @@
     return true;
   }
 
+  function ownsCosmetic(id) {
+    return !!(id && ownedCosmetics.indexOf(id) >= 0);
+  }
+
+  function ownsSkin(id) {
+    return !!(id && ownedSkins.indexOf(id) >= 0);
+  }
+
   function ownsCloak() {
-    if (cosmetics.back === "cloak") return true;
-    return inventory.some((s) => s && s.id === "cloak");
+    return cosmetics.back === "cloak" || ownsCosmetic("cloak");
+  }
+
+  function saveLockerProfile() {
+    try {
+      localStorage.setItem(
+        LOCKER_PROFILE_KEY,
+        JSON.stringify({
+          face: cosmetics.face,
+          back: cosmetics.back,
+          skin: playerSkin,
+          ownedCosmetics: ownedCosmetics.slice(),
+          ownedSkins: ownedSkins.slice(),
+          skinsGrantedLegacy: !!skinsGrantedLegacy,
+          questMaskRuns: questMaskRuns | 0,
+          questDone: questDone || {},
+          questClaimed: questClaimed || {},
+        })
+      );
+    } catch (e) {}
+  }
+
+  function grantCosmetic(id) {
+    if (!isCosmeticId(id)) return false;
+    if (ownedCosmetics.indexOf(id) >= 0) return false;
+    ownedCosmetics.push(id);
+    saveLockerProfile();
+    return true;
+  }
+
+  function equipCosmetic(id) {
+    const kind = cosmeticKindOf(id);
+    if (!kind || !ownsCosmetic(id)) return false;
+    // Jakob's Norway flag cape owns the back slot — other backs can't override it.
+    if (kind === "back" && backSlotLocked()) return false;
+    cosmetics[kind] = id;
+    if (id === "jade_mask") startJadeMaskFx();
+    if (id !== "cloak" && cosmetics.back !== "cloak") cloakOn = false;
+    saveLockerProfile();
+    return true;
+  }
+
+  function unequipCosmetic(kind) {
+    if (kind !== "face" && kind !== "back") return false;
+    if (kind === "back" && backSlotLocked()) return false;
+    const id = cosmetics[kind];
+    cosmetics[kind] = null;
+    if (id === "cloak") cloakOn = false;
+    saveLockerProfile();
+    return true;
+  }
+
+  function equipSkin(id) {
+    if (!SKIN_DEFS[id] || !ownsSkin(id)) return false;
+    playerSkin = id;
+    saveLockerProfile();
+    return true;
+  }
+
+  function grantSkin(id) {
+    if (!SKIN_DEFS[id]) return false;
+    if (ownedSkins.indexOf(id) >= 0) return false;
+    ownedSkins.push(id);
+    saveLockerProfile();
+    return true;
+  }
+
+  function grantAllSkinsLegacy() {
+    skinsGrantedLegacy = true;
+    for (let i = 0; i < LAUNCH_SKIN_IDS.length; i++) {
+      if (ownedSkins.indexOf(LAUNCH_SKIN_IDS[i]) < 0) ownedSkins.push(LAUNCH_SKIN_IDS[i]);
+    }
+    saveLockerProfile();
+  }
+
+  /** Ensure free launch skins are owned (quest skins stay locked). */
+  function ensureLaunchSkins() {
+    let changed = false;
+    for (let i = 0; i < LAUNCH_SKIN_IDS.length; i++) {
+      if (ownedSkins.indexOf(LAUNCH_SKIN_IDS[i]) < 0) {
+        ownedSkins.push(LAUNCH_SKIN_IDS[i]);
+        changed = true;
+      }
+    }
+    if (!skinsGrantedLegacy) {
+      skinsGrantedLegacy = true;
+      changed = true;
+    }
+    if (changed) saveLockerProfile();
+  }
+
+  function skinLabel(id) {
+    return (SKIN_DEFS[id] && SKIN_DEFS[id].label) || String(id || "").toUpperCase();
+  }
+
+  function cosmeticLabel(id) {
+    const def = ITEM_DEFS[id];
+    if (def && def.label) return def.label;
+    if (def && def.name) return String(def.name).toUpperCase().replace(/[^A-Z0-9 ]/g, "").slice(0, 7);
+    return String(id || "").toUpperCase().slice(0, 7);
+  }
+
+  function flashQuestUnlock(msg) {
+    questTip = String(msg || "QUEST READY").toUpperCase().slice(0, 28);
+    questTipT = 2.6;
+    cosTip = questTip;
+    cosTipT = 2.6;
+  }
+
+  function questById(id) {
+    for (let i = 0; i < NOV_QUESTS.length; i++) {
+      if (NOV_QUESTS[i].id === id) return NOV_QUESTS[i];
+    }
+    return null;
+  }
+
+  function questOwnsReward(q) {
+    if (!q) return false;
+    if (q.rewardKind === "skin") return ownsSkin(q.rewardId);
+    return ownsCosmetic(q.rewardId);
+  }
+
+  function questStatus(q) {
+    if (!q) return "locked";
+    if (questClaimed[q.id] || questOwnsReward(q)) return "claimed";
+    if (questDone[q.id]) return "claimable";
+    return "locked";
+  }
+
+  function markQuestDone(id) {
+    if (!id || questDone[id] || questClaimed[id]) return false;
+    const q = questById(id);
+    if (!q) return false;
+    if (questOwnsReward(q)) {
+      questDone[id] = true;
+      questClaimed[id] = true;
+      saveLockerProfile();
+      return false;
+    }
+    questDone[id] = true;
+    saveLockerProfile();
+    flashQuestUnlock("QUEST READY CLAIM IT");
+    return true;
+  }
+
+  function claimQuest(id) {
+    const q = questById(id);
+    if (!q) return false;
+    if (questClaimed[q.id]) return false;
+    if (!questDone[q.id] && !questOwnsReward(q)) return false;
+    let ok = false;
+    if (q.rewardKind === "skin") ok = grantSkin(q.rewardId) || ownsSkin(q.rewardId);
+    else ok = grantCosmetic(q.rewardId) || ownsCosmetic(q.rewardId);
+    if (!ok) return false;
+    questDone[q.id] = true;
+    questClaimed[q.id] = true;
+    saveLockerProfile();
+    flashQuestUnlock("CLAIMED " + (q.rewardLabel || q.id).toUpperCase());
+    return true;
+  }
+
+  function syncQuestOwnershipFlags() {
+    for (let i = 0; i < NOV_QUESTS.length; i++) {
+      const q = NOV_QUESTS[i];
+      if (questOwnsReward(q)) {
+        questDone[q.id] = true;
+        questClaimed[q.id] = true;
+      }
+    }
+  }
+
+  /** November monthly quests — mark complete; claim rewards in QUESTS menu. */
+  function checkNovQuestRewards(cat, ms) {
+    const t = ms | 0;
+    if (cat === "death" && t > 0 && t < 9580) markQuestDone("bolt");
+    if (cat === "blowfish" && t > 0 && t < 45000) markQuestDone("crew");
+    if (cat === "megalodon" && t > 0 && t < 90000) markQuestDone("homer");
+    if (cat === "mask") {
+      questMaskRuns = (questMaskRuns | 0) + 1;
+      saveLockerProfile();
+      if ((questMaskRuns | 0) >= 5) markQuestDone("indy");
+    }
+    if (cat === "shark_cloak") markQuestDone("jobapp");
+    if (cat === "jelly_white" && t > 0 && t < 35000) markQuestDone("jelly");
+  }
+
+  function tryGrantAmericanCloak() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return;
+    markQuestDone("usa");
+  }
+
+  function openQuestMenu() {
+    uiScreen = "quests";
+    questCursor = 0;
+    syncQuestOwnershipFlags();
+    // Prefer first claimable quest
+    for (let i = 0; i < NOV_QUESTS.length; i++) {
+      if (questStatus(NOV_QUESTS[i]) === "claimable") {
+        questCursor = i;
+        break;
+      }
+    }
+  }
+
+  function drawQuestScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 240;
+    const rowH = 14;
+    const h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * rowH + 36);
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "NOV QUESTS");
+    drawPixText("CLAIM REWARDS HERE", (x + w / 2) | 0, y + 16, "#5c3a21", "center");
+
+    for (let i = 0; i < NOV_QUESTS.length; i++) {
+      const q = NOV_QUESTS[i];
+      const st = questStatus(q);
+      const key = "quest:" + i;
+      const sel = questCursor === i || menuHovering(key);
+      const oy = y + 28 + i * rowH;
+      if (sel) px(x + 6, oy - 2, w - 12, 12, "#e8c44a");
+      const stLabel = st === "claimed" ? "DONE" : st === "claimable" ? "CLAIM" : "----";
+      const stCol = st === "claimed" ? "#5c3a21" : st === "claimable" ? "#2b1c12" : "#8a5a32";
+      drawPixText(String(q.title).slice(0, 16), x + 10, oy, sel ? "#2b1c12" : "#3a2414");
+      drawPixText(stLabel, x + w - 42, oy, sel && st === "claimable" ? "#2b1c12" : stCol);
+      addMenuHit(
+        key,
+        x + 6,
+        oy - 2,
+        w - 12,
+        12,
+        () => {
+          questCursor = i;
+          if (st === "claimable") claimQuest(q.id);
+        },
+        { hover: true }
+      );
+    }
+
+    const cur = NOV_QUESTS[questCursor] || NOV_QUESTS[0];
+    const st = questStatus(cur);
+    let detail = cur.desc;
+    if (cur.progress) detail = cur.desc + "  " + cur.progress();
+    detail = detail + "  > " + cur.rewardLabel;
+    drawPixText(detail.slice(0, 36), (x + w / 2) | 0, y + h - 24, "#5c3a21", "center");
+    if (st === "claimable") {
+      const bx = (x + w / 2 - 36) | 0;
+      const by = y + h - 12;
+      px(bx, by - 2, 72, 11, menuHovering("quest:claim") ? "#e8c44a" : "#c9a227");
+      drawPixText("CLAIM", (x + w / 2) | 0, by, "#2b1c12", "center");
+      addMenuHit("quest:claim", bx, by - 2, 72, 11, () => claimQuest(cur.id), { hover: true });
+    } else {
+      drawPixText(st === "claimed" ? "ALREADY CLAIMED" : "NOT COMPLETE", (x + w / 2) | 0, y + h - 12, "#8a5a32", "center");
+    }
+    drawPixText("ESC", x + 10, y + h - 12, "#5c3a21");
+    addMenuHit("quest:esc", x + 8, y + h - 14, 28, 10, () => backToModeMenu(), { hover: true });
+  }
+
+  function lockerPreviewSkin() {
+    if (lockerHover && lockerHover.type === "skin" && ownsSkin(lockerHover.id)) return lockerHover.id;
+    if (lockerDrag && lockerDrag.type === "skin" && ownsSkin(lockerDrag.id)) return lockerDrag.id;
+    return playerSkin;
+  }
+
+  function lockerPreviewFace() {
+    if (lockerHover && lockerHover.type === "cosmetic" && cosmeticKindOf(lockerHover.id) === "face") return lockerHover.id;
+    if (lockerDrag && lockerDrag.type === "cosmetic" && cosmeticKindOf(lockerDrag.id) === "face") return lockerDrag.id;
+    return cosmetics.face;
+  }
+
+  function lockerPreviewBack() {
+    const skin = lockerPreviewSkin();
+    const locked = skinLockedBack(skin);
+    if (locked) return locked;
+    if (lockerHover && lockerHover.type === "cosmetic" && cosmeticKindOf(lockerHover.id) === "back") return lockerHover.id;
+    if (lockerDrag && lockerDrag.type === "cosmetic" && cosmeticKindOf(lockerDrag.id) === "back") return lockerDrag.id;
+    return cosmetics.back;
+  }
+
+  /** Pull cosmetics out of bag/satchel into the locker collection. */
+  function migrateCosmeticsFromLists(lists) {
+    const moved = [];
+    for (let li = 0; li < lists.length; li++) {
+      const list = lists[li];
+      if (!list) continue;
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        if (!s || !isCosmeticId(s.id)) continue;
+        grantCosmetic(s.id);
+        moved.push(s.id);
+        list[i] = null;
+      }
+    }
+    return moved;
+  }
+
+  function loadLockerProfile() {
+    let data = null;
+    try {
+      data = JSON.parse(localStorage.getItem(LOCKER_PROFILE_KEY) || "");
+    } catch (e) {
+      data = null;
+    }
+    ownedCosmetics = [];
+    ownedSkins = ["classic"];
+    playerSkin = "classic";
+    skinsGrantedLegacy = false;
+    questMaskRuns = 0;
+    questDone = {};
+    questClaimed = {};
+    if (data && typeof data === "object") {
+      if (Array.isArray(data.ownedCosmetics)) {
+        for (let i = 0; i < data.ownedCosmetics.length; i++) {
+          const id = data.ownedCosmetics[i];
+          if (isCosmeticId(id) && ownedCosmetics.indexOf(id) < 0) ownedCosmetics.push(id);
+        }
+      }
+      if (Array.isArray(data.ownedSkins)) {
+        ownedSkins = [];
+        for (let i = 0; i < data.ownedSkins.length; i++) {
+          const id = data.ownedSkins[i];
+          if (SKIN_DEFS[id] && ownedSkins.indexOf(id) < 0) ownedSkins.push(id);
+        }
+        if (!ownedSkins.length) ownedSkins = ["classic"];
+      }
+      if (data.face && isCosmeticId(data.face)) cosmetics.face = data.face;
+      if (data.back && isCosmeticId(data.back)) cosmetics.back = data.back;
+      if (data.skin && SKIN_DEFS[data.skin] && ownsSkin(data.skin)) playerSkin = data.skin;
+      skinsGrantedLegacy = !!data.skinsGrantedLegacy;
+      questMaskRuns = data.questMaskRuns | 0;
+      if (data.questDone && typeof data.questDone === "object") questDone = data.questDone;
+      if (data.questClaimed && typeof data.questClaimed === "object") questClaimed = data.questClaimed;
+    }
+    // Launch skins are free for everyone locally.
+    ensureLaunchSkins();
+    if (cosmetics.face && !ownsCosmetic(cosmetics.face)) grantCosmetic(cosmetics.face);
+    if (cosmetics.back && !ownsCosmetic(cosmetics.back)) grantCosmetic(cosmetics.back);
+    syncQuestOwnershipFlags();
+    tryGrantAmericanCloak();
   }
 
   function addToInventory(id) {
+    if (isCosmeticId(id)) {
+      grantCosmetic(id);
+      return true;
+    }
     const def = ITEM_DEFS[id];
     const existing = inventory.findIndex((s) => s && s.id === id);
     if (existing >= 0) {
@@ -2663,6 +3135,8 @@
 
   function canTake(id) {
     if (id === "coin") return true;
+    // Cosmetics unlock into the locker — never need a bag slot.
+    if (isCosmeticId(id)) return true;
     const def = ITEM_DEFS[id];
     if (!def) return false;
     const stack = inventory.find((s) => s && s.id === id);
@@ -2867,6 +3341,7 @@
   }
 
   function survivalOwnsId(data, id) {
+    if (isCosmeticId(id)) return ownsCosmetic(id);
     if (data.cosmetics && data.cosmetics.face === id) return true;
     if (data.cosmetics && data.cosmetics.back === id) return true;
     const slots = data.slots || [];
@@ -2877,6 +3352,14 @@
   }
 
   function survivalGiveId(data, id) {
+    if (isCosmeticId(id)) {
+      grantCosmetic(id);
+      if (data) {
+        data.ownedCosmetics = ownedCosmetics.slice();
+        data.cosmetics = { face: cosmetics.face, back: cosmetics.back };
+      }
+      return true;
+    }
     data.slots = ensureSaveSlots(data.slots);
     data.satchel = ensureSaveSlots(data.satchel);
     if (addToList(data.slots, id)) return true;
@@ -3083,8 +3566,9 @@
   function pickup(item) {
     if (!item || item.taken || player.dead > 0) return;
     const isCoin = item.id === "coin";
-    const toSatchel = !isCoin && !canTake(item.id) && canTakeSatchel(item.id);
-    if (!isCoin && !canTake(item.id) && !toSatchel) return;
+    const isCos = !isCoin && isCosmeticId(item.id);
+    const toSatchel = !isCoin && !isCos && !canTake(item.id) && canTakeSatchel(item.id);
+    if (!isCoin && !isCos && !canTake(item.id) && !toSatchel) return;
     const id = item.id;
     const from = worldToUi(item.x + 6, item.y + 6);
     pickupAnims.push({
@@ -3092,8 +3576,8 @@
       t: 0,
       fromX: from.x,
       fromY: from.y,
-      slot: isCoin ? 0 : toSatchel ? satchelSlotFor(id) : slotIndexFor(id),
-      dest: isCoin ? "coins" : toSatchel ? "satchel" : "slot",
+      slot: isCoin || isCos ? 0 : toSatchel ? satchelSlotFor(id) : slotIndexFor(id),
+      dest: isCoin ? "coins" : isCos ? "cosmetic" : toSatchel ? "satchel" : "slot",
       value: item.value | 0,
       pack: item.pack || 0,
     });
@@ -3126,7 +3610,16 @@
       const doneAt = a.style === "drop" ? 1.42 : 1.7;
       if (a.t < doneAt) continue;
       if (a.dest === "coins") coinBatch += a.value | 0;
-      else if (a.dest === "satchel") {
+      else if (a.dest === "cosmetic") {
+        const neu = !ownsCosmetic(a.id);
+        grantCosmetic(a.id);
+        onItemCollected(a.id);
+        if (neu) {
+          cosTip = "COSMETIC UNLOCKED";
+          cosTipT = 1.6;
+        }
+        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
+      } else if (a.dest === "satchel") {
         if (addToSatchel(a.id)) onItemCollected(a.id);
         xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
       } else if (a.dest !== "miss") {
@@ -3170,20 +3663,10 @@
     return false;
   }
 
-  function tryAutoEquipCosmetic(id) {
-    const kind = cosmeticKindOf(id);
-    if (!kind) return;
-    if (cosmetics[kind]) return;
-    if (!takeOneFrom(inventory, id) && !takeOneFrom(satchel, id)) return;
-    cosmetics[kind] = id;
-    cosTip = kind === "back" ? "CAPE ON" : "MASK ON";
-    cosTipT = 1.4;
-    if (id === "jade_mask") startJadeMaskFx();
-  }
-
   function onItemCollected(id) {
     if (id === "sun_idol") noteDailyClaim(utcDayKey());
-    if (isCosmeticId(id)) tryAutoEquipCosmetic(id);
+    // Cosmetics unlock in the locker — equip only from the menu.
+    if (isCosmeticId(id)) grantCosmetic(id);
   }
 
   function promptText() {
@@ -4196,11 +4679,12 @@
   }
 
   function beginMagicDrops() {
-    const ids = ["wand", "cloak"];
+    // Cloak is locker-only now — magic chest keeps the wand.
+    const ids = ["wand"];
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const fits = canTake(id);
-      const from = worldToUi(player.x + player.w / 2 + (i === 0 ? -7 : 7), player.y - 22);
+      const from = worldToUi(player.x + player.w / 2, player.y - 22);
       pickupAnims.push({
         id,
         t: 0,
@@ -4885,55 +5369,12 @@
     return true;
   }
 
-  function unequipCosmetic(kind) {
-    const id = cosmetics[kind];
-    if (!id) return false;
-    if (!putIdInBag(id)) return false;
-    cosmetics[kind] = null;
-    if (id === "cloak" && !ownsCloak()) cloakOn = false;
-    return true;
-  }
-
-  function tryEquipHeldCosmetic() {
-    if (cosSelect === "face" || cosSelect === "back") {
-      if (!cosmetics[cosSelect]) return false;
-      if (!unequipCosmetic(cosSelect)) {
-        // Bag full — keep equipped; surface a short tip via chestTalk-style prompt
-        harborTalk = 0;
-        chestTalk = 0;
-        cosTip = "BAG FULL";
-        cosTipT = 1.6;
-        return true;
-      }
-      cosSelect = null;
-      return true;
-    }
-    const stack = inventory[heldSlot];
-    if (!stack || !isCosmeticId(stack.id)) return false;
-    const kind = cosmeticKindOf(stack.id);
-    if (!kind) return false;
-    const id = stack.id;
-    const prev = cosmetics[kind];
-    stack.count -= 1;
-    if (stack.count <= 0) inventory[heldSlot] = null;
-    if (prev) {
-      if (!putIdInBag(prev)) {
-        // Swap: put previous into the freed/held slot
-        if (!inventory[heldSlot]) inventory[heldSlot] = { id: prev, count: 1 };
-        else putIdInBag(prev);
-      }
-    }
-    cosmetics[kind] = id;
-    if (id === "jade_mask" && prev !== "jade_mask") startJadeMaskFx();
-    return true;
-  }
-
   function onEnter() {
     if (player.dead > 0) return;
     // Dinghy exit / skiff → T-head. Always first so nothing else eats Enter.
     if (player.aboard && aboardKind === "dinghy" && exitDinghy()) return;
     if (player.aboard && exitBoatToDockT()) return;
-    if (tryEquipHeldCosmetic()) return;
+    // Cosmetics equip only in the locker menu — not in-game.
     if (isIndoor()) {
       dropHeld();
       return;
@@ -5339,9 +5780,13 @@
     if (cosSelect) return;
     const stack = inventory[heldSlot];
     if (!stack) return;
+    // Cosmetics live in the locker — never drop from the bag.
     if (isCosmeticId(stack.id)) {
-      // Cosmetics equip via Enter; prevent accidental outdoor drops unless indoor trade
-      if (!isIndoor()) return;
+      grantCosmetic(stack.id);
+      inventory[heldSlot] = null;
+      cosTip = "MOVED TO LOCKER";
+      cosTipT = 1.4;
+      return;
     }
     const pos = findDropPos(stack.id);
     const id = stack.id;
@@ -9438,6 +9883,34 @@
       px(x + 3, y + 3, 1, 2, "#f0a060");
       return true;
     }
+    if (id === "job_app_cloak") {
+      px(x + 1, y + 1, 5, 6, "#e8d5b0");
+      px(x, y + 2, 2, 5, "#c4a574");
+      px(x + 2, y + 2, 3, 2, "#f3e2c4");
+      px(x + 3, y + 5, 2, 1, "#5c3a21");
+      return true;
+    }
+    if (id === "american_cloak") {
+      px(x, y + 1, 7, 2, "#c43a48");
+      px(x, y + 3, 7, 1, "#f4f4f8");
+      px(x, y + 4, 7, 2, "#c43a48");
+      px(x, y + 1, 3, 3, "#3a5aaa");
+      return true;
+    }
+    if (id === "jelly_cape") {
+      px(x + 1, y + 1, 5, 3, "#a8d8f0");
+      px(x + 2, y, 3, 1, "#d8f0ff");
+      px(x + 1, y + 4, 1, 3, "#78c0e8");
+      px(x + 3, y + 4, 1, 3, "#58a8d8");
+      px(x + 5, y + 4, 1, 3, "#78c0e8");
+      return true;
+    }
+    if (id === "cloak") {
+      px(x + 1, y + 1, 4, 6, "#2a4470");
+      px(x, y + 2, 2, 6, "#1a2848");
+      px(x + 2, y + 2, 2, 4, "#3a5080");
+      return true;
+    }
     if (id === "sun_idol") {
       px(x + 2, y, 3, 1, "#ffe08a");
       px(x + 1, y + 1, 5, 4, "#e8c44a");
@@ -9833,31 +10306,107 @@
    * +x is forward (facing scale), so the sheet hangs toward -x.
    */
   function drawCapeSheet(id, amp, spd, phase) {
-    if (id !== "cape" && id !== "cloak") return;
+    if (
+      id !== "cape" &&
+      id !== "cloak" &&
+      id !== "norway_flag" &&
+      id !== "jamaica_flag" &&
+      id !== "job_app_cloak" &&
+      id !== "american_cloak" &&
+      id !== "jelly_cape"
+    ) {
+      return;
+    }
     const ember = id === "cape";
+    const norway = id === "norway_flag";
+    const jamaica = id === "jamaica_flag";
+    const usa = id === "american_cloak";
+    const jelly = id === "jelly_cape";
+    const job = id === "job_app_cloak";
+    const flag = norway || jamaica || usa;
     const body = ember
       ? ["#f06040", "#e04a32", "#c43a28", "#a82820", "#8a2020", "#6a1410"]
-      : ["#3a5080", "#2a4470", "#243860", "#1e3058", "#1a2848", "#101828"];
-    const edge = ember ? "#4a100c" : "#0c1420";
-    const fold = ember ? "#f0a060" : "#6a88b0";
-    const rows = ember ? 11 : 12;
+      : norway
+        ? ["#e84a58", "#d02038", "#ba0c2f", "#a01028", "#8a1020", "#6a0c18"]
+        : jamaica
+          ? ["#2a8a34", "#1e7028", "#186020", "#e8c44a", "#1a1a1a", "#0c0c0c"]
+          : usa
+            ? ["#c43a48", "#ba2030", "#f4f4f8", "#3a5aaa", "#2a4a88", "#1a3868"]
+            : jelly
+              ? ["#d8f0ff", "#a8d8f0", "#78c0e8", "#58a8d8", "#3a88c0", "#2868a0"]
+              : job
+                ? ["#f3e2c4", "#e8d5b0", "#d4c098", "#c4a574", "#8a6a42", "#5c3a21"]
+                : ["#3a5080", "#2a4470", "#243860", "#1e3058", "#1a2848", "#101828"];
+    const edge = ember
+      ? "#4a100c"
+      : norway
+        ? "#4a0810"
+        : jamaica
+          ? "#0a280c"
+          : usa
+            ? "#2a1020"
+            : jelly
+              ? "#1a4868"
+              : job
+                ? "#3a2414"
+                : "#0c1420";
+    const fold = ember
+      ? "#f0a060"
+      : norway || usa
+        ? "#f4f4f8"
+        : jamaica
+          ? "#e8c44a"
+          : jelly
+            ? "#e8ffff"
+            : job
+              ? "#fff8e8"
+              : "#6a88b0";
+    const rows = flag || jelly ? 14 : ember ? 11 : 12;
+    const useAmp = flag || jelly ? amp * 1.35 : amp;
     for (let i = 0; i < rows; i++) {
       const u = i / (rows - 1);
       const pin = i < 2 ? 0.1 : 0.22 + u * u;
-      const wave = Math.sin(time * spd + phase + i * 0.68) * amp * pin;
-      const wave2 = Math.sin(time * spd * 0.61 + phase * 1.3 + i * 1.15 + 1.8) * amp * u;
-      const drag = -u * amp * 0.85;
+      const wave = Math.sin(time * spd + phase + i * 0.68) * useAmp * pin;
+      const wave2 = Math.sin(time * spd * 0.61 + phase * 1.3 + i * 1.15 + 1.8) * useAmp * u;
+      const drag = -u * useAmp * 0.85;
       const ox = (wave + drag) | 0;
       const y = -6 + i;
-      let w = 3 + ((i * 0.42) | 0);
+      let w = (flag || jelly ? 4 : 3) + ((i * (flag || jelly ? 0.55 : 0.42)) | 0);
       if (wave2 > 0.35) w += 1;
-      const x = -4 - ((u * 2.2) | 0) + ox;
+      const x = -4 - ((u * (flag || jelly ? 3.1 : 2.2)) | 0) + ox;
       const col = body[Math.min(body.length - 1, (u * (body.length - 1)) | 0)];
       px(x, y, w, 1, col);
-      if ((i & 1) === 0) px(x + 1 + (wave2 > 0 ? 1 : 0), y, 1, 1, fold);
+      if (norway) {
+        const crossRow = i >= 5 && i <= 8;
+        const mid = x + ((w / 2) | 0);
+        if (crossRow) px(x, y, w, 1, i === 6 || i === 7 ? "#00205b" : "#f4f4f8");
+        else {
+          px(mid - 1, y, 2, 1, "#f4f4f8");
+          px(mid, y, 1, 1, "#00205b");
+        }
+        if ((i & 1) === 0) px(x + w - 1, y, 1, 1, fold);
+      } else if (jamaica) {
+        // Green / gold / black bands
+        if (i < 5) px(x, y, w, 1, "#1e8a34");
+        else if (i < 9) px(x, y, w, 1, "#e8c44a");
+        else px(x, y, w, 1, "#1a1a1a");
+        if ((i & 1) === 0) px(x + w - 1, y, 1, 1, fold);
+      } else if (usa) {
+        if (i < 4) {
+          px(x, y, w, 1, i & 1 ? "#f4f4f8" : "#c43a48");
+          px(x, y, Math.max(2, (w / 3) | 0), 1, "#3a5aaa");
+        } else {
+          px(x, y, w, 1, i & 1 ? "#f4f4f8" : "#c43a48");
+        }
+      } else if (jelly) {
+        if ((i & 1) === 0) px(x + 1, y, Math.max(1, w - 2), 1, "#e8ffff");
+        if (i > 8 && (i & 1)) px(x + ((w / 2) | 0), y, 1, 1, "#78c0e8");
+      } else if ((i & 1) === 0) {
+        px(x + 1 + (wave2 > 0 ? 1 : 0), y, 1, 1, fold);
+      }
       if (i > 1) px(x - 1 + (wave2 | 0), y, 1, 1, edge);
       if (i > rows - 3) {
-        const hx = x + w + ((Math.sin(time * spd * 1.35 + phase + i * 2.0) * amp * 0.55) | 0);
+        const hx = x + w + ((Math.sin(time * spd * 1.35 + phase + i * 2.0) * useAmp * 0.55) | 0);
         px(hx, y, 1, 1, edge);
       }
     }
@@ -9866,18 +10415,44 @@
   /** Collar and shoulder points drawn after the torso so the cape reads as worn. */
   function drawCapeCollar(id) {
     if (id === "cape") {
-      // Nape and shoulder band sit under the chin so they don't cover a mask.
       px(-5, -7, 2, 2, "#8a2020");
       px(-3, -7, 5, 1, "#c9a227");
       px(2, -7, 2, 1, "#a82820");
       px(-4, -8, 2, 1, "#e8c44a");
       px(-2, -7, 1, 1, "#f0a060");
-    } else if (id === "cloak") {
-      px(-5, -7, 2, 2, "#1a2848");
-      px(-3, -7, 5, 1, "#3a5080");
-      px(2, -7, 2, 1, "#243860");
-      px(-4, -8, 2, 1, "#5a78a0");
-      px(-2, -7, 1, 1, "#8aa4c8");
+    } else if (id === "cloak" || id === "job_app_cloak") {
+      const dark = id === "job_app_cloak" ? "#5c3a21" : "#1a2848";
+      const mid = id === "job_app_cloak" ? "#c4a574" : "#3a5080";
+      const lite = id === "job_app_cloak" ? "#f3e2c4" : "#8aa4c8";
+      px(-5, -7, 2, 2, dark);
+      px(-3, -7, 5, 1, mid);
+      px(2, -7, 2, 1, dark);
+      px(-4, -8, 2, 1, lite);
+      px(-2, -7, 1, 1, lite);
+    } else if (id === "norway_flag") {
+      px(-5, -7, 2, 2, "#ba0c2f");
+      px(-3, -7, 5, 1, "#f4f4f8");
+      px(2, -7, 2, 1, "#ba0c2f");
+      px(-4, -8, 2, 1, "#00205b");
+      px(-1, -7, 1, 1, "#00205b");
+    } else if (id === "jamaica_flag") {
+      px(-5, -7, 2, 2, "#1e8a34");
+      px(-3, -7, 5, 1, "#e8c44a");
+      px(2, -7, 2, 1, "#1a1a1a");
+      px(-4, -8, 2, 1, "#e8c44a");
+      px(-1, -7, 1, 1, "#1a1a1a");
+    } else if (id === "american_cloak") {
+      px(-5, -7, 2, 2, "#3a5aaa");
+      px(-3, -7, 5, 1, "#f4f4f8");
+      px(2, -7, 2, 1, "#c43a48");
+      px(-4, -8, 2, 1, "#c43a48");
+      px(-1, -7, 1, 1, "#3a5aaa");
+    } else if (id === "jelly_cape") {
+      px(-5, -7, 2, 2, "#58a8d8");
+      px(-3, -7, 5, 1, "#d8f0ff");
+      px(2, -7, 2, 1, "#78c0e8");
+      px(-4, -8, 2, 1, "#e8ffff");
+      px(-2, -7, 1, 1, "#a8d8f0");
     }
   }
 
@@ -9946,8 +10521,217 @@
     const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
     const gust = (player.moving && !player.aboard ? 2.55 : 0.82) * boatDamp;
     const gustSpd = player.moving && !player.aboard ? 8.4 : 2.15;
-    drawCapeSheet(cosmetics.back, gust, gustSpd, f * 0.4);
-    const hurt = player.hurt > 0;
+    const backWear = effectiveBack(playerSkin, cosmetics.back);
+    drawCapeSheet(backWear, gust, gustSpd, f * 0.4);
+    drawPlayerBody(playerSkin, step, player.hurt > 0, !!player.aboard);
+    drawCapeCollar(backWear);
+    if (playerSkin === "beta_alien") drawAlienPortalWisps(0, -8);
+    if (player.inWater && !player.aboard) {
+      px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
+    }
+
+    ink.restore();
+  }
+
+  /** Skin body at feet pivot (0,0) facing +x after scale. */
+  function drawPlayerBody(skin, step, hurt, seated) {
+    const s = skin || "classic";
+    if (s === "jakob") {
+      // Norway singlet + flag cape (cape drawn separately, locked to this skin)
+      const skinC = hurt ? "#8a3a3a" : "#e8c39a";
+      const kit = hurt ? "#6a3038" : "#f4f6f8";
+      const red = "#ba0c2f";
+      px(-2, -14, 4, 1, "#2a1810");
+      px(-2, -13, 5, 1, "#3a2818");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#d4a07a");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, kit);
+      px(-3, -6, 6, 1, red);
+      px(-2, -4, 4, 1, red);
+      px(-2, -3, 4, 2, kit);
+      px(-5, -5, 2, 3, kit);
+      px(3, -5, 2, 3, kit);
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 4, 1, "#1a1a1a");
+      if (seated) {
+        px(-3, 1, 2, 1, "#1a1a1a");
+        px(0, 1, 2, 1, "#1a1a1a");
+      } else {
+        px(-3, 1, 2, 3 + step, "#1a1a1a");
+        px(0, 1, 2, 3 - step, "#1a1a1a");
+        px(-3, 3 + step, 2, 1, "#e8c44a");
+        px(0, 3 - step, 2, 1, "#e8c44a");
+      }
+      return;
+    }
+    if (s === "fisherman_joe") {
+      const skinC = hurt ? "#8a3a3a" : "#d4a07a";
+      const vest = hurt ? "#6a3038" : "#5a4630";
+      const shirt = "#c4a574";
+      px(-3, -13, 6, 2, "#6a6a68");
+      px(-2, -14, 4, 1, "#8a8a88");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#b08060");
+      px(-1, -7, 3, 1, "#8a6a50");
+      drawFaceCosmetic();
+      px(-4, -6, 8, 6, shirt);
+      px(-3, -5, 6, 5, vest);
+      px(-2, -3, 1, 2, "#c9a227");
+      px(1, -3, 1, 2, "#c9a227");
+      px(-6, -4, 2, 3, shirt);
+      px(4, -4, 2, 3, vest);
+      px(-5, -1, 2, 2, skinC);
+      px(3, -1, 2, 2, skinC);
+      px(-3, 0, 6, 2, "#3a2e1c");
+      if (seated) {
+        px(-3, 2, 2, 1, "#2a2014");
+        px(0, 2, 2, 1, "#2a2014");
+      } else {
+        px(-3, 2, 2, 2 + step, "#2a2014");
+        px(0, 2, 2, 2 - step, "#2a2014");
+      }
+      return;
+    }
+    if (s === "beta_alien") {
+      const skinC = hurt ? "#4a6a38" : "#5aba48";
+      const dark = "#2a6a34";
+      px(-1, -16, 1, 2, "#3a8a44");
+      px(2, -16, 1, 2, "#3a8a44");
+      px(-1, -17, 1, 1, "#c878ff");
+      px(2, -17, 1, 1, "#c878ff");
+      px(-3, -13, 6, 2, skinC);
+      px(-2, -14, 4, 1, "#8fdc78");
+      px(-2, -12, 5, 5, skinC);
+      px(-2, -10, 2, 2, "#0e2820");
+      px(1, -10, 2, 2, "#0e2820");
+      px(-1, -9, 1, 1, "#c8ffe8");
+      px(2, -9, 1, 1, "#c8ffe8");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, dark);
+      px(-3, -6, 6, 2, skinC);
+      px(-2, -4, 4, 3, dark);
+      px(-5, -5, 2, 4, skinC);
+      px(3, -5, 2, 4, dark);
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      if (seated) {
+        px(-3, 1, 2, 1, "#1a4a28");
+        px(0, 1, 2, 1, "#1a4a28");
+      } else {
+        px(-3, 1, 2, 3 + step, "#1a4a28");
+        px(0, 1, 2, 3 - step, "#1a4a28");
+      }
+      return;
+    }
+    if (s === "usain_bolt") {
+      // Jamaica speed suit — yellow / green / black
+      const skinC = hurt ? "#8a3a3a" : "#6a4028";
+      px(-2, -14, 4, 1, "#1a1a1a");
+      px(-2, -13, 5, 1, "#2a2a2a");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#1a1010");
+      px(1, -8, 1, 1, "#5a3020");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, "#e8c44a");
+      px(-3, -6, 6, 1, "#1e8a34");
+      px(-3, -4, 6, 1, "#1a1a1a");
+      px(-2, -3, 4, 2, "#e8c44a");
+      px(-5, -5, 2, 3, "#1e8a34");
+      px(3, -5, 2, 3, "#1a1a1a");
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 4, 1, "#1a1a1a");
+      if (seated) {
+        px(-3, 1, 2, 1, "#1e8a34");
+        px(0, 1, 2, 1, "#1a1a1a");
+      } else {
+        px(-3, 1, 2, 3 + step, "#1e8a34");
+        px(0, 1, 2, 3 - step, "#1a1a1a");
+        px(-3, 3 + step, 2, 1, "#e8c44a");
+        px(0, 3 - step, 2, 1, "#e8c44a");
+      }
+      return;
+    }
+    if (s === "among_us_red") {
+      // Red crewmate — visor + backpack
+      const suit = hurt ? "#6a2030" : "#c43a48";
+      const dark = "#6a1828";
+      px(-4, -12, 8, 2, suit);
+      px(-3, -14, 6, 2, suit);
+      px(-3, -12, 6, 5, suit);
+      px(-2, -11, 4, 3, "#7ad0e8");
+      px(-1, -10, 3, 2, "#d8f4ff");
+      drawFaceCosmetic();
+      px(-4, -7, 8, 6, suit);
+      px(-5, -6, 2, 5, dark);
+      px(-4, -2, 8, 2, dark);
+      if (seated) {
+        px(-3, 1, 2, 1, suit);
+        px(0, 1, 2, 1, suit);
+      } else {
+        px(-3, 1, 2, 2 + step, suit);
+        px(0, 1, 2, 2 - step, suit);
+      }
+      return;
+    }
+    if (s === "homer") {
+      // Yellow + white polo + blue pants
+      const skinC = hurt ? "#8a6a20" : "#f0d050";
+      px(-2, -14, 4, 1, skinC);
+      px(-3, -13, 6, 2, skinC);
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#d4a030");
+      px(-1, -7, 3, 1, "#2a1810");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, "#f4f4f8");
+      px(-2, -4, 1, 2, "#3a6aaa");
+      px(-5, -5, 2, 3, skinC);
+      px(3, -5, 2, 3, skinC);
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-3, -1, 6, 2, "#3a6aaa");
+      if (seated) {
+        px(-3, 1, 2, 1, "#2a4a78");
+        px(0, 1, 2, 1, "#2a4a78");
+      } else {
+        px(-3, 1, 2, 3 + step, "#2a4a78");
+        px(0, 1, 2, 3 - step, "#2a4a78");
+      }
+      return;
+    }
+    if (s === "indiana_jones") {
+      // Fedora + leather jacket
+      const skinC = hurt ? "#8a3a3a" : "#d4a07a";
+      px(-3, -14, 6, 1, "#5c3a21");
+      px(-4, -13, 8, 1, "#5c3a21");
+      px(-2, -15, 4, 1, "#3a2414");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#b08060");
+      px(-1, -7, 3, 1, "#5c3a21");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, "#6a4028");
+      px(-3, -6, 6, 1, "#c4a574");
+      px(-5, -5, 2, 3, "#6a4028");
+      px(3, -5, 2, 3, "#6a4028");
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 4, 1, "#3a2414");
+      if (seated) {
+        px(-3, 1, 2, 1, "#3a2414");
+        px(0, 1, 2, 1, "#3a2414");
+      } else {
+        px(-3, 1, 2, 3 + step, "#3a2414");
+        px(0, 1, 2, 3 - step, "#3a2414");
+      }
+      return;
+    }
+    // classic
     const shirt = hurt ? "#8a3a3a" : "#b8c4d4";
     const vest = hurt ? "#6a3038" : "#3a6a9a";
     px(-3, -13, 6, 2, "#c43a28");
@@ -9965,19 +10749,23 @@
     px(3, -5, 2, 4, vest);
     px(-5, -2, 2, 2, "#e8c39a");
     px(3, -2, 2, 2, "#e8c39a");
-    drawCapeCollar(cosmetics.back);
-    if (player.aboard) {
+    if (seated) {
       px(-3, 1, 2, 1, "#2a4a78");
       px(0, 1, 2, 1, "#2a4a78");
     } else {
       px(-3, 1, 2, 3 + step, "#2a4a78");
       px(0, 1, 2, 3 - step, "#2a4a78");
     }
-    if (player.inWater && !player.aboard) {
-      px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
-    }
+  }
 
-    ink.restore();
+  function drawAlienPortalWisps(ox, oy) {
+    for (let i = 0; i < 5; i++) {
+      const a = time * 2.4 + i * 1.25;
+      const r = 5 + Math.sin(time * 3 + i) * 1.5;
+      const x = (ox + Math.cos(a) * r) | 0;
+      const y = (oy + Math.sin(a) * r * 0.7) | 0;
+      px(x, y, 1, 1, i & 1 ? "#c878ff" : "#6ad4ff");
+    }
   }
 
   function drawDigit(x, y, n, color) {
@@ -10273,25 +11061,6 @@
         px(gx + 2, gy + 2, slot - 4, slot - 4, "#1a120c");
         drawHudIcon(stack.id, gx, gy);
       }
-    }
-
-    // Cosmetic slots 9 / 0 — off to the side of the 2×4 bag
-    const cosGap = 6;
-    const cosX = x0 - (slot + cosGap) - 2;
-    const cosKinds = ["face", "back"];
-    const cosKeys = ["9", "0"];
-    for (let ci = 0; ci < 2; ci++) {
-      const kind = cosKinds[ci];
-      const sy = y0 + ci * (slot + h.rowGap);
-      const sx = cosX;
-      const sel = cosSelect === kind;
-      px(sx, sy, slot, slot, sel ? "#c9a227" : "#2b1c12");
-      px(sx + 1, sy + 1, slot - 2, slot - 2, sel ? "#f3e2c4" : "#2b1c12");
-      px(sx + 2, sy + 2, slot - 4, slot - 4, "#3a2414");
-      px(sx + 4, sy + 4, slot - 8, slot - 8, "#1a120c");
-      const cid = cosmetics[kind];
-      if (cid) drawHudIcon(cid, sx, sy);
-      drawPixText(cosKeys[ci], sx + 2, sy + slot - 7, sel ? "#3a2414" : "#8a6a42");
     }
 
     const inner = barW - 4;
@@ -11503,7 +12272,9 @@
       uiScreen === "mode" ||
       uiScreen === "account" ||
       uiScreen === "nm_boards" ||
+      uiScreen === "profiles" ||
       uiScreen === "walkthrough" ||
+      uiScreen === "quests" ||
       !playMode
     ) {
       mode = "menu";
@@ -12151,9 +12922,9 @@
       Math.hypot(mid.x - (templePedestal.x + 8), mid.y - (templePedestal.y + 4)) < 18 &&
       !templeMaskTaken
     ) {
-      if (canTake("jade_mask") || inventory.some((s) => s && s.id === "jade_mask") || cosmetics.face === "jade_mask") {
+      if (canTake("jade_mask") || ownsCosmetic("jade_mask") || cosmetics.face === "jade_mask") {
         templeMaskTaken = true;
-        if (cosmetics.face !== "jade_mask" && !inventory.some((s) => s && s.id === "jade_mask")) {
+        if (!ownsCosmetic("jade_mask") && cosmetics.face !== "jade_mask") {
           loot.push({
             id: "jade_mask",
             x: templePedestal.x + 4,
@@ -12303,7 +13074,7 @@
       y: player.y | 0,
       face: player.facing | 0,
       face_id: cosmetics.face,
-      back_id: cosmetics.back,
+      back_id: effectiveBack(playerSkin, cosmetics.back),
       emote: hubEmoteT > 0 ? hubEmote : "",
     });
   }
@@ -12692,8 +13463,10 @@
       uiScreen === "boards" ||
       uiScreen === "account" ||
       uiScreen === "nm_boards" ||
+      uiScreen === "profiles" ||
       uiScreen === "walkthrough" ||
-      uiScreen === "spin"
+      uiScreen === "spin" ||
+      uiScreen === "quests"
     );
   }
 
@@ -13411,8 +14184,9 @@
         srPbLabel = "";
       }
       if (api.recordSpeedrunFinish) api.recordSpeedrunFinish();
-      if (api.addPlaytime) api.addPlaytime(srFinalMs, "speedrun");
+      if (api.noteSrEvent) api.noteSrEvent("runs", 1);
     }
+    checkNovQuestRewards(srCat, srFinalMs);
     refreshSpeedBoard(srCat);
   }
 
@@ -13431,8 +14205,7 @@
     player.moving = false;
     player.facing = 1;
     cloakOn = false;
-    cosmetics.face = null;
-    cosmetics.back = null;
+    // Locker cosmetics stay equipped across modes — do not clear face/back.
     cosSelect = null;
     templeMaskTaken = false;
     sunkenTaken = false;
@@ -13841,18 +14614,36 @@
     return Math.max(1, ((n * 6 * 2) / 3) | 0);
   }
 
-  function drawPixTextSm(text, x, y, color) {
+  function drawPixTextSm(text, x, y, color, align) {
     const s = String(text || "").toUpperCase();
     if (!s) return;
     const prevInk = ink;
     ink = ctx;
     ctx.save();
     ctx.imageSmoothingEnabled = false;
-    ctx.translate(x | 0, y | 0);
+    let ox = 0;
+    if (align === "center") ox = -((pixTextWidthSm(s) / 2) | 0);
+    else if (align === "right") ox = -pixTextWidthSm(s);
+    ctx.translate((x | 0) + ox, y | 0);
     ctx.scale(2 / 3, 2 / 3);
     for (let i = 0; i < s.length; i++) drawPixChar(s[i], i * 6, 0, color);
     ctx.restore();
     ink = prevInk;
+  }
+
+  /** Top-corner hub chip with text optically centered in its box. */
+  function drawHubChip(label, x, y, key, onClick) {
+    const padX = 5;
+    const tw = pixTextWidth(label);
+    const w = tw + padX * 2;
+    const h = 16;
+    const hot = menuHovering(key);
+    px(x, y, w, h, hot ? "#c9a227" : "#2b1c12");
+    px(x + 1, y + 1, w - 2, h - 2, hot ? "#e8c44a" : "#5c3a21");
+    // Glyph is 7px in a 14px face (h=16 with 1px border) → y+5 is true center
+    drawPixText(label, x + padX, y + 5, hot ? "#2b1c12" : "#f3e2c4");
+    addMenuHit(key, x, y, w, h, onClick, { hover: true });
+    return w;
   }
 
   /** Compact green live-player (6x6) for ONLINE. */
@@ -13893,6 +14684,7 @@
     const iconW = 6;
     const gapIcon = 2;
     const gapPair = 5;
+    const chipH = 11;
     const onlineTxt = "ONLINE " + online;
     const totalTxt = total != null ? "TOTAL " + total : null;
     const onlineTw = pixTextWidthSm(onlineTxt);
@@ -13901,70 +14693,471 @@
     const pair2 = totalTxt ? iconW + gapIcon + totalTw : 0;
     const inner = totalTxt ? pair1 + gapPair + pair2 : pair1;
     const x = (cx - inner / 2) | 0;
-    px(x - 3, y - 1, inner + 6, 9, "#3a2414");
-    px(x - 2, y, inner + 4, 7, "#5c3a21");
-    drawOnlineStatIcon(x, y);
-    drawPixTextSm(onlineTxt, x + iconW + gapIcon, y + 1, "#f3e2c4");
+    px(x - 4, y, inner + 8, chipH, "#3a2414");
+    px(x - 3, y + 1, inner + 6, chipH - 2, "#5c3a21");
+    const iy = y + 2;
+    drawOnlineStatIcon(x, iy);
+    drawPixTextSm(onlineTxt, x + iconW + gapIcon, iy + 1, "#f3e2c4");
     if (totalTxt) {
       const tx = x + pair1 + gapPair;
-      drawTotalStatIcon(tx, y);
-      drawPixTextSm(totalTxt, tx + iconW + gapIcon, y + 1, "#f3e2c4");
+      drawTotalStatIcon(tx, iy);
+      drawPixTextSm(totalTxt, tx + iconW + gapIcon, iy + 1, "#f3e2c4");
     }
+  }
+
+  function clearLockerHits() {
+    lockerHits = [];
+  }
+
+  function addLockerHit(key, x, y, w, h, meta) {
+    lockerHits.push({ key, x, y, w, h, meta: meta || null });
+  }
+
+  function hitLockerAt(ux, uy) {
+    for (let i = lockerHits.length - 1; i >= 0; i--) {
+      const h = lockerHits[i];
+      if (ux >= h.x && uy >= h.y && ux < h.x + h.w && uy < h.y + h.h) return h;
+    }
+    return null;
+  }
+
+  /** Standing locker mannequin (screen space, feet at fx,fy). */
+  function drawLockerPreview(fx, fy) {
+    const skin = lockerPreviewSkin();
+    const face = lockerPreviewFace();
+    const back = lockerPreviewBack();
+    const prevFace = cosmetics.face;
+    const prevBack = cosmetics.back;
+    cosmetics.face = face;
+    cosmetics.back = back;
+    ink.save();
+    ink.translate(fx, fy);
+    ink.scale(2, 2);
+    const bob = ((Math.sin(time * 2.1) * 0.6) | 0);
+    ink.translate(0, bob);
+    drawCapeSheet(back, 0.9, 2.2, time);
+    drawPlayerBody(skin, 0, false, false);
+    drawCapeCollar(back);
+    if (skin === "beta_alien") drawAlienPortalWisps(0, -8);
+    ink.restore();
+    cosmetics.face = prevFace;
+    cosmetics.back = prevBack;
+  }
+
+  function drawNorwayFlagIcon(x, y) {
+    px(x, y, 8, 6, "#ba0c2f");
+    px(x + 2, y, 2, 6, "#f4f4f8");
+    px(x, y + 2, 8, 2, "#f4f4f8");
+    px(x + 3, y, 1, 6, "#00205b");
+    px(x, y + 3, 8, 1, "#00205b");
+  }
+
+  function drawLockedBackIcon(id, x, y) {
+    if (id === "norway_flag") drawNorwayFlagIcon(x, y);
+    else if (id === "jamaica_flag") {
+      px(x, y, 8, 2, "#1e8a34");
+      px(x, y + 2, 8, 2, "#e8c44a");
+      px(x, y + 4, 8, 2, "#1a1a1a");
+    } else if (!drawTinyCatch(id, x, y)) {
+      drawHudIcon(id, x - 4, y - 4);
+    }
+  }
+
+  function drawLockerSocket(x, y, label, kind, equippedId) {
+    const w = 26;
+    const h = 26;
+    const locked = kind === "back" && backSlotLocked(lockerPreviewSkin());
+    const showId = locked ? skinLockedBack(lockerPreviewSkin()) : equippedId;
+    const hot =
+      !locked &&
+      (menuHovering("lock:" + kind) || (lockerDrag && lockerDrag.kind === kind));
+    px(x, y, w, h, locked ? "#5c3a21" : hot ? "#c9a227" : "#2b1c12");
+    px(x + 1, y + 1, w - 2, h - 2, locked ? "#3a2414" : "#3a2414");
+    px(x + 2, y + 2, w - 4, h - 4, "#1a120c");
+    if (showId) {
+      if (kind === "skin") {
+        ink.save();
+        ink.translate(x + 13, y + 22);
+        drawPlayerBody(showId, 0, false, true);
+        ink.restore();
+      } else if (showId === "norway_flag" || showId === "jamaica_flag") {
+        drawLockedBackIcon(showId, x + 9, y + 10);
+      } else if (!drawTinyCatch(showId, x + 9, y + 9)) {
+        drawHudIcon(showId, x + 1, y + 1);
+      }
+    }
+    drawPixTextSm(
+      locked ? "FLAG" : label,
+      x + ((w / 2) | 0),
+      y + h + 2,
+      locked ? "#e8c44a" : "#c4a574",
+      "center"
+    );
+    addMenuHit(
+      "lock:" + kind,
+      x,
+      y,
+      w,
+      h,
+      () => {
+        if (locked) return;
+        if (lockerDrag) {
+          applyLockerDrop(kind);
+          return;
+        }
+        if (kind === "skin") return;
+        if (cosmetics[kind]) unequipCosmetic(kind);
+      },
+      { hover: !locked }
+    );
+    if (!locked) addLockerHit("sock:" + kind, x, y, w, h, { type: "socket", kind });
+  }
+
+  function applyLockerDrop(kind) {
+    if (!lockerDrag) return;
+    if (kind === "skin") {
+      if (lockerDrag.type === "skin") equipSkin(lockerDrag.id);
+    } else if (lockerDrag.type === "cosmetic") {
+      const ck = cosmeticKindOf(lockerDrag.id);
+      if (ck === kind) {
+        if (kind === "back" && backSlotLocked()) {
+          lockerDrag = null;
+          return;
+        }
+        equipCosmetic(lockerDrag.id);
+      }
+    }
+    lockerDrag = null;
+  }
+
+  function drawLockerStripItem(x, y, id, type, opts) {
+    const w = (opts && opts.w) || 24;
+    const h = (opts && opts.h) || 24;
+    const showLabel = !!(opts && opts.label);
+    const eq =
+      type === "skin"
+        ? playerSkin === id
+        : cosmetics.face === id || cosmetics.back === id;
+    const dragging = lockerDrag && lockerDrag.id === id && lockerDrag.type === type;
+    const hot =
+      !dragging &&
+      lockerHover &&
+      lockerHover.id === id &&
+      lockerHover.type === type;
+    px(x, y, w, h, eq ? "#e8c44a" : hot ? "#c9a227" : "#2b1c12");
+    px(x + 1, y + 1, w - 2, h - 2, eq ? "#c9a227" : "#5c3a21");
+    px(x + 2, y + 2, w - 4, h - 4, "#1a120c");
+    if (!dragging) {
+      if (type === "skin") {
+        ink.save();
+        ink.translate(x + ((w / 2) | 0), y + h - 4);
+        drawPlayerBody(id, 0, false, true);
+        ink.restore();
+      } else if (!drawTinyCatch(id, x + ((w / 2) | 0) - 4, y + ((h / 2) | 0) - 4)) {
+        drawHudIcon(id, x + (((w - 16) / 2) | 0), y + (((h - 16) / 2) | 0));
+      }
+    }
+    if (showLabel) {
+      const lab = type === "skin" ? skinLabel(id) : cosmeticLabel(id);
+      drawPixTextSm(lab, x + ((w / 2) | 0), y + h + 2, eq ? "#e8c44a" : "#8a6a42", "center");
+    }
+    addMenuHit(
+      "lockitem:" + type + ":" + id,
+      x,
+      y,
+      w,
+      h + (showLabel ? 8 : 0),
+      () => {
+        if (type === "skin") equipSkin(id);
+        else {
+          const kind = cosmeticKindOf(id);
+          if (cosmetics[kind] === id) unequipCosmetic(kind);
+          else equipCosmetic(id);
+        }
+      },
+      { hover: true }
+    );
+    addLockerHit("item:" + type + ":" + id, x, y, w, h, {
+      type,
+      id,
+      kind: type === "skin" ? "skin" : cosmeticKindOf(id),
+    });
   }
 
   function drawModeSelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
-    ctx.globalAlpha = 0.55;
-    px(0, 0, uiW, uiH, "#0b1a22");
-    ctx.globalAlpha = 1;
-    const playW = 168;
-    const walkW = 128;
-    const gap = 10;
-    const h = 136;
-    const totalW = playW + walkW + gap;
-    const x0 = ((uiW - totalW) / 2) | 0;
-    const y = ((uiH - h) / 2) | 0;
-    drawPanelBox(x0, y, playW, h, "ISLEBOUND");
-    // Title bar ends ~y+14; tuck player info tightly under it.
-    drawOnlineChip((x0 + playW / 2) | 0, y + 16);
-    for (let i = 0; i < MODE_PLAY.length; i++) {
-      const key = "mode:" + i;
-      const sel = srCursor === i || menuHovering(key);
-      const oy = y + 30 + i * 12;
-      if (sel) px(x0 + 10, oy - 2, playW - 20, 11, "#e8c44a");
-      const label = MODE_PLAY[i];
-      const lx = x0 + 14;
-      drawModeMenuIcon(label, lx, oy - 1);
-      drawPixText(label, lx + 12, oy, sel ? "#2b1c12" : "#3a2414");
-      addMenuHit(key, x0 + 10, oy - 2, playW - 20, 11, () => {
-        srCursor = i;
-        activateModeOpt(i);
-      }, { hover: true });
-    }
-    drawPixText("CLICK OR ARROWS", (x0 + playW / 2) | 0, y + h - 12, "#5c3a21", "center");
 
-    const wx = x0 + playW + gap;
-    drawPanelBox(wx, y, walkW, h, "WALKTHROUGH");
-    drawPixText("LEARN A MODE", (wx + walkW / 2) | 0, y + 18, "#5c3a21", "center");
-    for (let i = 0; i < MODE_WALK.length; i++) {
-      const idx = MODE_PLAY.length + i;
-      const key = "mode:" + idx;
-      const sel = srCursor === idx || menuHovering(key);
-      const oy = y + 32 + i * 18;
-      if (sel) px(wx + 12, oy - 2, walkW - 24, 14, "#e8c44a");
-      else px(wx + 12, oy - 2, walkW - 24, 14, "#8a5a32");
-      px(wx + 13, oy - 1, walkW - 26, 12, sel ? "#e8c44a" : "#c4a574");
-      const label = MODE_WALK[i];
-      const lx = wx + 16;
-      drawModeMenuIcon(label, lx, oy + 1);
-      drawPixText(label, lx + 12, oy + 2, sel ? "#2b1c12" : "#3a2414");
-      addMenuHit(key, wx + 12, oy - 2, walkW - 24, 14, () => {
-        srCursor = idx;
-        activateModeOpt(idx);
-      }, { hover: true });
+    // Read hover from last frame's hit boxes before rebuilding them
+    {
+      const lh = hitLockerAt(pointerUi.x, pointerUi.y);
+      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "tab")) {
+        lockerHover = { id: lh.meta.id, type: lh.meta.type };
+      } else {
+        lockerHover = null;
+      }
     }
-    drawPixText("ESC EXITS GUIDE", (wx + walkW / 2) | 0, y + h - 12, "#5c3a21", "center");
+    clearLockerHits();
+
+    // Solid backdrop (no stripes through title / panel)
+    px(0, 0, uiW, uiH, "#0a1520");
+
+    const pad = 10;
+    const topY = 6;
+    const topBandH = 32;
+    px(0, 0, uiW, topBandH, "#0a1520");
+
+    // Corner chips — measure first so right edge never clips
+    const chipH = 16;
+    const statsW = pixTextWidth("STATS") + 10;
+    const profW = pixTextWidth("PROFILES") + 10;
+    const accW = pixTextWidth("ACCOUNT") + 10;
+    const rightGap = 6;
+    const accX = uiW - pad - accW;
+    const profX = accX - rightGap - profW;
+    const statsX = profX - rightGap - statsW;
+    const weeklyW = pixTextWidth("WEEKLY") + 10;
+    drawHubChip("WEEKLY", pad, topY, "hub:weekly", () => openSpinMenu());
+    drawHubChip("QUESTS", pad + weeklyW + 6, topY, "hub:quests", () => openQuestMenu());
+    drawHubChip("STATS", statsX, topY, "hub:stats", () => {
+      uiScreen = "nm_boards";
+      statsMode = "survival";
+      nmCursor = 0;
+      nmBoardKind = "playtime";
+      refreshNmBoard(nmBoardKind);
+    });
+    drawHubChip("PROFILES", profX, topY, "hub:profiles", () => {
+      uiScreen = "profiles";
+      profileSearch = "";
+      profileFocus = null;
+      profileField = 0;
+      profileResults = searchLocalProfiles("");
+      srCursor = 0;
+    });
+    drawHubChip("ACCOUNT", accX, topY, "hub:account", () => {
+      uiScreen = "account";
+      authMode = "menu";
+      authStatus = "";
+      srCursor = 0;
+      const api = lbApi();
+      if (api && api.ensureProfile && api.isSignedIn && api.isSignedIn()) api.ensureProfile();
+    });
+
+    const cx = (uiW / 2) | 0;
+    drawPixText("ISLEBOUND", cx, topY + 1, "#f3e2c4", "center");
+    drawOnlineChip(cx, topY + chipH + 2);
+
+    const modeH = 26;
+    const modeY = uiH - modeH - 10;
+    const panelX = pad;
+    const panelY = topBandH + 4;
+    const panelW = 104;
+    const panelH = modeY - panelY - 8;
+    const stageLeft = panelX + panelW + 14;
+    const stageRight = uiW - pad;
+    const stageCx = ((stageLeft + stageRight) / 2) | 0;
+
+    // Center stage first (cape may spill left) — panel drawn after to cover overflow
+    const previewY = panelY + ((panelH * 0.52) | 0);
+    const previewSkin = lockerPreviewSkin();
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(stageLeft, panelY, Math.max(0, stageRight - stageLeft), panelH);
+    ctx.clip();
+    drawLockerPreview(stageCx, previewY);
+    drawPixText(skinLabel(previewSkin), stageCx, previewY + 14, "#f3e2c4", "center");
+    ctx.restore();
+
+    // Left locker panel (opaque, on top of stage spill)
+    px(panelX, panelY, panelW, panelH, "#1a120c");
+    px(panelX + 1, panelY + 1, panelW - 2, panelH - 2, "#3a2414");
+    px(panelX + 2, panelY + 2, panelW - 4, panelH - 4, "#2b1c12");
+    px(panelX + 2, panelY + 2, panelW - 4, 13, "#3a2414");
+    drawPixTextSm("LOCKER", panelX + ((panelW / 2) | 0), panelY + 5, "#e8c44a", "center");
+
+    const sockY = panelY + 20;
+    const sockGap = 4;
+    const sockW = 26;
+    const socksRowW = sockW * 3 + sockGap * 2;
+    const sockX0 = panelX + (((panelW - socksRowW) / 2) | 0);
+    drawLockerSocket(sockX0, sockY, "FACE", "face", cosmetics.face);
+    drawLockerSocket(
+      sockX0 + sockW + sockGap,
+      sockY,
+      "BACK",
+      "back",
+      effectiveBack(lockerPreviewSkin(), cosmetics.back)
+    );
+    drawLockerSocket(sockX0 + (sockW + sockGap) * 2, sockY, "SKIN", "skin", playerSkin);
+
+    // Tab switcher between sockets and browse grid
+    const tabY = sockY + 42;
+    const tabH = 15;
+    const tabGap = 2;
+    const tabPad = 3;
+    const tabInnerW = panelW - 4 - tabPad * 2;
+    const tabW = ((tabInnerW - tabGap) / 2) | 0;
+    const tabX0 = panelX + 2 + tabPad;
+    const tabs = [
+      { id: "skins", label: "SKINS" },
+      { id: "cosmetics", label: "COSMETICS" },
+    ];
+    for (let ti = 0; ti < tabs.length; ti++) {
+      const t = tabs[ti];
+      const tx = tabX0 + ti * (tabW + tabGap);
+      const on = lockerTab === t.id;
+      const hot = !on && (menuHovering("locktab:" + t.id) || (lockerHover && lockerHover.type === "tab" && lockerHover.id === t.id));
+      px(tx, tabY, tabW, tabH, on ? "#c9a227" : "#1a120c");
+      px(tx + 1, tabY + 1, tabW - 2, tabH - 2, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
+      if (on) px(tx + 2, tabY + tabH - 2, tabW - 4, 1, "#2b1c12");
+      drawPixTextSm(
+        t.label,
+        tx + ((tabW / 2) | 0),
+        tabY + 4,
+        on ? "#2b1c12" : hot ? "#f3e2c4" : "#8a6a42",
+        "center"
+      );
+      const selectTab = () => {
+        lockerTab = t.id;
+        lockerDrag = null;
+        lockerHover = null;
+      };
+      addMenuHit("locktab:" + t.id, tx, tabY, tabW, tabH, selectTab, { hover: true });
+      addLockerHit("tab:" + t.id, tx, tabY, tabW, tabH, { type: "tab", id: t.id });
+    }
+    px(panelX + 2, tabY + tabH + 1, panelW - 4, 1, "#1a120c");
+
+    const gridTop = tabY + tabH + 8;
+    const gridBot = panelY + panelH - 6;
+
+    if (lockerTab === "cosmetics") {
+      const cosList = ownedCosmetics.slice();
+      const cell = 22;
+      const cellGap = 4;
+      const labelH = 8;
+      const cols = 3;
+      const gridInnerW = cols * cell + (cols - 1) * cellGap;
+      const gridPad = ((panelW - gridInnerW) / 2) | 0;
+      if (!cosList.length) {
+        drawPixTextSm(
+          "NONE YET",
+          panelX + ((panelW / 2) | 0),
+          gridTop + 18,
+          "#5c3a21",
+          "center"
+        );
+        drawPixTextSm(
+          "FIND GEAR OUT",
+          panelX + ((panelW / 2) | 0),
+          gridTop + 30,
+          "#5c3a21",
+          "center"
+        );
+        drawPixTextSm(
+          "IN THE WORLD",
+          panelX + ((panelW / 2) | 0),
+          gridTop + 40,
+          "#5c3a21",
+          "center"
+        );
+      } else {
+        for (let i = 0; i < cosList.length && i < 12; i++) {
+          const col = i % cols;
+          const row = (i / cols) | 0;
+          const ix = panelX + gridPad + col * (cell + cellGap);
+          const iy = gridTop + row * (cell + cellGap + labelH);
+          if (iy + cell > gridBot) break;
+          drawLockerStripItem(ix, iy, cosList[i], "cosmetic", { w: cell, h: cell, label: true });
+        }
+      }
+    } else {
+      // Owned skins only (launch free + quest unlocks), packed to fit
+      ensureLaunchSkins();
+      const skinList = [];
+      for (let i = 0; i < ALL_SKIN_IDS.length; i++) {
+        if (ownsSkin(ALL_SKIN_IDS[i])) skinList.push(ALL_SKIN_IDS[i]);
+      }
+      const skinCols = 2;
+      const skinRows = Math.max(1, Math.ceil(skinList.length / skinCols));
+      const labelH = 8;
+      const skinGapX = 6;
+      const availH = Math.max(48, gridBot - gridTop - 4);
+      const skinGapY = 3;
+      let skinCell = (((availH - skinGapY * Math.max(0, skinRows - 1)) / skinRows) | 0) - labelH;
+      if (skinCell > 28) skinCell = 28;
+      if (skinCell < 16) skinCell = 16;
+      const rowPitch = skinCell + labelH + skinGapY;
+      const skinInnerW = skinCols * skinCell + (skinCols - 1) * skinGapX;
+      const skinPadX = panelX + (((panelW - skinInnerW) / 2) | 0);
+      const totalH = skinRows * rowPitch - skinGapY;
+      const skinY0 = gridTop + Math.max(1, (((availH - totalH) / 2) | 0));
+      for (let i = 0; i < skinList.length; i++) {
+        const col = i % skinCols;
+        const row = (i / skinCols) | 0;
+        const iy = skinY0 + row * rowPitch;
+        if (iy + skinCell > gridBot) break;
+        drawLockerStripItem(
+          skinPadX + col * (skinCell + skinGapX),
+          iy,
+          skinList[i],
+          "skin",
+          { w: skinCell, h: skinCell, label: true }
+        );
+      }
+    }
+
+    // Mode band — keep clear of the locker panel so bottom skins aren't covered
+    px(stageLeft - 4, modeY - 6, uiW - (stageLeft - 4), modeH + 16, "#0a1520");
+    px(0, modeY + modeH + 2, uiW, Math.max(0, uiH - (modeY + modeH + 2)), "#0a1520");
+    const modes = [
+      { label: "SURVIVAL", idx: 0 },
+      { label: "SPEEDRUN", idx: 1 },
+      { label: "HUB", idx: 2 },
+    ];
+    const tileW = 78;
+    const tileH = modeH;
+    const tileGap = 10;
+    const tilesW = modes.length * tileW + (modes.length - 1) * tileGap;
+    const tileX0 = (cx - tilesW / 2) | 0;
+    for (let i = 0; i < modes.length; i++) {
+      const m = modes[i];
+      const tx = tileX0 + i * (tileW + tileGap);
+      const key = "mode:" + m.idx;
+      const sel = srCursor === m.idx || menuHovering(key);
+      px(tx, modeY, tileW, tileH, sel ? "#e8c44a" : "#2b1c12");
+      px(tx + 1, modeY + 1, tileW - 2, tileH - 2, sel ? "#e8c44a" : "#8a5a32");
+      px(tx + 2, modeY + 2, tileW - 4, tileH - 4, sel ? "#f3e2c4" : "#5c3a21");
+      const labelY = modeY + (((tileH - 7) / 2) | 0) + 1;
+      drawModeMenuIcon(m.label === "SURVIVAL" ? "NORMAL" : m.label, tx + 7, labelY - 1);
+      drawPixText(m.label, tx + 20, labelY, sel ? "#2b1c12" : "#f3e2c4");
+      addMenuHit(
+        key,
+        tx,
+        modeY,
+        tileW,
+        tileH,
+        () => {
+          srCursor = m.idx;
+          activateModeOpt(m.idx);
+        },
+        { hover: true }
+      );
+    }
+
+    if (lockerDrag) {
+      const gx = (pointerUi.x - 11) | 0;
+      const gy = (pointerUi.y - 11) | 0;
+      px(gx, gy, 22, 22, "#c9a227");
+      px(gx + 2, gy + 2, 18, 18, "#1a120c");
+      if (lockerDrag.type === "skin") {
+        ink.save();
+        ink.translate(gx + 11, gy + 20);
+        drawPlayerBody(lockerDrag.id, 0, false, true);
+        ink.restore();
+      } else if (!drawTinyCatch(lockerDrag.id, gx + 7, gy + 7)) {
+        drawHudIcon(lockerDrag.id, gx - 2, gy - 2);
+      }
+    }
   }
 
   function drawWalkthrough() {
@@ -14268,6 +15461,12 @@
     if (authStatus) drawPixText(authStatus.slice(0, 28), (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
   }
 
+  function searchLocalProfiles(q) {
+    const api = lbApi();
+    if (api && api.searchLocalProfiles) return api.searchLocalProfiles(q);
+    return [];
+  }
+
   function drawNmBoardScreen() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -14275,14 +15474,104 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const api = lbApi();
-    const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
     const leftW = 110;
-    const boardW = 170;
-    const h = Math.min(uiH - 16, 16 + order.length * 10 + 36);
+    const boardW = 180;
+    const h = Math.min(uiH - 16, 150);
     const totalW = leftW + boardW + 10;
     const x = ((uiW - totalW) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, leftW, h, "PROFILE");
+
+    // Survival / Speedrun switcher
+    const tabY = y - 16;
+    const tabs = [
+      { id: "survival", label: "SURVIVAL" },
+      { id: "speedrun", label: "SPEEDRUN" },
+    ];
+    const tabW = 70;
+    const tabX0 = (uiW / 2 - (tabW * 2 + 6) / 2) | 0;
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      const tx = tabX0 + i * (tabW + 6);
+      const on = statsMode === t.id;
+      const key = "statsmode:" + t.id;
+      const hot = !on && menuHovering(key);
+      px(tx, tabY, tabW, 12, on ? "#c9a227" : "#2b1c12");
+      px(tx + 1, tabY + 1, tabW - 2, 10, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
+      drawPixText(t.label, tx + ((tabW / 2) | 0), tabY + 3, on ? "#2b1c12" : "#f3e2c4", "center");
+      addMenuHit(
+        key,
+        tx,
+        tabY,
+        tabW,
+        12,
+        () => {
+          statsMode = t.id;
+          nmCursor = 0;
+          if (statsMode === "survival") {
+            nmBoardKind = "playtime";
+            refreshNmBoard(nmBoardKind);
+          }
+        },
+        { hover: true }
+      );
+    }
+
+    if (statsMode === "speedrun") {
+      drawPanelBox(x, y, leftW, h, "SPEEDRUN");
+      const sr = api && api.loadLocalSrStats ? api.loadLocalSrStats() : { playtime_ms: 0, runs: 0, submits: 0 };
+      const leftLines = [
+        "PLAYTIME",
+        "RUNS",
+        "PBS",
+      ];
+      for (let i = 0; i < leftLines.length; i++) {
+        const key = "srstat:" + i;
+        const sel = nmCursor === i || menuHovering(key);
+        const oy = y + 22 + i * 12;
+        if (sel) px(x + 5, oy - 2, leftW - 10, 10, "#e8c44a");
+        drawPixText(leftLines[i], x + 8, oy, sel ? "#2b1c12" : "#3a2414");
+        addMenuHit(key, x + 5, oy - 2, leftW - 10, 10, () => {
+          nmCursor = i;
+        }, { hover: true });
+      }
+      drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
+      addMenuHit("nm:esc", x + 5, y + h - 12, 70, 10, () => backToModeMenu(), { hover: true });
+
+      const bx = x + leftW + 10;
+      drawPanelBox(bx, y, boardW, h, nmCursor === 2 ? "YOUR PBS" : "YOUR STATS");
+      if (nmCursor === 2) {
+        const prs = api && api.listLocalPrs ? api.listLocalPrs() : [];
+        if (!prs.length) {
+          drawPixText("NO PBS YET", bx + 8, y + 22, "#5c3a21");
+        } else {
+          let yy = y + 20;
+          for (let i = 0; i < Math.min(12, prs.length); i++) {
+            const p = prs[i];
+            drawPixText(String(p.label || p.category).slice(0, 10), bx + 8, yy, "#3a2414");
+            const t = api && api.formatTime ? api.formatTime(p.time_ms) : String(p.time_ms | 0);
+            drawPixText(t, bx + 100, yy, "#5c3a21");
+            yy += 9;
+          }
+        }
+      } else {
+        const play =
+          api && api.formatPlaytimeClock
+            ? api.formatPlaytimeClock(sr.playtime_ms | 0)
+            : String(sr.playtime_ms | 0);
+        const lines =
+          nmCursor === 1
+            ? ["RUNS " + (sr.runs | 0), "SUBMITS " + (sr.submits | 0)]
+            : ["PLAY " + play, "RUNS " + (sr.runs | 0), "SUBMITS " + (sr.submits | 0)];
+        for (let i = 0; i < lines.length; i++) {
+          drawPixText(lines[i], bx + 8, y + 24 + i * 12, "#3a2414");
+        }
+        drawPixText("LOCAL ONLY", bx + 8, y + h - 14, "#8a5a32");
+      }
+      return;
+    }
+
+    const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
+    drawPanelBox(x, y, leftW, h, "SURVIVAL");
     for (let i = 0; i < order.length; i++) {
       const id = order[i];
       const key = "nm:" + i;
@@ -14312,18 +15601,101 @@
         const rank = String(i + 1).padStart(2, " ");
         drawPixText(rank + " ", bx + 8, yy, "#3a2414");
         let nx = bx + 26;
-        // NM boards are profile rows (accounts) — nametag chip + optional online pip.
         nx += drawBoardPlayerLabel(r.player_name, nx, yy, {
           isAccount: true,
           isOnline: boardRowOnline(r),
           maxLen: 8,
         });
         const val = api && api.formatNmValue ? api.formatNmValue(nmBoardKind, r.value) : String(r.value | 0);
-        drawPixText(val, bx + 100, yy, "#5c3a21");
+        drawPixText(val, bx + 108, yy, "#5c3a21");
         yy += 8;
       }
       if (nmBoardNote) drawPixText(nmBoardNote, bx + 8, yy + 2, "#8a5a32");
     }
+  }
+
+  function drawProfilesScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const api = lbApi();
+    const w = 260;
+    const h = Math.min(uiH - 12, 168);
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "PROFILES");
+
+    drawPixText("SEARCH", x + 10, y + 18, "#5c3a21");
+    const searchSel = profileField === 0 || menuHovering("prof:search");
+    px(x + 56, y + 16, w - 66, 11, searchSel ? "#e8c44a" : "#8a5a32");
+    px(x + 57, y + 17, w - 68, 9, "#f3e2c4");
+    drawPixText((profileSearch || "_").slice(0, 16), x + 60, y + 18, "#2b1c12");
+    addMenuHit("prof:search", x + 56, y + 16, w - 66, 11, () => {
+      profileField = 0;
+    }, { hover: true });
+
+    const listX = x + 8;
+    const listY = y + 34;
+    const listW = 110;
+    const detailX = x + 124;
+    if (!profileResults.length) profileResults = searchLocalProfiles(profileSearch);
+
+    drawPixText("PLAYERS", listX, listY, "#5c3a21");
+    let yy = listY + 10;
+    const maxRows = 10;
+    for (let i = 0; i < Math.min(maxRows, profileResults.length); i++) {
+      const row = profileResults[i];
+      const key = "prof:row:" + i;
+      const sel = (profileFocus && profileFocus.name === row.name) || menuHovering(key);
+      if (sel) px(listX, yy - 1, listW, 9, "#e8c44a");
+      drawPixText(String(row.name || "?").slice(0, 10), listX + 2, yy, sel ? "#2b1c12" : "#3a2414");
+      addMenuHit(key, listX, yy - 1, listW, 9, () => {
+        profileFocus = row;
+        profileField = 1;
+      }, { hover: true });
+      yy += 9;
+    }
+    if (!profileResults.length) drawPixText("NO MATCHES", listX + 2, listY + 12, "#8a5a32");
+
+    px(detailX - 4, y + 34, 1, h - 50, "#8a5a32");
+    if (profileFocus) {
+      drawPixTextBold(String(profileFocus.name).slice(0, 12), detailX + 50, y + 36, "#c9a227", "center");
+      const nmPlay =
+        api && api.formatPlaytimeClock
+          ? api.formatPlaytimeClock(profileFocus.nm_playtime_ms | 0)
+          : String(profileFocus.nm_playtime_ms | 0);
+      const srPlay =
+        api && api.formatPlaytimeClock
+          ? api.formatPlaytimeClock(profileFocus.sr_playtime_ms | 0)
+          : String(profileFocus.sr_playtime_ms | 0);
+      drawPixText((profileFocus.is_account ? "ACCOUNT" : "GUEST"), detailX, y + 48, "#5c3a21");
+      drawPixText("SURV " + nmPlay, detailX, y + 60, "#3a2414");
+      drawPixText("SPEED " + srPlay, detailX, y + 70, "#3a2414");
+      drawPixText("PRS", detailX, y + 84, "#5c3a21");
+      const prIds = Object.keys(profileFocus.prs || {});
+      let py = y + 94;
+      if (!prIds.length) {
+        drawPixText("NONE CACHED", detailX, py, "#8a5a32");
+      } else {
+        prIds.sort((a, b) => (profileFocus.prs[a] | 0) - (profileFocus.prs[b] | 0));
+        for (let i = 0; i < Math.min(6, prIds.length); i++) {
+          const id = prIds[i];
+          const lab = (api && api.CATEGORIES && api.CATEGORIES[id] && api.CATEGORIES[id].label) || id;
+          const t = api && api.formatTime ? api.formatTime(profileFocus.prs[id]) : String(profileFocus.prs[id] | 0);
+          drawPixText(String(lab).slice(0, 8), detailX, py, "#3a2414");
+          drawPixText(t, detailX + 58, py, "#5c3a21");
+          py += 9;
+        }
+      }
+    } else {
+      drawPixText("PICK A PLAYER", detailX + 8, y + 60, "#8a5a32");
+      drawPixText("LOCAL CACHE", detailX + 8, y + 72, "#5c3a21");
+    }
+
+    drawPixText("ESC MENU", x + 10, y + h - 12, "#5c3a21");
+    addMenuHit("prof:esc", x + 8, y + h - 14, 70, 10, () => backToModeMenu(), { hover: true });
   }
 
   function weeklyPrizeBand(id) {
@@ -14565,8 +15937,10 @@
     else if (uiScreen === "finish") drawFinishScreen();
     else if (uiScreen === "account") drawAccountScreen();
     else if (uiScreen === "nm_boards") drawNmBoardScreen();
+    else if (uiScreen === "profiles") drawProfilesScreen();
     else if (uiScreen === "walkthrough") drawWalkthrough();
     else if (uiScreen === "spin") drawSpinScreen();
+    else if (uiScreen === "quests") drawQuestScreen();
   }
 
   async function submitSpeedScore() {
@@ -14603,6 +15977,7 @@
       srStatus = "POSTED";
       srSubmitted = true;
       srBoardNote = "";
+      if (api.noteSrEvent) api.noteSrEvent("submits", 1);
       if (replay && api.saveLocalReplay) {
         api.saveLocalReplay(srCat, replay);
         srBestReplay = replay;
@@ -14703,6 +16078,7 @@
           authMode = "menu";
           srCursor = 0;
           authPin = "";
+          tryGrantAmericanCloak();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
@@ -14714,6 +16090,7 @@
           authMode = "menu";
           srCursor = 0;
           authPin = "";
+          tryGrantAmericanCloak();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
@@ -14727,15 +16104,11 @@
       return true;
     }
     if (uiScreen === "mode") {
-      if (k === "arrowup" || k === "w") srCursor = (srCursor + modeOpts.length - 1) % modeOpts.length;
-      if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % modeOpts.length;
-      if (k === "arrowleft" || k === "a") {
-        if (srCursor >= MODE_PLAY.length) srCursor = Math.min(MODE_PLAY.length - 1, srCursor - MODE_PLAY.length);
-      }
-      if (k === "arrowright" || k === "d") {
-        if (srCursor < MODE_PLAY.length) srCursor = Math.min(modeOpts.length - 1, srCursor + MODE_PLAY.length);
-      }
-      if (k === "enter" || k === " ") activateModeOpt(srCursor);
+      if (k === "arrowleft" || k === "a") srCursor = (srCursor + 2) % 3;
+      if (k === "arrowright" || k === "d") srCursor = (srCursor + 1) % 3;
+      if (k === "arrowup" || k === "w") srCursor = (srCursor + 2) % 3;
+      if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % 3;
+      if (k === "enter" || k === " ") activateModeOpt(Math.min(2, srCursor | 0));
       return true;
     }
     if (uiScreen === "spin") {
@@ -14759,6 +16132,23 @@
             srCursor = 0;
           } else tryWeeklySpin();
         }
+      }
+      return true;
+    }
+    if (uiScreen === "quests") {
+      if (k === "escape" || k === "backspace") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowup" || k === "w") {
+        questCursor = (questCursor + NOV_QUESTS.length - 1) % NOV_QUESTS.length;
+      }
+      if (k === "arrowdown" || k === "s") {
+        questCursor = (questCursor + 1) % NOV_QUESTS.length;
+      }
+      if (k === "enter" || k === " ") {
+        const q = NOV_QUESTS[questCursor];
+        if (q && questStatus(q) === "claimable") claimQuest(q.id);
       }
       return true;
     }
@@ -14878,11 +16268,29 @@
     }
     if (uiScreen === "nm_boards") {
       const api = lbApi();
-      const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
       if (k === "escape") {
         backToModeMenu();
         return true;
       }
+      if (k === "arrowleft" || k === "a") {
+        statsMode = "survival";
+        nmCursor = 0;
+        nmBoardKind = "playtime";
+        refreshNmBoard(nmBoardKind);
+        return true;
+      }
+      if (k === "arrowright" || k === "d") {
+        statsMode = "speedrun";
+        nmCursor = 0;
+        return true;
+      }
+      if (statsMode === "speedrun") {
+        const n = 3;
+        if (k === "arrowup" || k === "w") nmCursor = (nmCursor + n - 1) % n;
+        if (k === "arrowdown" || k === "s") nmCursor = (nmCursor + 1) % n;
+        return true;
+      }
+      const order = (api && api.NM_ORDER) || ["playtime", "level", "sharks", "chests", "coins"];
       if (k === "arrowup" || k === "w") {
         nmCursor = (nmCursor + order.length - 1) % order.length;
         nmBoardKind = order[nmCursor];
@@ -14892,6 +16300,49 @@
         nmCursor = (nmCursor + 1) % order.length;
         nmBoardKind = order[nmCursor];
         refreshNmBoard(nmBoardKind);
+      }
+      return true;
+    }
+    if (uiScreen === "profiles") {
+      if (k === "escape") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "backspace") {
+        profileSearch = profileSearch.slice(0, -1);
+        profileResults = searchLocalProfiles(profileSearch);
+        profileFocus = null;
+        return true;
+      }
+      if (k === "arrowdown" || k === "s") {
+        if (profileResults.length) {
+          let idx = 0;
+          if (profileFocus) {
+            for (let i = 0; i < profileResults.length; i++) {
+              if (profileResults[i].name === profileFocus.name) {
+                idx = i;
+                break;
+              }
+            }
+          }
+          profileFocus = profileResults[(idx + 1) % profileResults.length];
+        }
+        return true;
+      }
+      if (k === "arrowup" || k === "w") {
+        if (profileResults.length) {
+          let idx = 0;
+          if (profileFocus) {
+            for (let i = 0; i < profileResults.length; i++) {
+              if (profileResults[i].name === profileFocus.name) {
+                idx = i;
+                break;
+              }
+            }
+          }
+          profileFocus = profileResults[(idx + profileResults.length - 1) % profileResults.length];
+        }
+        return true;
       }
       return true;
     }
@@ -14972,18 +16423,82 @@
     return false;
   }
 
+  function lockerSnapshot() {
+    return {
+      face: cosmetics.face,
+      back: cosmetics.back,
+      skin: playerSkin,
+      ownedCosmetics: ownedCosmetics.slice(),
+      ownedSkins: ownedSkins.slice(),
+      skinsGrantedLegacy: !!skinsGrantedLegacy,
+      questMaskRuns: questMaskRuns | 0,
+      questDone: Object.assign({}, questDone || {}),
+      questClaimed: Object.assign({}, questClaimed || {}),
+    };
+  }
+
+  function applyLockerSnapshot(snap) {
+    if (!snap || typeof snap !== "object") return;
+    if (Array.isArray(snap.ownedCosmetics)) {
+      for (let i = 0; i < snap.ownedCosmetics.length; i++) {
+        const id = snap.ownedCosmetics[i];
+        if (isCosmeticId(id) && ownedCosmetics.indexOf(id) < 0) ownedCosmetics.push(id);
+      }
+    }
+    if (Array.isArray(snap.ownedSkins)) {
+      for (let i = 0; i < snap.ownedSkins.length; i++) {
+        const id = snap.ownedSkins[i];
+        if (SKIN_DEFS[id] && ownedSkins.indexOf(id) < 0) ownedSkins.push(id);
+      }
+    }
+    if (snap.face && isCosmeticId(snap.face)) cosmetics.face = snap.face;
+    if (snap.back && isCosmeticId(snap.back)) cosmetics.back = snap.back;
+    if (snap.skin && SKIN_DEFS[snap.skin] && ownsSkin(snap.skin)) playerSkin = snap.skin;
+    if (snap.skinsGrantedLegacy) skinsGrantedLegacy = true;
+    if (typeof snap.questMaskRuns === "number") {
+      questMaskRuns = Math.max(questMaskRuns | 0, snap.questMaskRuns | 0);
+    }
+    if (snap.questDone && typeof snap.questDone === "object") {
+      for (const k in snap.questDone) if (snap.questDone[k]) questDone[k] = true;
+    }
+    if (snap.questClaimed && typeof snap.questClaimed === "object") {
+      for (const k in snap.questClaimed) if (snap.questClaimed[k]) questClaimed[k] = true;
+    }
+    ensureLaunchSkins();
+    syncQuestOwnershipFlags();
+  }
+
   function saveGame() {
-    if (playMode !== "normal") return;
+    if (playMode !== "normal") {
+      saveLockerProfile();
+      return;
+    }
     try {
       const slots = [];
       for (let i = 0; i < inventory.length; i++) {
         const s = inventory[i];
+        // Cosmetics never live in the bag — strip if any slipped in
+        if (s && isCosmeticId(s.id)) {
+          grantCosmetic(s.id);
+          slots.push(null);
+          continue;
+        }
         slots.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
+      }
+      const bagOut = [];
+      for (let i = 0; i < satchel.length; i++) {
+        const s = satchel[i];
+        if (s && isCosmeticId(s.id)) {
+          grantCosmetic(s.id);
+          bagOut.push(null);
+          continue;
+        }
+        bagOut.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
       }
       const data = {
         slots,
         heldSlot,
-        satchel: satchel.map((s) => (s && s.id ? { id: s.id, count: s.count | 0 } : null)),
+        satchel: bagOut,
         coins: player.coins | 0,
         xp: player.xp | 0,
         level: player.level | 0,
@@ -14995,6 +16510,7 @@
         scene,
         cloak: cloakOn,
         cosmetics: { face: cosmetics.face, back: cosmetics.back },
+        locker: lockerSnapshot(),
         templeMaskTaken: !!templeMaskTaken,
         sunkenTaken: !!sunkenTaken,
         divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
@@ -15004,6 +16520,7 @@
           : null,
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      saveLockerProfile();
     } catch (err) {}
   }
 
@@ -15047,8 +16564,18 @@
       player.x = spawnX;
       player.y = spawnY;
     }
-    cosmetics.face = data.cosmetics && ITEM_DEFS[data.cosmetics.face] ? data.cosmetics.face : null;
-    cosmetics.back = data.cosmetics && ITEM_DEFS[data.cosmetics.back] ? data.cosmetics.back : null;
+    // Prefer dedicated locker profile, then merge any locker blob from the survival save.
+    loadLockerProfile();
+    if (data.locker) applyLockerSnapshot(data.locker);
+    if (data.cosmetics) {
+      if (data.cosmetics.face && isCosmeticId(data.cosmetics.face)) cosmetics.face = data.cosmetics.face;
+      if (data.cosmetics.back && isCosmeticId(data.cosmetics.back)) cosmetics.back = data.cosmetics.back;
+    }
+    // Cosmetics leave the bag → locker collection (one-time migrate per load).
+    migrateCosmeticsFromLists([inventory, satchel]);
+    if (cosmetics.face) grantCosmetic(cosmetics.face);
+    if (cosmetics.back) grantCosmetic(cosmetics.back);
+    saveLockerProfile();
     templeMaskTaken = !!data.templeMaskTaken;
     sunkenTaken = !!data.sunkenTaken;
     divePhase = data.divePhase === "down" ? "down" : "docked";
@@ -15146,8 +16673,8 @@
     updatePrompt();
     updateOcean();
     draw(time);
-    // Normal-mode session playtime (speedrun playtime credited once on finish)
-    if (playMode === "normal" && !uiBlocksPlay() && !guideOpen) {
+    // Session playtime — survival → NM stats; speedrun → SR stats
+    if ((playMode === "normal" || playMode === "speedrun") && !uiBlocksPlay() && !guideOpen) {
       playtimeAcc += dt * 1000;
     }
     playtimeFlush += dt;
@@ -15156,9 +16683,11 @@
       const add = playtimeAcc | 0;
       playtimeAcc = 0;
       playtimeFlush = 0;
-      if (api && api.noteNmEvent && playMode === "normal") {
+      if (api && playMode === "normal" && api.noteNmEvent) {
         api.noteNmEvent("playtime", add);
         if (api.isSignedIn && api.isSignedIn() && api.syncNmStatsToProfile) api.syncNmStatsToProfile();
+      } else if (api && playMode === "speedrun" && api.addPlaytime) {
+        api.addPlaytime(add, "speedrun");
       }
     }
     saveAcc += dt;
@@ -15274,6 +16803,16 @@
       e.preventDefault();
       return;
     }
+    if (uiScreen === "profiles" && !e.ctrlKey && !e.metaKey && e.key.length === 1) {
+      const up = e.key.toUpperCase();
+      if (profileSearch.length < 12 && /[A-Z0-9 ]/.test(up)) {
+        profileSearch += up === " " ? " " : up;
+        profileResults = searchLocalProfiles(profileSearch);
+        profileFocus = null;
+        e.preventDefault();
+        return;
+      }
+    }
     if (uiScreen && uiScreen !== null) {
       if (e.repeat && uiScreen !== "finish" && uiScreen !== "account") return;
       if (onSpeedMenuKey(k)) return;
@@ -15315,12 +16854,6 @@
       heldSlot = k.charCodeAt(0) - 49;
       cosSelect = null;
     }
-    if (k === "9") {
-      cosSelect = "face";
-    }
-    if (k === "0") {
-      cosSelect = "back";
-    }
     if (k === "enter") onEnter();
     if (k === " ") useHeld();
     if (k === "t") tryTradeKey();
@@ -15343,8 +16876,19 @@
   function refreshMenuHover(ux, uy) {
     pointerUi.x = ux;
     pointerUi.y = uy;
+    if (uiScreen === "mode") {
+      const lh = hitLockerAt(ux, uy);
+      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "tab")) {
+        lockerHover = { id: lh.meta.id, type: lh.meta.type };
+      } else {
+        lockerHover = null;
+      }
+    } else {
+      lockerHover = null;
+    }
     const chatHit = hitChatAt(ux, uy);
     const hit = hitMenuAt(ux, uy);
+    const lockHit = uiScreen === "mode" ? hitLockerAt(ux, uy) : null;
     const next = hit ? hit.key : chatHit ? chatHit.key : "";
     if (next !== menuHoverKey) {
       menuHoverKey = next;
@@ -15374,7 +16918,13 @@
         if (!isNaN(idx)) srFinishSel = idx + 1;
       }
     }
-    canvas.style.cursor = hit || (chatHit && chatHit.onClick) || (chatHit && chatHit.meta && chatHit.meta.tip) ? "pointer" : "";
+    canvas.style.cursor =
+      hit ||
+      lockHit ||
+      (chatHit && chatHit.onClick) ||
+      (chatHit && chatHit.meta && chatHit.meta.tip)
+        ? "pointer"
+        : "";
   }
 
   canvas.addEventListener("mousemove", (e) => {
@@ -15436,6 +16986,36 @@
     }
     if (!uiScreen) return;
     refreshMenuHover(p.x, p.y);
+    if (uiScreen === "mode") {
+      const lock = hitLockerAt(p.x, p.y);
+      if (lock && lock.meta && lock.meta.type === "tab") {
+        e.preventDefault();
+        lockerTab = lock.meta.id;
+        lockerDrag = null;
+        lockerHover = null;
+        refreshMenuHover(p.x, p.y);
+        return;
+      }
+      if (lock && lock.meta && lock.meta.type === "skin") {
+        // Instant click-to-equip for skins
+        e.preventDefault();
+        equipSkin(lock.meta.id);
+        refreshMenuHover(p.x, p.y);
+        return;
+      }
+      if (lock && lock.meta && lock.meta.type === "cosmetic") {
+        e.preventDefault();
+        lockerDrag = {
+          id: lock.meta.id,
+          type: lock.meta.type,
+          kind: lock.meta.kind,
+          startX: p.x,
+          startY: p.y,
+        };
+        pointerUi.down = true;
+        return;
+      }
+    }
     const hit = hitMenuAt(p.x, p.y);
     if (hit && typeof hit.onClick === "function") {
       e.preventDefault();
@@ -15444,8 +17024,30 @@
   });
 
   canvas.addEventListener("mouseup", (e) => {
-    if (!slotDrag) return;
     const p = eventToUi(e);
+    if (lockerDrag && uiScreen === "mode") {
+      const lock = hitLockerAt(p.x, p.y);
+      const moved = Math.hypot(p.x - (lockerDrag.startX || 0), p.y - (lockerDrag.startY || 0)) > 6;
+      if (lock && lock.meta && lock.meta.type === "socket") {
+        applyLockerDrop(lock.meta.kind);
+      } else if (!moved || (lock && lock.meta && lock.meta.id === lockerDrag.id)) {
+        // Click / short drag: toggle cosmetic equip
+        if (lockerDrag.type === "cosmetic") {
+          const kind = cosmeticKindOf(lockerDrag.id);
+          if (cosmetics[kind] === lockerDrag.id) unequipCosmetic(kind);
+          else equipCosmetic(lockerDrag.id);
+        } else if (lockerDrag.type === "skin") {
+          equipSkin(lockerDrag.id);
+        }
+        lockerDrag = null;
+      } else {
+        lockerDrag = null;
+      }
+      pointerUi.down = false;
+      refreshMenuHover(p.x, p.y);
+      return;
+    }
+    if (!slotDrag) return;
     finishSlotDrag(p.x, p.y);
     pointerUi.down = false;
   });
@@ -15453,6 +17055,7 @@
   canvas.addEventListener("mouseleave", () => {
     menuHoverKey = "";
     canvas.style.cursor = "";
+    lockerDrag = null;
     pointerUi.x = -9999;
     pointerUi.y = -9999;
   });
@@ -15522,6 +17125,7 @@
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("beforeunload", () => {
     saveGame();
+    saveLockerProfile();
     const api = lbApi();
     if (api && api.isSignedIn && api.isSignedIn() && api.syncNmStatsToProfile) {
       api.syncNmStatsToProfile();
@@ -15534,6 +17138,31 @@
   camera.y = player.y + player.h / 2 - viewH * 0.36;
   clampCamera();
   {
+    loadLockerProfile();
+    // Migrate cosmetics out of any existing survival save into the locker.
+    try {
+      const raw = JSON.parse(localStorage.getItem(SAVE_KEY) || "");
+      if (raw && typeof raw === "object") {
+        const slots = ensureSaveSlots(raw.slots);
+        const bag = ensureSaveSlots(raw.satchel);
+        migrateCosmeticsFromLists([slots, bag]);
+        if (raw.cosmetics) {
+          if (raw.cosmetics.face && isCosmeticId(raw.cosmetics.face)) {
+            grantCosmetic(raw.cosmetics.face);
+            if (!cosmetics.face) cosmetics.face = raw.cosmetics.face;
+          }
+          if (raw.cosmetics.back && isCosmeticId(raw.cosmetics.back)) {
+            grantCosmetic(raw.cosmetics.back);
+            if (!cosmetics.back) cosmetics.back = raw.cosmetics.back;
+          }
+        }
+        raw.slots = slots;
+        raw.satchel = bag;
+        raw.cosmetics = { face: cosmetics.face, back: cosmetics.back };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(raw));
+        saveLockerProfile();
+      }
+    } catch (e) {}
     loadChatNotifsPref();
     const api = lbApi();
     if (api) {

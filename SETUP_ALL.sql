@@ -376,6 +376,21 @@ where name_norm in ('HENRI')
      )
    );
 
+-- Unban Andrew (cheat: time below floor auto-ban).
+delete from public.player_bans
+where name_norm in ('ANDREW')
+   or user_id = 'c507a0ed-615e-4b3f-8721-d6c1955aa758'
+   or client_id = '0a2716f1-f700-4543-b3fc-4fe5b18e116b'
+   or ip = '108.79.55.253'
+   or (
+     user_id is not null
+     and user_id in (
+       select a.id
+       from public.player_accounts a
+       where upper(trim(a.username)) = 'ANDREW'
+     )
+   );
+
 -- Rebuild Henri PRs from evidenced speedrun_scores bests (scores were never wiped;
 -- PR rows were empty). Safe to re-run; keeps the better of existing vs score-min.
 insert into public.speedrun_prs (user_id, category, time_ms, updated_at)
