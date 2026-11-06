@@ -376,6 +376,22 @@ where name_norm in ('HENRI')
      )
    );
 
+-- Rebuild Henri PRs from evidenced speedrun_scores bests (scores were never wiped;
+-- PR rows were empty). Safe to re-run; keeps the better of existing vs score-min.
+insert into public.speedrun_prs (user_id, category, time_ms, updated_at)
+select
+  'efab0e17-6fd7-4b5a-9675-fb437c743bbb'::uuid as user_id,
+  s.category,
+  min(s.time_ms) as time_ms,
+  now() as updated_at
+from public.speedrun_scores s
+where s.user_id = 'efab0e17-6fd7-4b5a-9675-fb437c743bbb'
+   or upper(trim(s.player_name)) in ('HENRI', 'HENRI P')
+group by s.category
+on conflict (user_id, category) do update
+set time_ms = least(public.speedrun_prs.time_ms, excluded.time_ms),
+    updated_at = now();
+
 
 -- ========== Cosmetics hub presence + daily claims (optional; client soft-fails) ==========
 alter table public.players_online add column if not exists in_hub boolean;
