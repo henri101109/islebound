@@ -41,26 +41,26 @@
     "MATTEUS OWENS": "MATTEUS O",
   };
 
-  // floorMs = absolute minimum under normal rules (boat + sail + 15s cast, etc.).
-  // ~15.7s fish times are cheated (cast alone is 15s; boat/sail still required).
+  // floorMs = absolute minimum under normal rules (boat + sail + cast, etc.).
+  // Ocean cast is 13.5s; times under floor are treated as cheated.
   const CATEGORIES = {
-    shark: { id: "shark", label: "SHARK%", floorMs: 21900 },
-    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 21900 },
-    chest: { id: "chest", label: "CHEST%", floorMs: 21900 },
+    shark: { id: "shark", label: "SHARK%", floorMs: 20400 },
+    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: 20400 },
+    chest: { id: "chest", label: "CHEST%", floorMs: 20400 },
     death: { id: "death", label: "DEATH%", floorMs: 5000 },
     boat: { id: "boat", label: "BOAT%", floorMs: 5000 },
     full_inv: { id: "full_inv", label: "FULL INV%", floorMs: 25000 },
-    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 21900 },
-    serpent: { id: "serpent", label: "SERPENT%", floorMs: 21900 },
-    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 21900 },
-    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 21900 },
+    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: 20400 },
+    serpent: { id: "serpent", label: "SERPENT%", floorMs: 20400 },
+    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: 20400 },
+    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: 20400 },
     coins_10: { id: "coins_10", label: "10 COINS%", floorMs: 5000 },
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
     mask: { id: "mask", label: "MASK%", floorMs: 22000 },
-    // Pond dinghy: walk inland + cast wait 4.5–8.5s (ocean cast is 15s).
-    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: 10000 },
-    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: 10000 },
+    // Pond dinghy: walk inland + cast wait 3–7s (ocean cast is 13.5s).
+    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: 8500 },
+    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: 8500 },
   };
 
   const FISH_STEP_CATS = {
@@ -157,8 +157,8 @@
       if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board boat first" };
       if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
       if (!sawRod) return { ok: false, error: "must cast rod" };
-      // Real cast is 15s; require most of that wait in the recording.
-      if (rodWaitMs < 12000) return { ok: false, error: "cast too short" };
+      // Real cast is 13.5s; require most of that wait in the recording.
+      if (rodWaitMs < 10500) return { ok: false, error: "cast too short" };
       if (category === "shark_cloak" && !sawCloak) return { ok: false, error: "need cloak on" };
     }
 
@@ -168,8 +168,8 @@
       if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board dinghy first" };
       if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
       if (!sawRod) return { ok: false, error: "must cast rod" };
-      // Pond cast wait is 4.5–8.5s; require most of the minimum.
-      if (rodWaitMs < 3500) return { ok: false, error: "cast too short" };
+      // Pond cast wait is 3–7s; require most of the minimum.
+      if (rodWaitMs < 2000) return { ok: false, error: "cast too short" };
     }
 
     if (category === "serpent") {

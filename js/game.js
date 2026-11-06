@@ -5134,7 +5134,7 @@
     rod.phase = "wait";
     rod.t = 0;
     rod.bit = false;
-    rod.wait = pondCast ? rand(4.5, 8.5) : 15;
+    rod.wait = pondCast ? rand(3.0, 7.0) : 13.5;
     rod.face = player.facing;
     rod.catchId = pondCast ? rollPondCatch() : rollBoatCatch();
     rod.tugLeft = 0;
