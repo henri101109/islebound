@@ -2380,10 +2380,7 @@
       !chatCapturesInput()
     ) {
       if (player.aboard && aboardKind === "dinghy" && pondBoat && scene === "island") {
-        // Tethered dinghy — face left/right, stay seated.
-        if (dx !== 0) player.facing = dx < 0 ? -1 : 1;
-        player.moving = false;
-        seatPlayerOnDinghy();
+        steerDinghy(dt, dx, dy);
       } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
         steerOwnedBoat(dt, dx, dy);
       } else {
@@ -3195,36 +3192,6 @@
       if (cloakOn) return "SERPENT CONFUSED";
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
-    }
-    if (player.aboard && aboardKind === "dinghy") {
-      if (rod.phase === "wait") return "WAITING…";
-      if (rod.phase === "reel") return "GOT ONE!";
-      return "C CASTS · ENTER EXITS";
-    }
-    if (player.aboard && ownedBoat && aboardKind !== "dinghy") return "ENTER → DOCK · WASD SAILS";
-    if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
-    if (
-      pondFishReady &&
-      pondBoat &&
-      !player.aboard &&
-      scene === "island" &&
-      player.dead <= 0
-    ) {
-      const mid = playerCenter();
-      const bx = pondBoat.x + pondBoat.w / 2;
-      const by = pondBoat.y + pondBoat.h / 2;
-      if (Math.hypot(mid.x - bx, mid.y - by) < 28) return "ENTER BOARDS DINGHY";
-    }
-    if (
-      !player.aboard &&
-      ownedBoat &&
-      (ownedBoat.docked || boatNearBerth(ownedBoat, 28)) &&
-      scene === "island"
-    ) {
-      const mid = playerCenter();
-      const bx = ownedBoat.x + ownedBoat.w / 2;
-      const by = ownedBoat.y + ownedBoat.h / 2;
-      if (Math.hypot(mid.x - bx, mid.y - by) < 34) return "ENTER BOARDS";
     }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return "PORTAL DORMANT";
@@ -4535,28 +4502,128 @@
     return true;
   }
 
+  function dinghyBob(b, t) {
+    if (!b) return 0;
+    return Math.sin((t == null ? time : t) * 1.8 + (b.phase || 0)) * 0.8;
+  }
+
+  function dinghyHullOk(x, y, w, h) {
+    const pts = [
+      [x + 2, y + 2],
+      [x + w - 3, y + 2],
+      [x + w * 0.5, y + 3],
+      [x + 2, y + h - 2],
+      [x + w - 3, y + h - 2],
+      [x + w * 0.5, y + h - 2],
+    ];
+    for (let i = 0; i < pts.length; i++) {
+      const px = pts[i][0];
+      const py = pts[i][1];
+      if (px < 4 || py < 4 || px >= WORLD_W - 4 || py >= WORLD_H - 4) return false;
+      if (isSolidPoint(px, py)) return false;
+      if (pondPad && hitPad(px, py, [pondPad])) return false;
+      if (hitPad(px, py, walkPads)) return false;
+      // Stay in the river pool / carved pond water only
+      if (!inPondWater(px, py) && !inRiverWater(px, py)) return false;
+    }
+    return true;
+  }
+
   function seatPlayerOnDinghy() {
     if (!pondBoat) return;
-    const bob = Math.sin(time * 2.1 + 0.4) * 0.6;
-    player.x = pondBoat.x + (pondBoat.w - player.w) / 2;
-    player.y = pondBoat.y + bob - 8;
+    const bob = dinghyBob(pondBoat, time);
+    const b = pondBoat;
+    player.x = b.x + (b.w - player.w) / 2;
+    player.y = b.y + bob - 8;
   }
 
   function exitDinghy() {
-    if (aboardKind !== "dinghy" || !player.aboard || !pondPad) return false;
+    if (aboardKind !== "dinghy" || !player.aboard || !pondBoat) return false;
     if (rod.phase !== "idle") {
       rod.phase = "idle";
       rod.catchId = null;
       rodBaitId = null;
     }
+    const b = pondBoat;
+    let landed = false;
+    if (pondPad) {
+      const mid = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+      const px = pondPad.x + pondPad.w / 2;
+      const py = pondPad.y + pondPad.h / 2;
+      if (Math.hypot(mid.x - px, mid.y - py) < 48) {
+        player.x = (pondPad.x + (pondPad.w - player.w) / 2) | 0;
+        player.y = (pondPad.y + pondPad.h - player.h - 1) | 0;
+        landed = true;
+      }
+    }
+    if (!landed) {
+      const dirs = [
+        [0, 10],
+        [0, -10],
+        [12, 0],
+        [-12, 0],
+        [10, 8],
+        [-10, 8],
+      ];
+      for (let i = 0; i < dirs.length; i++) {
+        const x = ((b.x + b.w / 2 - player.w / 2 + dirs[i][0]) | 0);
+        const y = ((b.y + dirs[i][1]) | 0);
+        if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
+          player.x = x;
+          player.y = y;
+          landed = true;
+          break;
+        }
+      }
+    }
+    if (!landed) return false;
     player.aboard = false;
     aboardKind = null;
-    player.x = (pondPad.x + (pondPad.w - player.w) / 2) | 0;
-    player.y = (pondPad.y + pondPad.h - player.h - 1) | 0;
     player.inWater = false;
     player.submerged = 0;
     player.moving = false;
+    b.vx = 0;
+    b.vy = 0;
     return true;
+  }
+
+  function steerDinghy(dt, dx, dy) {
+    const b = pondBoat;
+    if (!b) return;
+    // Don't shove the boat while the rod is out
+    if (rod.phase !== "idle") {
+      b.vx = 0;
+      b.vy = 0;
+      player.moving = false;
+      seatPlayerOnDinghy();
+      return;
+    }
+    const moving = dx !== 0 || dy !== 0;
+    player.moving = moving;
+    const len = Math.hypot(dx, dy) || 1;
+    const acc = 120;
+    if (moving) {
+      b.vx = (b.vx || 0) + (dx / len) * acc * dt;
+      b.vy = (b.vy || 0) + (dy / len) * acc * dt;
+      if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
+      b.face = player.facing;
+    }
+    b.vx = (b.vx || 0) * (1 - Math.min(1, dt * 2.8));
+    b.vy = (b.vy || 0) * (1 - Math.min(1, dt * 2.8));
+    const spd = Math.hypot(b.vx, b.vy);
+    const max = 90;
+    if (spd > max) {
+      b.vx *= max / spd;
+      b.vy *= max / spd;
+    }
+    const nx = b.x + b.vx * dt;
+    const ny = b.y + b.vy * dt;
+    if (dinghyHullOk(nx, b.y, b.w, b.h)) b.x = nx;
+    else b.vx *= 0.15;
+    if (dinghyHullOk(b.x, ny, b.w, b.h)) b.y = ny;
+    else b.vy *= 0.15;
+    b.tilt += (((b.vx || 0) / max) * 0.2 - (b.tilt || 0)) * Math.min(1, dt * 8);
+    seatPlayerOnDinghy();
   }
 
   function tryDinghyToggle() {
@@ -4893,7 +4960,10 @@
 
   function boatIsStill() {
     if (!player.aboard || boatThrow) return false;
-    if (aboardKind === "dinghy") return !player.moving;
+    if (aboardKind === "dinghy") {
+      if (player.moving) return false;
+      return Math.hypot(pondBoat.vx || 0, pondBoat.vy || 0) < 10;
+    }
     if (!ownedBoat) return false;
     if (player.moving) return false;
     return Math.hypot(ownedBoat.vx || 0, ownedBoat.vy || 0) < 10;
@@ -5028,13 +5098,13 @@
     return rollBandCatch(!!bait);
   }
 
-  /** Pond table: commons + blowfish + rare eel + 10% portal leech. Ocean odds untouched. */
+  /** Pond table: commons + 25% blowfish + rare eel + 10% portal leech. Ocean odds untouched. */
   function rollPondCatch() {
     rodBaitId = null;
     const r = Math.random();
     if (r < 0.1) return "portal_leech";
     if (r < 0.22) return "waterfall_eel";
-    if (r < 0.3) return "blowfish";
+    if (r < 0.47) return "blowfish";
     return ["cod", "trout", "salmon"][irand(0, 2)];
   }
 
@@ -7491,7 +7561,7 @@
     for (let i = 0; i < 10; i++) {
       pxi(g, postX - 1 - i, postY + 4 + ((i * 0.35) | 0), 1, 1, "#8a6a40");
     }
-    paintPondDinghy(g, postX - 20, postY + 2);
+    // Dinghy is drawn live so it can steer around the pool
 
     // Dense brush feather (leave south path + north wall clear)
     for (let i = 0; i < 48; i++) {
@@ -7631,6 +7701,11 @@
       w: 16,
       h: 7,
       kind: "dinghy",
+      vx: 0,
+      vy: 0,
+      face: 1,
+      tilt: 0,
+      phase: 0.4,
     };
 
     walkPads.push(pondPad);
@@ -7770,24 +7845,50 @@
     ink.restore();
   }
 
+  function drawPondDinghyLive(cpos, t) {
+    if (!pondBoat) return;
+    const b = pondBoat;
+    const bob = dinghyBob(b, t);
+    const bx = (b.x - cpos.x) | 0;
+    const by = (b.y - cpos.y + bob) | 0;
+    if (bx < -24 || by < -12 || bx > viewW + 8 || by > viewH + 8) return;
+    ink.save();
+    ink.translate(bx + b.w / 2, by + b.h);
+    ink.rotate(b.tilt || 0);
+    ink.scale(b.face || 1, 1);
+    ink.translate(-b.w / 2, -b.h);
+    // Match paintPondDinghy palette
+    px(1, 2, 14, 4, "#4a3a22");
+    px(0, 3, 16, 3, "#5a4630");
+    px(1, 3, 14, 2, "#6a5438");
+    px(2, 1, 12, 1, "#3a2e1c");
+    px(2, 4, 12, 1, "#2a2014");
+    px(6, 2, 4, 1, "#8a6a40");
+    px(3, 2, 10, 1, "#5a3a20");
+    px(12, 1, 2, 2, "#6a4a28");
+    px(1, 3, 1, 2, "#3a2e1c");
+    px(14, 3, 1, 2, "#3a2e1c");
+    ink.restore();
+    // Soft wake shimmer
+    ink.save();
+    ink.globalAlpha = 0.28;
+    px(bx + 3, by + 6, 10, 1, "#a8f0f4");
+    ink.restore();
+  }
+
   function drawPond(cpos, t) {
     if (!pondCanvas || !pondSite) return;
     const dx = pondOX - cpos.x;
     const dy = pondOY - cpos.y;
-    if (dx > viewW + 8 || dy > viewH + 8 || dx + pondCanvas.width < -8 || dy + pondCanvas.height < -8) return;
+    if (dx > viewW + 8 || dy > viewH + 8 || dx + pondCanvas.width < -8 || dy + pondCanvas.height < -8) {
+      // Still draw dinghy if it steered into view while bake is offscreen
+      drawPondDinghyLive(cpos, t);
+      return;
+    }
     ctx.drawImage(pondCanvas, dx, dy);
     drawPondFalls(cpos, t);
     drawPondTide(cpos, t);
-    if (!pondBoat) return;
-    const bob = Math.sin(t * 1.8) > 0 ? 1 : 0;
-    if (!bob) return;
-    const bx = (pondBoat.x - cpos.x) | 0;
-    const by = (pondBoat.y - cpos.y + bob) | 0;
-    if (bx < -20 || by < -10 || bx > viewW || by > viewH) return;
-    ink.save();
-    ink.globalAlpha = 0.35;
-    px(bx + 3, by + 2, 10, 1, "#a8f0f4");
-    ink.restore();
+    drawPondDinghyLive(cpos, t);
   }
 
   function drawRuins(cpos, t) {
@@ -9809,7 +9910,16 @@
 
     ink.save();
     if (cloakOn) ink.globalAlpha = 0.06;
-    if (player.aboard && ownedBoat && scene === "island") {
+    if (player.aboard && aboardKind === "dinghy" && pondBoat && scene === "island") {
+      const b = pondBoat;
+      const bob = Math.sin(time * 1.8 + (b.phase || 0)) * 0.8;
+      boatDamp = 0.35;
+      ink.translate(b.x - cpos.x + b.w / 2, b.y - cpos.y + b.h + bob);
+      ink.rotate(b.tilt || 0);
+      ink.scale(b.face || 1, 1);
+      ink.translate(0, -b.h + 5);
+      if (face !== (b.face || 1)) ink.scale(-1, 1);
+    } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
       const b = ownedBoat;
       const bob = skiffBob(b, time);
       boatDamp = 0.35;
@@ -12288,7 +12398,7 @@
       "RIVER RUINS HALF TO TEMPLE",
       "RIVER POOL MIDWAY TO RUINS",
       "CAVES AND TIDE ON THE POOL",
-      "DINGHY IS SCENERY FOR NOW",
+      "DINGHY STEERS ON THE POOL",
       "BLUE PORTAL IS DORMANT",
       "GOLD EXIT LEAVES THE TEMPLE",
       "DAILY SUN IDOL NEAR TEMPLE",
