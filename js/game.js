@@ -425,7 +425,7 @@
   const WEEKLY_SPIN = {
     firstEndMs: Date.UTC(2026, 10, 11, 23, 59, 59),
     weekMs: 7 * 24 * 60 * 60 * 1000,
-    cost: 50,
+    cost: 0,
     spins: 3,
     prizes: [
       { id: "straw_hat", label: "STRAW HAT", p: 0.5 },
@@ -437,6 +437,8 @@
   let spinNote = "";
   let spinUsed = 0;
   let spinPeriodKey = "";
+  /** After depleted spins, show NEXT WEEK only on the first extra press. */
+  let spinNextWeekTold = false;
   /** CS:GO-style horizontal reel; outcome is fixed before the strip moves. */
   let spinReel = null;
   const MODE_WALK = ["SURVIVAL", "SPEEDRUN", "HUB"];
@@ -2839,12 +2841,14 @@
     spinReel = null;
     spinPeriodKey = period.key;
     spinUsed = 0;
+    spinNextWeekTold = false;
     const api = lbApi();
     if (!api || !api.isSignedIn || !api.isSignedIn()) {
       spinNote = "SIGN IN";
       return;
     }
     if (api.getWeeklySpinsLocal) spinUsed = api.getWeeklySpinsLocal(period.key) | 0;
+    if (spinUsed >= WEEKLY_SPIN.spins) spinNextWeekTold = false;
     if (!api.getWeeklySpins) return;
     api.getWeeklySpins(period.key).then((res) => {
       if (uiScreen !== "spin" || spinPeriodKey !== period.key) return;
@@ -2915,7 +2919,10 @@
     const period = weeklySpinPeriod();
     spinPeriodKey = period.key;
     if (spinUsed >= WEEKLY_SPIN.spins) {
-      spinNote = "NEXT WEEK";
+      if (!spinNextWeekTold) {
+        spinNote = "NEXT WEEK";
+        spinNextWeekTold = true;
+      }
       return;
     }
     const data = readSurvivalSave() || { slots: [], satchel: [], coins: 0, cosmetics: { face: null, back: null } };
@@ -2928,18 +2935,12 @@
     data.slots = ensureSaveSlots(data.slots);
     data.satchel = ensureSaveSlots(data.satchel);
     if (!data.cosmetics) data.cosmetics = { face: null, back: null };
-    const coins = Math.max(0, data.coins | 0);
-    if (coins < WEEKLY_SPIN.cost) {
-      spinNote = "NEED 50";
-      return;
-    }
     const prize = rollWeeklyPrize();
     const owned = survivalOwnsId(data, prize.id);
     if (!owned && !survivalGiveId(data, prize.id)) {
       spinNote = "BAG FULL";
       return;
     }
-    data.coins = coins - WEEKLY_SPIN.cost;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) {}
@@ -11350,7 +11351,7 @@
       "HUB IS A TITLE-SCREEN MODE",
       "OPEN HANGOUT PLAZA",
       "WEEKLY REWARDS NEEDS ACCOUNT",
-      "50 COINS  3 REWARDS A WEEK",
+      "FREE  3 REWARDS A WEEK",
       "HUB: TAB CHAT, E EMOTE, ESC",
       "SHELL BLOWS THE HORN",
       "FAR HORN WAKES SERPENT",
@@ -13390,30 +13391,18 @@
     drawPanelBox(x, y, w, h, "WEEKLY REWARDS");
     drawWeeklyRewardsIcon(x + 6, y + 4);
     drawPixText(period.label, (x + w / 2) | 0, y + 18, "#5c3a21", "center");
-    drawPixText("LEFT " + left + "  " + WEEKLY_SPIN.cost + " COINS", (x + w / 2) | 0, y + 28, "#3a2414", "center");
+    drawPixText("LEFT " + left + "  FREE", (x + w / 2) | 0, y + 28, "#3a2414", "center");
     drawSpinReelStrip(x + 10, y + 38, w - 20, 30);
     let action = "SPIN";
     if (!signed) action = "SIGN IN";
     else if (busy) action = "...";
     else if (left <= 0) action = "NEXT WEEK";
-    else if (survivalCoinCount() < WEEKLY_SPIN.cost) action = "NEED 50";
     const spinSel = !busy && (spinCursor === 0 || menuHovering("spin:go"));
     if (spinSel) px(x + 18, y + 76, w - 36, 11, "#e8c44a");
     drawPixText(action, (x + w / 2) | 0, y + 78, spinSel ? "#2b1c12" : "#3a2414", "center");
     addMenuHit("spin:go", x + 18, y + 76, w - 36, 11, () => {
       spinCursor = 0;
       if (busy) return;
-      if (!signed) {
-        uiScreen = "account";
-        authMode = "menu";
-        authStatus = "";
-        srCursor = 0;
-        return;
-      }
-      if (left <= 0) {
-        spinNote = "NEXT WEEK";
-        return;
-      }
       tryWeeklySpin();
     }, { hover: !busy });
     const status = busy ? "" : spinNote;
