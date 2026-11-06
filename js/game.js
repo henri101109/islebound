@@ -11320,8 +11320,23 @@
     const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
     if (n != null) {
       const t = api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
-      const label = t != null && t >= 0 ? "ONLINE " + n + " / TOTAL " + (t | 0) : "ONLINE " + n;
-      drawPixText(label, uiW - 6, 8, "#c9a227", "right");
+      const online = String(n | 0);
+      const total = t != null && t >= 0 ? String(t | 0) : null;
+      const onlineTw = pixTextWidth(online);
+      const totalTw = total ? pixTextWidth(total) : 0;
+      const gap = 5;
+      const iconW = 8;
+      const pair1 = iconW + 2 + onlineTw;
+      const pair2 = total ? iconW + 2 + totalTw : 0;
+      const inner = total ? pair1 + gap + pair2 : pair1;
+      let x = uiW - 6 - inner;
+      drawOnlineStatIcon(x, 6);
+      drawPixText(online, x + iconW + 2, 8, "#c9a227");
+      if (total) {
+        x += pair1 + gap;
+        drawTotalStatIcon(x, 6);
+        drawPixText(total, x + iconW + 2, 8, "#c9a227");
+      }
     }
   }
 
@@ -12768,6 +12783,23 @@
     return yy;
   }
 
+  /** Green live-player pip (8x7) for ONLINE. */
+  function drawOnlineStatIcon(x, y) {
+    px(x + 3, y, 2, 2, "#f3e2c4");
+    px(x + 2, y + 2, 4, 2, "#c4a574");
+    px(x + 1, y + 4, 6, 3, "#3ddc5a");
+    px(x + 1, y + 4, 6, 1, "#1a4020");
+  }
+
+  /** Group of players (8x7) for TOTAL. */
+  function drawTotalStatIcon(x, y) {
+    px(x + 1, y + 1, 2, 2, "#c4a574");
+    px(x, y + 3, 4, 3, "#5c3a21");
+    px(x + 5, y, 2, 2, "#f3e2c4");
+    px(x + 4, y + 2, 4, 2, "#c4a574");
+    px(x + 3, y + 4, 5, 3, "#8a5a32");
+  }
+
   function onlineLabel() {
     const api = lbApi();
     if (!api || typeof api.getOnlineCount !== "function") return "ONLINE —";
@@ -12780,12 +12812,28 @@
 
   function drawOnlineChip(cx, y) {
     nudgePresenceRefresh();
-    const label = onlineLabel();
-    const tw = pixTextWidth(label);
-    const x = (cx - tw / 2) | 0;
-    px(x - 4, y - 2, tw + 8, 11, "#3a2414");
-    px(x - 3, y - 1, tw + 6, 9, "#5c3a21");
-    drawPixText(label, x, y, "#f3e2c4");
+    const api = lbApi();
+    const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
+    const online = n == null || n < 0 ? "—" : String(n | 0);
+    const t = api && api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
+    const total = t == null || t < 0 ? null : String(t | 0);
+    const onlineTw = pixTextWidth(online);
+    const totalTw = total != null ? pixTextWidth(total) : 0;
+    const gap = 6;
+    const iconW = 8;
+    const pair1 = iconW + 2 + onlineTw;
+    const pair2 = total != null ? iconW + 2 + totalTw : 0;
+    const inner = total != null ? pair1 + gap + pair2 : pair1;
+    const x = (cx - inner / 2) | 0;
+    px(x - 4, y - 2, inner + 8, 11, "#3a2414");
+    px(x - 3, y - 1, inner + 6, 9, "#5c3a21");
+    drawOnlineStatIcon(x, y - 1);
+    drawPixText(online, x + iconW + 2, y, "#f3e2c4");
+    if (total != null) {
+      const tx = x + pair1 + gap;
+      drawTotalStatIcon(tx, y - 1);
+      drawPixText(total, tx + iconW + 2, y, "#f3e2c4");
+    }
   }
 
   function drawModeSelect() {

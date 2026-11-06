@@ -2164,57 +2164,79 @@
     return Math.max(0, m[1] | 0);
   }
 
-  async function fetchTotalPlayerCount() {
-    if (!configured() || !ipsAvailable) return totalPlayerCount;
+  async function headExactCount(table, selectCol) {
+    if (!configured()) return null;
     try {
-      const res = await fetch(restBase() + "/" + IPS_TABLE + "?select=ip", {
+      const res = await fetch(restBase() + "/" + table + "?select=" + encodeURIComponent(selectCol || "*"), {
         method: "HEAD",
         headers: anonHeaders("count=exact"),
       });
-      if (!res.ok) {
-        if (res.status === 404 || res.status === 406) {
-          ipsAvailable = false;
-          totalPlayerCount = null;
-          return null;
-        }
-        return totalPlayerCount;
+      if (!res.ok) return null;
+      return parseExactCount(res);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * TOTAL = all-time unique players.
+   * Primary: every client_id ever written to players_online (rows are never purged).
+   * Also folds in unique public IPs so new-IP visits still bump the number.
+   */
+  async function fetchTotalPlayerCount() {
+    if (!configured()) return totalPlayerCount;
+    try {
+      let best = null;
+      // Historical + ongoing devices (includes everyone who has heartbeated before).
+      if (presenceAvailable) {
+        const clients = await headExactCount(PRESENCE, "client_id");
+        if (clients != null) best = clients;
       }
-      const n = parseExactCount(res);
-      if (n != null) totalPlayerCount = n;
+      if (ipsAvailable) {
+        const ips = await headExactCount(IPS_TABLE, "ip");
+        if (ips == null) {
+          // probe once — 404 means table missing
+          try {
+            const probe = await fetch(restBase() + "/" + IPS_TABLE + "?select=ip&limit=1", {
+              headers: anonHeaders(),
+            });
+            if (probe.status === 404 || probe.status === 406) ipsAvailable = false;
+          } catch (e) {}
+        } else if (best == null || ips > best) {
+          best = ips;
+        }
+      }
+      if (best != null) totalPlayerCount = best;
       return totalPlayerCount;
     } catch (e) {
       return totalPlayerCount;
     }
   }
 
-  /** Upsert this client's public IP so TOTAL grows for first-time visitors. */
+  /** Upsert this client's public IP (TOTAL also counts all-time presence client_ids). */
   async function recordPlayerIpVisit() {
-    if (!configured() || !ipsAvailable) return;
+    if (!configured()) return;
     const now = Date.now();
     if (now - lastIpVisitAt < IP_VISIT_MS && totalPlayerCount != null) return;
-    let ip = clientIp;
-    if (!isValidPublicIp(ip)) ip = await refreshClientIp();
-    if (!isValidPublicIp(ip)) return;
     lastIpVisitAt = now;
-    try {
-      const res = await fetch(restBase() + "/" + IPS_TABLE + "?on_conflict=ip", {
-        method: "POST",
-        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
-        body: JSON.stringify({
-          ip: String(ip),
-          last_seen: new Date().toISOString(),
-        }),
-      });
-      if (!res.ok) {
-        if (res.status === 404 || res.status === 406) {
-          ipsAvailable = false;
-          totalPlayerCount = null;
-          return;
-        }
-        // Missing column soft-fail: first_seen is defaulted server-side
+    if (ipsAvailable) {
+      let ip = clientIp;
+      if (!isValidPublicIp(ip)) ip = await refreshClientIp();
+      if (isValidPublicIp(ip)) {
+        try {
+          const res = await fetch(restBase() + "/" + IPS_TABLE + "?on_conflict=ip", {
+            method: "POST",
+            headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+            body: JSON.stringify({
+              ip: String(ip),
+              last_seen: new Date().toISOString(),
+            }),
+          });
+          if (!res.ok && (res.status === 404 || res.status === 406)) ipsAvailable = false;
+        } catch (e) {}
       }
-      await fetchTotalPlayerCount();
-    } catch (e) {}
+    }
+    await fetchTotalPlayerCount();
   }
 
   function presenceUsername() {

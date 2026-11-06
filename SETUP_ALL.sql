@@ -121,8 +121,10 @@ create policy "Users upsert own speedrun_prs" on public.speedrun_prs for insert 
 drop policy if exists "Users update own speedrun_prs" on public.speedrun_prs;
 create policy "Users update own speedrun_prs" on public.speedrun_prs for update to anon, authenticated using (true) with check (true);
 
--- ========== unique player IPs (all-time TOTAL next to ONLINE) ==========
--- One row per public IP that has ever opened the game / presence heartbeat.
+-- ========== unique player IPs (folded into TOTAL with all-time presence) ==========
+-- TOTAL in the UI = max(count(players_online), count(player_ips)).
+-- players_online keeps every client_id forever → past joiners already count.
+-- player_ips still tracks unique public IPs for new-IP bumps.
 create table if not exists public.player_ips (
   ip text primary key,
   first_seen timestamptz not null default now(),
