@@ -745,6 +745,11 @@
   let lockerHover = null;
   /** Locker browse tab: "skins" | "cosmetics". */
   let lockerTab = "skins";
+  /** Pixel scroll offsets for locker browse grids. */
+  let lockerScrollSkins = 0;
+  let lockerScrollCosmetics = 0;
+  /** Last locker grid clip rect + max scroll (for wheel). */
+  let lockerGridBounds = null;
   /** STATS board mode: "survival" | "speedrun". */
   let statsMode = "survival";
   /** Profiles browser state. */
@@ -13062,9 +13067,20 @@
     }
   }
 
+  function syncPresenceLoadout() {
+    const api = lbApi();
+    if (!api || typeof api.setPresenceLoadout !== "function") return;
+    api.setPresenceLoadout({
+      face_id: cosmetics.face || null,
+      back_id: effectiveBack(playerSkin, cosmetics.back),
+      skin_id: playerSkin || "classic",
+    });
+  }
+
   function syncHubPresencePose() {
     const api = lbApi();
     if (!api || typeof api.setHubPresence !== "function") return;
+    syncPresenceLoadout();
     if (scene !== "hub") {
       api.setHubPresence(null);
       return;
@@ -13077,6 +13093,28 @@
       back_id: effectiveBack(playerSkin, cosmetics.back),
       emote: hubEmoteT > 0 ? hubEmote : "",
     });
+  }
+
+  function drawProfileLoadoutPreview(fx, fy, skin, face, back) {
+    const prevFace = cosmetics.face;
+    const prevBack = cosmetics.back;
+    cosmetics.face = face || null;
+    cosmetics.back = back || null;
+    const prevInk = ink;
+    ink = ctx;
+    ink.save();
+    ink.translate(fx, fy);
+    ink.scale(1.6, 1.6);
+    const bob = ((Math.sin(time * 2.1) * 0.5) | 0);
+    ink.translate(0, bob);
+    drawCapeSheet(back, 0.85, 2.0, time);
+    drawPlayerBody(skin || "classic", 0, false, false);
+    drawCapeCollar(back);
+    if (skin === "beta_alien") drawAlienPortalWisps(0, -8);
+    ink.restore();
+    ink = prevInk;
+    cosmetics.face = prevFace;
+    cosmetics.back = prevBack;
   }
 
   function drawHubPeers(cpos, t) {
@@ -14861,6 +14899,7 @@
       const lab = type === "skin" ? skinLabel(id) : cosmeticLabel(id);
       drawPixTextSm(lab, x + ((w / 2) | 0), y + h + 2, eq ? "#e8c44a" : "#8a6a42", "center");
     }
+    if (opts && opts.hit === false) return;
     addMenuHit(
       "lockitem:" + type + ":" + id,
       x,
@@ -14882,6 +14921,23 @@
       id,
       kind: type === "skin" ? "skin" : cosmeticKindOf(id),
     });
+  }
+
+  function clampLockerScroll(scroll, maxScroll) {
+    const m = Math.max(0, maxScroll | 0);
+    let s = scroll | 0;
+    if (s < 0) s = 0;
+    if (s > m) s = m;
+    return s;
+  }
+
+  function drawLockerScrollBar(x, y, h, scroll, maxScroll) {
+    if (maxScroll <= 0 || h < 12) return;
+    const trackW = 2;
+    px(x, y, trackW, h, "#1a120c");
+    const thumbH = Math.max(8, ((h * h) / (h + maxScroll)) | 0);
+    const thumbY = y + ((((h - thumbH) * scroll) / maxScroll) | 0);
+    px(x, thumbY, trackW, thumbH, "#c9a227");
   }
 
   function drawModeSelect() {
@@ -15029,6 +15085,8 @@
 
     const gridTop = tabY + tabH + 8;
     const gridBot = panelY + panelH - 6;
+    const gridViewH = Math.max(0, gridBot - gridTop);
+    lockerGridBounds = null;
 
     if (lockerTab === "cosmetics") {
       const cosList = ownedCosmetics.slice();
@@ -15036,6 +15094,7 @@
       const cellGap = 4;
       const labelH = 8;
       const cols = 3;
+      const rowPitch = cell + cellGap + labelH;
       const gridInnerW = cols * cell + (cols - 1) * cellGap;
       const gridPad = ((panelW - gridInnerW) / 2) | 0;
       if (!cosList.length) {
@@ -15061,48 +15120,99 @@
           "center"
         );
       } else {
-        for (let i = 0; i < cosList.length && i < 12; i++) {
+        const rows = Math.max(1, Math.ceil(cosList.length / cols));
+        const contentH = rows * rowPitch - cellGap;
+        const maxScroll = Math.max(0, contentH - gridViewH);
+        lockerScrollCosmetics = clampLockerScroll(lockerScrollCosmetics, maxScroll);
+        lockerGridBounds = {
+          x: panelX,
+          y: gridTop,
+          w: panelW,
+          h: gridViewH,
+          maxScroll,
+          tab: "cosmetics",
+          step: rowPitch,
+        };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(panelX + 2, gridTop, panelW - 4, gridViewH);
+        ctx.clip();
+        for (let i = 0; i < cosList.length; i++) {
           const col = i % cols;
           const row = (i / cols) | 0;
           const ix = panelX + gridPad + col * (cell + cellGap);
-          const iy = gridTop + row * (cell + cellGap + labelH);
-          if (iy + cell > gridBot) break;
-          drawLockerStripItem(ix, iy, cosList[i], "cosmetic", { w: cell, h: cell, label: true });
+          const iy = gridTop - lockerScrollCosmetics + row * rowPitch;
+          if (iy + cell + labelH < gridTop || iy > gridBot) continue;
+          const hit =
+            iy >= gridTop && iy + cell + (labelH ? 8 : 0) <= gridBot;
+          drawLockerStripItem(ix, iy, cosList[i], "cosmetic", {
+            w: cell,
+            h: cell,
+            label: true,
+            hit,
+          });
         }
+        ctx.restore();
+        drawLockerScrollBar(panelX + panelW - 4, gridTop, gridViewH, lockerScrollCosmetics, maxScroll);
       }
     } else {
-      // Owned skins only (launch free + quest unlocks), packed to fit
+      // Owned skins only (launch free + quest unlocks) — fixed size, scroll if needed
       ensureLaunchSkins();
       const skinList = [];
       for (let i = 0; i < ALL_SKIN_IDS.length; i++) {
         if (ownsSkin(ALL_SKIN_IDS[i])) skinList.push(ALL_SKIN_IDS[i]);
       }
       const skinCols = 2;
-      const skinRows = Math.max(1, Math.ceil(skinList.length / skinCols));
+      const skinCell = 26;
       const labelH = 8;
       const skinGapX = 6;
-      const availH = Math.max(48, gridBot - gridTop - 4);
-      const skinGapY = 3;
-      let skinCell = (((availH - skinGapY * Math.max(0, skinRows - 1)) / skinRows) | 0) - labelH;
-      if (skinCell > 28) skinCell = 28;
-      if (skinCell < 16) skinCell = 16;
+      const skinGapY = 4;
       const rowPitch = skinCell + labelH + skinGapY;
       const skinInnerW = skinCols * skinCell + (skinCols - 1) * skinGapX;
       const skinPadX = panelX + (((panelW - skinInnerW) / 2) | 0);
-      const totalH = skinRows * rowPitch - skinGapY;
-      const skinY0 = gridTop + Math.max(1, (((availH - totalH) / 2) | 0));
-      for (let i = 0; i < skinList.length; i++) {
-        const col = i % skinCols;
-        const row = (i / skinCols) | 0;
-        const iy = skinY0 + row * rowPitch;
-        if (iy + skinCell > gridBot) break;
-        drawLockerStripItem(
-          skinPadX + col * (skinCell + skinGapX),
-          iy,
-          skinList[i],
-          "skin",
-          { w: skinCell, h: skinCell, label: true }
+      if (!skinList.length) {
+        drawPixTextSm(
+          "NO SKINS",
+          panelX + ((panelW / 2) | 0),
+          gridTop + 18,
+          "#5c3a21",
+          "center"
         );
+      } else {
+        const skinRows = Math.max(1, Math.ceil(skinList.length / skinCols));
+        const contentH = skinRows * rowPitch - skinGapY;
+        const maxScroll = Math.max(0, contentH - gridViewH);
+        lockerScrollSkins = clampLockerScroll(lockerScrollSkins, maxScroll);
+        lockerGridBounds = {
+          x: panelX,
+          y: gridTop,
+          w: panelW,
+          h: gridViewH,
+          maxScroll,
+          tab: "skins",
+          step: rowPitch,
+        };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(panelX + 2, gridTop, panelW - 4, gridViewH);
+        ctx.clip();
+        for (let i = 0; i < skinList.length; i++) {
+          const col = i % skinCols;
+          const row = (i / skinCols) | 0;
+          const iy = gridTop - lockerScrollSkins + row * rowPitch;
+          if (iy + skinCell + labelH < gridTop || iy > gridBot) continue;
+          const hit =
+            iy >= gridTop && iy + skinCell + 8 <= gridBot;
+          drawLockerStripItem(
+            skinPadX + col * (skinCell + skinGapX),
+            iy,
+            skinList[i],
+            "skin",
+            { w: skinCell, h: skinCell, label: true, hit }
+          );
+        }
+        ctx.restore();
+        drawLockerScrollBar(panelX + panelW - 4, gridTop, gridViewH, lockerScrollSkins, maxScroll);
       }
     }
 
@@ -15621,8 +15731,8 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const api = lbApi();
-    const w = 260;
-    const h = Math.min(uiH - 12, 168);
+    const w = 268;
+    const h = Math.min(uiH - 12, 176);
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, "PROFILES");
@@ -15661,7 +15771,46 @@
 
     px(detailX - 4, y + 34, 1, h - 50, "#8a5a32");
     if (profileFocus) {
-      drawPixTextBold(String(profileFocus.name).slice(0, 12), detailX + 50, y + 36, "#c9a227", "center");
+      // Keep own card current while browsing Profiles.
+      const meName = (api && api.displayName && api.displayName()) || "";
+      const focusName = String(profileFocus.name || "").toUpperCase();
+      if (meName && focusName === String(meName).toUpperCase()) {
+        syncPresenceLoadout();
+        profileFocus.skin = playerSkin || "classic";
+        profileFocus.face = cosmetics.face || null;
+        profileFocus.back = effectiveBack(playerSkin, cosmetics.back);
+      } else {
+        if (api && api.getOnlinePresence) {
+          const rows = api.getOnlinePresence() || [];
+          for (let i = 0; i < rows.length; i++) {
+            const p = rows[i];
+            if (!p || !p.username) continue;
+            if (String(p.username).toUpperCase() !== focusName) continue;
+            if (p.skin_id) profileFocus.skin = p.skin_id;
+            if (p.face_id !== undefined) profileFocus.face = p.face_id;
+            if (p.back_id !== undefined) profileFocus.back = p.back_id;
+            break;
+          }
+        }
+        if (api && api.getCachedLoadout) {
+          const lo = api.getCachedLoadout(profileFocus.name);
+          if (lo) {
+            if (!profileFocus.skin && lo.skin) profileFocus.skin = lo.skin;
+            if (profileFocus.face == null && lo.face != null) profileFocus.face = lo.face;
+            if (profileFocus.back == null && lo.back != null) profileFocus.back = lo.back;
+          }
+        }
+      }
+      drawPixTextBold(String(profileFocus.name).slice(0, 12), detailX + 40, y + 36, "#c9a227", "center");
+      const skinId = profileFocus.skin || null;
+      const faceId = profileFocus.face || null;
+      const backId = profileFocus.back || null;
+      const hasLoadout = !!(skinId || faceId || backId);
+      if (hasLoadout) {
+        px(detailX + 78, y + 44, 36, 42, "#2b1c12");
+        px(detailX + 79, y + 45, 34, 40, "#3a2414");
+        drawProfileLoadoutPreview(detailX + 96, y + 78, skinId || "classic", faceId, backId);
+      }
       const nmPlay =
         api && api.formatPlaytimeClock
           ? api.formatPlaytimeClock(profileFocus.nm_playtime_ms | 0)
@@ -15671,16 +15820,19 @@
           ? api.formatPlaytimeClock(profileFocus.sr_playtime_ms | 0)
           : String(profileFocus.sr_playtime_ms | 0);
       drawPixText((profileFocus.is_account ? "ACCOUNT" : "GUEST"), detailX, y + 48, "#5c3a21");
-      drawPixText("SURV " + nmPlay, detailX, y + 60, "#3a2414");
-      drawPixText("SPEED " + srPlay, detailX, y + 70, "#3a2414");
-      drawPixText("PRS", detailX, y + 84, "#5c3a21");
+      drawPixText("SKIN " + (skinId ? skinLabel(skinId).slice(0, 8) : "—"), detailX, y + 58, "#3a2414");
+      drawPixText("FACE " + (faceId ? cosmeticLabel(faceId).slice(0, 8) : "NONE"), detailX, y + 68, "#3a2414");
+      drawPixText("BACK " + (backId ? cosmeticLabel(backId).slice(0, 8) : "NONE"), detailX, y + 78, "#3a2414");
+      drawPixText("SURV " + nmPlay, detailX, y + 92, "#3a2414");
+      drawPixText("SPEED " + srPlay, detailX, y + 102, "#3a2414");
+      drawPixText("PRS", detailX, y + 114, "#5c3a21");
       const prIds = Object.keys(profileFocus.prs || {});
-      let py = y + 94;
+      let py = y + 124;
       if (!prIds.length) {
         drawPixText("NONE CACHED", detailX, py, "#8a5a32");
       } else {
         prIds.sort((a, b) => (profileFocus.prs[a] | 0) - (profileFocus.prs[b] | 0));
-        for (let i = 0; i < Math.min(6, prIds.length); i++) {
+        for (let i = 0; i < Math.min(3, prIds.length); i++) {
           const id = prIds[i];
           const lab = (api && api.CATEGORIES && api.CATEGORIES[id] && api.CATEGORIES[id].label) || id;
           const t = api && api.formatTime ? api.formatTime(profileFocus.prs[id]) : String(profileFocus.prs[id] | 0);
@@ -15688,6 +15840,10 @@
           drawPixText(t, detailX + 58, py, "#5c3a21");
           py += 9;
         }
+      }
+      if (!hasLoadout) {
+        drawPixText("LOADOUT ?", detailX + 78, y + 58, "#8a5a32");
+        drawPixText("SEEN ONLINE", detailX + 72, y + 68, "#5c3a21");
       }
     } else {
       drawPixText("PICK A PLAYER", detailX + 8, y + 60, "#8a5a32");
@@ -17063,8 +17219,25 @@
   canvas.addEventListener(
     "wheel",
     (e) => {
-      if (!chatOpen) return;
       const p = eventToUi(e);
+      if (uiScreen === "mode" && lockerGridBounds && lockerGridBounds.maxScroll > 0) {
+        const g = lockerGridBounds;
+        if (p.x >= g.x && p.x < g.x + g.w && p.y >= g.y && p.y < g.y + g.h) {
+          e.preventDefault();
+          const step = Math.max(8, g.step | 0);
+          const delta = e.deltaY < 0 ? -step : step;
+          if (g.tab === "cosmetics") {
+            lockerScrollCosmetics = clampLockerScroll(
+              lockerScrollCosmetics + delta,
+              g.maxScroll
+            );
+          } else {
+            lockerScrollSkins = clampLockerScroll(lockerScrollSkins + delta, g.maxScroll);
+          }
+          return;
+        }
+      }
+      if (!chatOpen) return;
       const uiW = canvas.width / SCALE_UI;
       const panelW = Math.min(152, Math.max(120, (uiW * 0.3) | 0));
       if (p.x < uiW - panelW - 3) return;

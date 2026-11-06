@@ -219,6 +219,7 @@
   let presenceHasUserId = true; // false if user_id column missing on players_online
   let presenceHasMode = true; // false if mode/category columns missing
   let presenceHasHub = true; // false if hub pose columns missing
+  let presenceHasSkin = true; // false if skin_id column missing on players_online
   let onlineCount = null; // null = unknown / unavailable
   let totalPlayerCount = null; // all-time unique IPs (null = unknown / table missing)
   let ipsAvailable = true; // false if player_ips table missing
@@ -227,6 +228,9 @@
   let lastPresenceAt = 0;
   let presenceActivity = { mode: "menu", category: null }; // set by game
   let hubPresencePose = null; // { x,y,face,face_id,back_id,emote } while in hub
+  /** Always-on loadout published with presence (menu/survival/hub). */
+  let presenceLoadout = { face_id: null, back_id: null, skin_id: null };
+  const LOADOUT_CACHE_KEY = "islebound-loadout-cache";
   let dailyClaimsAvailable = true;
   const DAILY_CLAIMS = "daily_claims";
   const DAILY_CLAIM_KEY = "islebound-daily-claim";
@@ -2072,6 +2076,9 @@
           nm_playtime_ms: 0,
           sr_playtime_ms: 0,
           prs: {},
+          skin: null,
+          face: null,
+          back: null,
         };
       }
       const row = map[n];
@@ -2087,6 +2094,9 @@
           const prev = row.prs[patch.category] | 0;
           if (!prev || patch.time_ms < prev) row.prs[patch.category] = patch.time_ms | 0;
         }
+        if (patch.skin) row.skin = String(patch.skin).slice(0, 24);
+        if (patch.face !== undefined) row.face = patch.face ? String(patch.face).slice(0, 24) : null;
+        if (patch.back !== undefined) row.back = patch.back ? String(patch.back).slice(0, 24) : null;
       }
     }
 
@@ -2136,10 +2146,25 @@
       }
     }
 
-    // Online presence
+    // Online presence (live loadout when available)
     for (let i = 0; i < (onlinePresence || []).length; i++) {
       const p = onlinePresence[i];
-      if (p && p.username) touch(p.username, { is_account: !!p.user_id });
+      if (p && p.username) {
+        touch(p.username, {
+          is_account: !!p.user_id,
+          skin: p.skin_id || undefined,
+          face: p.face_id !== undefined ? p.face_id : undefined,
+          back: p.back_id !== undefined ? p.back_id : undefined,
+        });
+      }
+    }
+
+    // Cached loadouts from prior presence sightings
+    const loadouts = loadLoadoutCache();
+    for (const n in loadouts) {
+      const lo = loadouts[n];
+      if (!lo) continue;
+      touch(n, { skin: lo.skin || undefined, face: lo.face, back: lo.back });
     }
 
     // Identity directory
@@ -2552,6 +2577,75 @@
     };
   }
 
+  function setPresenceLoadout(lo) {
+    if (!lo) {
+      presenceLoadout = { face_id: null, back_id: null, skin_id: null };
+      return;
+    }
+    presenceLoadout = {
+      face_id: lo.face_id ? String(lo.face_id).slice(0, 24) : null,
+      back_id: lo.back_id ? String(lo.back_id).slice(0, 24) : null,
+      skin_id: lo.skin_id ? String(lo.skin_id).slice(0, 24) : null,
+    };
+    const me = displayName() || getLastName() || "";
+    if (me) {
+      rememberLoadout(me, {
+        skin: presenceLoadout.skin_id,
+        face: presenceLoadout.face_id,
+        back: presenceLoadout.back_id,
+      });
+    }
+  }
+
+  function loadLoadoutCache() {
+    try {
+      const raw = localStorage.getItem(LOADOUT_CACHE_KEY);
+      const data = raw ? JSON.parse(raw) : null;
+      return data && typeof data === "object" ? data : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveLoadoutCache(map) {
+    try {
+      localStorage.setItem(LOADOUT_CACHE_KEY, JSON.stringify(map || {}));
+    } catch (e) {}
+  }
+
+  /** Cache a player's last-seen equipped skin + cosmetics (local profile viewer). */
+  function rememberLoadout(name, patch) {
+    const n = sanitizeName(name, true);
+    if (!n || !patch) return;
+    const map = loadLoadoutCache();
+    const prev = map[n] || {};
+    const next = {
+      skin: patch.skin != null ? patch.skin || null : prev.skin || null,
+      face: patch.face !== undefined ? patch.face || null : prev.face || null,
+      back: patch.back !== undefined ? patch.back || null : prev.back || null,
+      at: Date.now(),
+    };
+    map[n] = next;
+    // Cap cache size
+    const keys = Object.keys(map);
+    if (keys.length > 120) {
+      keys
+        .sort((a, b) => (map[a].at | 0) - (map[b].at | 0))
+        .slice(0, keys.length - 100)
+        .forEach((k) => {
+          delete map[k];
+        });
+    }
+    saveLoadoutCache(map);
+  }
+
+  function getCachedLoadout(name) {
+    const n = sanitizeName(name, true);
+    if (!n) return null;
+    const row = loadLoadoutCache()[n];
+    return row || null;
+  }
+
   function hubPresenceSupported() {
     return !!(presenceAvailable && presenceHasHub);
   }
@@ -2567,6 +2661,24 @@
         d.indexOf("back_id") >= 0 ||
         d.indexOf("emote") >= 0 ||
         d.indexOf("in_hub") >= 0) &&
+      (raw.indexOf("PGRST204") >= 0 ||
+        d.indexOf("pgrst204") >= 0 ||
+        d.indexOf("42703") >= 0 ||
+        d.indexOf("column") >= 0 ||
+        d.indexOf("schema cache") >= 0 ||
+        d.indexOf("does not exist") >= 0 ||
+        status === 400)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function presenceLooksMissingSkin(status, detail) {
+    const raw = String(detail || "");
+    const d = raw.toLowerCase();
+    if (
+      d.indexOf("skin_id") >= 0 &&
       (raw.indexOf("PGRST204") >= 0 ||
         d.indexOf("pgrst204") >= 0 ||
         d.indexOf("42703") >= 0 ||
@@ -2636,30 +2748,36 @@
       body.category = presenceActivity.mode === "speedrun" ? presenceActivity.category : null;
     }
     if (presenceHasHub) {
+      // Cosmetics stay published even outside hub so Profiles can show loadouts.
+      body.face_id = presenceLoadout.face_id || (hubPresencePose && hubPresencePose.face_id) || null;
+      body.back_id = presenceLoadout.back_id || (hubPresencePose && hubPresencePose.back_id) || null;
+      if (presenceHasSkin) {
+        body.skin_id = presenceLoadout.skin_id || null;
+      }
       if (hubPresencePose) {
         body.in_hub = true;
         body.hub_x = hubPresencePose.x;
         body.hub_y = hubPresencePose.y;
         body.hub_face = hubPresencePose.face;
-        body.face_id = hubPresencePose.face_id;
-        body.back_id = hubPresencePose.back_id;
         body.emote = hubPresencePose.emote || "";
       } else {
         body.in_hub = false;
         body.hub_x = null;
         body.hub_y = null;
         body.hub_face = null;
-        body.face_id = null;
-        body.back_id = null;
         body.emote = "";
       }
     }
     try {
       let { res, detail } = await postPresenceBody(body);
       // Soft-drop missing optional columns and retry.
-      for (let attempt = 0; attempt < 5 && !res.ok; attempt++) {
+      for (let attempt = 0; attempt < 6 && !res.ok; attempt++) {
         let retried = false;
-        if (body.mode != null && presenceLooksMissingMode(res.status, detail)) {
+        if (body.skin_id != null && presenceLooksMissingSkin(res.status, detail)) {
+          presenceHasSkin = false;
+          delete body.skin_id;
+          retried = true;
+        } else if (body.mode != null && presenceLooksMissingMode(res.status, detail)) {
           presenceHasMode = false;
           delete body.mode;
           delete body.category;
@@ -2673,10 +2791,15 @@
           delete body.face_id;
           delete body.back_id;
           delete body.emote;
+          delete body.skin_id;
           retried = true;
         } else if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
           presenceHasUserId = false;
           delete body.user_id;
+          retried = true;
+        } else if (body.skin_id != null && (res.status === 400 || String(detail).indexOf("PGRST204") >= 0)) {
+          presenceHasSkin = false;
+          delete body.skin_id;
           retried = true;
         } else if (body.mode != null && (res.status === 400 || String(detail).indexOf("PGRST204") >= 0)) {
           // Ambiguous column miss while sending mode — try dropping mode first.
@@ -2693,6 +2816,7 @@
           delete body.face_id;
           delete body.back_id;
           delete body.emote;
+          delete body.skin_id;
           retried = true;
         }
         if (!retried) break;
@@ -2721,6 +2845,7 @@
     if (presenceHasUserId) cols += ",user_id";
     if (presenceHasMode) cols += ",mode,category";
     if (presenceHasHub) cols += ",in_hub,hub_x,hub_y,hub_face,face_id,back_id,emote";
+    if (presenceHasHub && presenceHasSkin) cols += ",skin_id";
     return cols;
   }
 
@@ -2747,6 +2872,10 @@
         // Missing optional columns → drop and retry (do NOT kill presence).
         if (presenceHasMode && (presenceLooksMissingMode(res.status, detail) || res.status === 400)) {
           presenceHasMode = false;
+          return fetchOnlinePresence();
+        }
+        if (presenceHasSkin && (presenceLooksMissingSkin(res.status, detail) || res.status === 400)) {
+          presenceHasSkin = false;
           return fetchOnlinePresence();
         }
         if (presenceHasHub && (presenceLooksMissingHub(res.status, detail) || res.status === 400)) {
@@ -2777,8 +2906,16 @@
         hub_face: r && r.hub_face === -1 ? -1 : 1,
         face_id: r && r.face_id ? String(r.face_id) : null,
         back_id: r && r.back_id ? String(r.back_id) : null,
+        skin_id: r && r.skin_id ? String(r.skin_id) : null,
         emote: r && r.emote ? String(r.emote) : "",
       }));
+      for (let i = 0; i < onlinePresence.length; i++) {
+        const p = onlinePresence[i];
+        if (!p || !p.username) continue;
+        if (p.skin_id || p.face_id || p.back_id) {
+          rememberLoadout(p.username, { skin: p.skin_id, face: p.face_id, back: p.back_id });
+        }
+      }
       onlineCount = onlinePresence.length;
       return onlineCount;
     } catch (e) {
@@ -3312,6 +3449,9 @@
     getPresenceActivity,
     presenceActivityLabel,
     setHubPresence,
+    setPresenceLoadout,
+    rememberLoadout,
+    getCachedLoadout,
     hubPresenceSupported,
     claimDailyIdol,
     getDailyClaimLocal,
