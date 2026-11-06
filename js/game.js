@@ -9557,6 +9557,8 @@
     if (id === "megalodon") return { body: "#3a4854", tail: "#1a242c", hi: "#8a9aa8" };
     if (id === "shark" || id === "mini_shark") return { body: "#6a7a84", tail: "#3a4a52", hi: "#b8c4cc" };
     if (id === "blowfish") return { body: "#e8c878", tail: "#c9a048", hi: "#f4dca0" };
+    if (id === "waterfall_eel") return { body: "#1a4844", tail: "#0e302c", hi: "#c8ffe8" };
+    if (id === "portal_leech") return { body: "#3a1a58", tail: "#2a1040", hi: "#c878ff" };
     return { body: "#3a9ad4", tail: "#1a6a9a", hi: "#7fd4f0" };
   }
 
@@ -14394,7 +14396,15 @@
 
   /** Category row glyph; reuses catch art where it fits. */
   function drawSpeedCatIcon(id, x, y) {
-    if (id === "shark" || id === "jelly_white" || id === "chest" || id === "blowfish" || id === "megalodon") {
+    if (
+      id === "shark" ||
+      id === "jelly_white" ||
+      id === "chest" ||
+      id === "blowfish" ||
+      id === "megalodon" ||
+      id === "waterfall_eel" ||
+      id === "portal_leech"
+    ) {
       drawTinyCatch(id, x, y);
       return;
     }
