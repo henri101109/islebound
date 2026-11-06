@@ -27,28 +27,8 @@
   const AUTO_BAN_MS = 24 * 60 * 60 * 1000; // 24h temp ban for detected cheats
   // Friendly copy for banned players (shown in HUD / chat status).
   const BAN_USER_MSG = "You're temporarily banned from online features.";
-  // Client-side fallback so Matteus stays blocked even before SETUP SQL runs.
-  // Window: 2026-11-05 05:47 UTC → +12h = 17:47 UTC.
-  const HARD_BANS = [
-    {
-      name_norm: "MATTEUS",
-      match_mode: "name_fuzzy",
-      expires_at: "2026-11-05T17:47:00.000Z",
-      reason: "cheat WRs",
-    },
-    {
-      name_norm: "MATTEUS O",
-      match_mode: "name_exact",
-      expires_at: "2026-11-05T17:47:00.000Z",
-      reason: "cheat WRs",
-    },
-    {
-      name_norm: "OWENS",
-      match_mode: "name_exact",
-      expires_at: "2026-11-05T17:47:00.000Z",
-      reason: "cheat WRs",
-    },
-  ];
+  // Client-side hard bans (name hide + feature block). Empty = nobody hard-banned.
+  const HARD_BANS = [];
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
     "HENRI P": "HENRI",

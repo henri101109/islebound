@@ -323,31 +323,22 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
     and not public.player_is_banned(player_name, null, null, null)
   );
 
--- Temp-ban Matteus (name + account) for 12 hours from 2026-11-05 05:47 UTC.
--- Expires 2026-11-05 17:47:00+00. Safe to re-run (deletes prior matching temp rows first).
+-- Unban Matteus / Owens (all name / account / client / IP / floor auto-bans).
 delete from public.player_bans
-where reason = 'temp ban cheat WRs'
-  and expires_at = timestamptz '2026-11-05 17:47:00+00';
-
-insert into public.player_bans (name_norm, match_mode, expires_at, reason)
-values
-  ('MATTEUS', 'name_fuzzy', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs'),
-  ('MATTEUS O', 'name_exact', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs'),
-  ('OWENS', 'name_exact', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs');
-
-insert into public.player_bans (user_id, name_norm, match_mode, expires_at, reason)
-select a.id,
-       upper(trim(a.username)),
-       'user_id',
-       timestamptz '2026-11-05 17:47:00+00',
-       'temp ban cheat WRs'
-from public.player_accounts a
-where upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) ~ 'MATTEUS'
-   or upper(trim(a.username)) in ('OWENS', 'MATTEUS', 'MATTEUS O', 'MATTEUS OWENS');
-
--- Optional: once you know Matteus' public IP (Supabase API logs / client), also run:
--- insert into public.player_bans (ip, match_mode, expires_at, reason)
--- values ('x.x.x.x', 'ip', timestamptz '2026-11-05 17:47:00+00', 'temp ban cheat WRs');
+where name_norm in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
+   or reason in ('temp ban cheat WRs', 'cheat WRs', 'cheat: time below floor')
+   or user_id = 'b2b9f098-f9ad-45bd-938f-abc9e1debd28'
+   or client_id = '469c003b-6bec-4b01-9548-071648702fc1'
+   or ip = '173.239.254.207'
+   or (
+     user_id is not null
+     and user_id in (
+       select a.id
+       from public.player_accounts a
+       where upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) ~ 'MATTEUS'
+          or upper(trim(a.username)) in ('OWENS', 'MATTEUS', 'MATTEUS O', 'MATTEUS OWENS')
+     )
+   );
 
 
 -- ========== Cosmetics hub presence + daily claims (optional; client soft-fails) ==========
