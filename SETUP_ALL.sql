@@ -54,7 +54,7 @@ create policy "Insert speedrun_scores guests or accounts"
   with check (
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
-      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask'
+      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -110,7 +110,7 @@ alter table public.speedrun_prs drop constraint if exists speedrun_prs_category_
 alter table public.speedrun_prs add constraint speedrun_prs_category_check check (
   category in (
     'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
-    'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask'
+    'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech'
   )
 );
 alter table public.speedrun_prs enable row level security;
@@ -204,7 +204,7 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
   with check (
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
-      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask'
+      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -297,7 +297,7 @@ create policy "Insert speedrun_scores guests or accounts"
   with check (
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
-      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask'
+      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -336,7 +336,7 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
   with check (
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
-      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask'
+      'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12

@@ -363,6 +363,8 @@
     "coins_25",
     "coins_100",
     "mask",
+    "waterfall_eel",
+    "portal_leech",
   ];
   let playMode = null;
   /** Cold boot shows logo card; Esc from play returns straight to "mode". */
@@ -523,6 +525,10 @@
       {
         title: "MORE CATS",
         lines: ["DEATH% DIE FAST", "FULL INV% FILL BAG", "COIN% REACH GOAL", "BLOWFISH% CATCH ONE"],
+      },
+      {
+        title: "POND CATS",
+        lines: ["EEL% WATERFALL EEL", "LEECH% PORTAL LEECH", "DINGHY ON RIVER POOL", "WALK INLAND FROM DOCK"],
       },
       {
         title: "MASK%",
@@ -12832,7 +12838,11 @@
     const t = (performance.now() - srStartPerf) | 0;
     if (!force && t - srReplayLastT < 33 && srReplayFrames.length) return;
     srReplayLastT = t;
-    const b = ownedBoat;
+    // Pond dinghy counts as the craft for EEL% / LEECH% replay anti-cheat.
+    const b =
+      player.aboard && aboardKind === "dinghy" && pondBoat
+        ? pondBoat
+        : ownedBoat || (pondBoat && (srCat === "waterfall_eel" || srCat === "portal_leech") ? pondBoat : null);
     const frame = [
       t,
       player.x,
@@ -13353,6 +13363,8 @@
       if (!blowfishHearts && srBlowfishFinishT < 0) scheduleBlowfishSpeedEnd(1);
     } else if (srCat === "megalodon" && id === "megalodon") finishSpeedrun();
     else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
+    else if (srCat === "waterfall_eel" && id === "waterfall_eel") finishSpeedrun();
+    else if (srCat === "portal_leech" && id === "portal_leech") finishSpeedrun();
   }
 
   function checkBoatSpeedEnd() {

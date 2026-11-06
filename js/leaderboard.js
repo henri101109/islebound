@@ -58,6 +58,9 @@
     coins_25: { id: "coins_25", label: "25 COINS%", floorMs: 5000 },
     coins_100: { id: "coins_100", label: "100 COINS%", floorMs: 15000 },
     mask: { id: "mask", label: "MASK%", floorMs: 22000 },
+    // Pond dinghy: walk inland + cast wait 4.5–8.5s (ocean cast is 15s).
+    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: 10000 },
+    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: 10000 },
   };
 
   const FISH_STEP_CATS = {
@@ -67,6 +70,12 @@
     blowfish: 1,
     megalodon: 1,
     shark_cloak: 1,
+  };
+
+  /** Jungle pond dinghy cats — shorter cast than ocean 15s wait. */
+  const POND_FISH_STEP_CATS = {
+    waterfall_eel: 1,
+    portal_leech: 1,
   };
 
   /**
@@ -151,6 +160,16 @@
       // Real cast is 15s; require most of that wait in the recording.
       if (rodWaitMs < 12000) return { ok: false, error: "cast too short" };
       if (category === "shark_cloak" && !sawCloak) return { ok: false, error: "need cloak on" };
+    }
+
+    if (POND_FISH_STEP_CATS[category]) {
+      if (!sawBoatBeforeRod && !sawBoat) return { ok: false, error: "need dinghy first" };
+      if (!sawBoatBeforeRod) return { ok: false, error: "dinghy before fish" };
+      if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board dinghy first" };
+      if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
+      if (!sawRod) return { ok: false, error: "must cast rod" };
+      // Pond cast wait is 4.5–8.5s; require most of the minimum.
+      if (rodWaitMs < 3500) return { ok: false, error: "cast too short" };
     }
 
     if (category === "serpent") {
