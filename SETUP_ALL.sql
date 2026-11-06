@@ -361,6 +361,21 @@ where name_norm in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
      )
    );
 
+-- Unban Henri (cheat: invalid replay auto-ban).
+delete from public.player_bans
+where name_norm in ('HENRI')
+   or user_id = 'efab0e17-6fd7-4b5a-9675-fb437c743bbb'
+   or client_id = '62da760b-cd5b-47fd-9845-57366ce1cd50'
+   or ip = '73.189.4.182'
+   or (
+     user_id is not null
+     and user_id in (
+       select a.id
+       from public.player_accounts a
+       where upper(trim(a.username)) = 'HENRI'
+     )
+   );
+
 
 -- ========== Cosmetics hub presence + daily claims (optional; client soft-fails) ==========
 alter table public.players_online add column if not exists in_hub boolean;

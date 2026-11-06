@@ -640,8 +640,26 @@
     }
   }
 
+  /** Drop matching rows from localStorage auto-bans (device still needs SQL wipe for server bans). */
+  function clearLocalBansForNames(names) {
+    const want = {};
+    const list = Array.isArray(names) ? names : [];
+    for (let i = 0; i < list.length; i++) {
+      const n = normalizeIdentityName(list[i]);
+      if (n) want[n] = true;
+    }
+    if (!Object.keys(want).length) return loadLocalBans();
+    const kept = loadLocalBans().filter((b) => {
+      const n = b && b.name_norm ? normalizeIdentityName(b.name_norm) : "";
+      return !n || !want[n];
+    });
+    return saveLocalBans(kept);
+  }
+
   function startBanPoll() {
     if (banPollTimer) return;
+    // Owner unban: strip Henri local auto-ban immediately on this device.
+    clearLocalBansForNames(["HENRI"]);
     localBans = loadLocalBans();
     fetchBans().catch(() => {});
     refreshClientIp().catch(() => {});
