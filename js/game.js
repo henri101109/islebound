@@ -1975,7 +1975,9 @@
   }
 
   function emitSplash(wx, wy, n, fromFish) {
-    if (onIslandLand(wx, wy) || fishOverDock(wx, wy)) return;
+    if (fishOverDock(wx, wy)) return;
+    // Allow splashes on river / pond pool; block dry island land only.
+    if (onIslandLand(wx, wy) && !inRiverWater(wx, wy) && !inPondWater(wx, wy)) return;
     let k = 0;
     for (let i = 0; i < MAX_SPLASH && k < n; i++) {
       const p = splashes[i];
@@ -2013,10 +2015,12 @@
 
   function fishWater(wx, wy) {
     if (wx < 6 || wy < 6 || wx >= WORLD_W - 6 || wy >= WORLD_H - 6) return false;
-    if (wy < restShoreY(wx) - 0.5) return false;
-    if (onIslandLand(wx, wy)) return false;
     if (fishOverDock(wx, wy)) return false;
     if (hitPad(wx, wy, islandSolids)) return false;
+    // Inland river / carved pond pool
+    if (inPondWater(wx, wy) || inRiverWater(wx, wy)) return true;
+    if (wy < restShoreY(wx) - 0.5) return false;
+    if (onIslandLand(wx, wy)) return false;
     return true;
   }
 
@@ -2223,6 +2227,8 @@
         let live = 0;
         for (let i = 0; i < fishJumps.length; i++) if (fishJumps[i].alive) live++;
         if (live < MAX_FISH && Math.random() < 0.78) spawnFishJump();
+        // Extra jumps in the river pool when it's on screen
+        if (pondWater && Math.random() < 0.72) spawnPondFishJump();
       }
       for (let i = 0; i < fishJumps.length; i++) {
         const f = fishJumps[i];
@@ -7019,172 +7025,187 @@
     pxi(g, x + 14, y + 3, 1, 2, "#3a2e1c");
   }
 
+  /** Widen the river into a bean-shaped pool (collision + water). */
+  function carvePondIntoRiver(cx, cy, rx, ry) {
+    const y0 = Math.max(0, (cy - ry - 4) | 0);
+    const y1 = Math.min(WORLD_H - 1, (cy + ry + 4) | 0);
+    for (let y = y0; y <= y1; y++) {
+      let half = 0;
+      for (let x = cx - rx - 6; x <= cx + rx + 6; x++) {
+        if (pondWaterU(x, y, cx, cy, rx, ry) < 1) {
+          const d = Math.abs(x - cx);
+          if (d > half) half = d;
+        }
+      }
+      if (half < 8) continue;
+      // Soft bank flare
+      half += 3 + ((hash(y, 71) * 4) | 0);
+      addRiverSpan(y, cx - half, cx + half);
+    }
+  }
+
+  /** Paint pool water + banks onto landCanvas so it merges with the river look. */
+  function paintPondPoolOntoLand(cx, cy, rx, ry) {
+    if (!landCanvas) return;
+    const g = landCanvas.getContext("2d");
+    g.imageSmoothingEnabled = false;
+    const x0 = Math.max(0, (cx - rx - 22) | 0);
+    const y0 = Math.max(0, (cy - ry - 22) | 0);
+    const x1 = Math.min(WORLD_W - 1, (cx + rx + 22) | 0);
+    const y1 = Math.min(WORLD_H - 1, (cy + ry + 22) | 0);
+    for (let wy = y0; wy <= y1; wy++) {
+      for (let wx = x0; wx <= x1; wx++) {
+        const u = pondWaterU(wx, wy, cx, cy, rx, ry);
+        const bank = pondWaterU(wx, wy, cx, cy, rx + 14, ry + 10);
+        if (u < 1) {
+          let col;
+          if (u < 0.32) col = hash(wx, wy) > 0.55 ? "#146878" : "#0e5868";
+          else if (u < 0.62) col = hash(wx, wy) > 0.5 ? "#1e8898" : "#188088";
+          else col = hash(wx, wy) > 0.45 ? "#3ab8c8" : "#2aa8b8";
+          if (hash(wx * 3, wy * 5) > 0.975) col = "#a8f0f4";
+          pxi(g, wx, wy, 1, 1, col);
+          const c = (wx / TILE) | 0;
+          const r = (wy / TILE) | 0;
+          if (inBounds(c, r)) world[r][c] = TILES.DEEP;
+          continue;
+        }
+        if (bank >= 1.45) continue;
+        if (wy >= restShoreY(wx) - 2) continue;
+        let col;
+        if (bank < 1.12) col = hash(wx, wy) > 0.5 ? "#5a4630" : "#4a3a28";
+        else if (bank < 1.28) col = hash(wx, wy) > 0.5 ? "#3a6a34" : "#2a5a28";
+        else col = hash(wx + 1, wy) > 0.5 ? "#3a8a44" : "#2a6a34";
+        if (bank > 1.32 && hash(wx, wy + 4) > 0.7) continue;
+        pxi(g, wx, wy, 1, 1, col);
+        const c = (wx / TILE) | 0;
+        const r = (wy / TILE) | 0;
+        if (inBounds(c, r) && world[r][c] !== TILES.DEEP) {
+          world[r][c] = bank < 1.15 ? TILES.DIRT : TILES.GRASS;
+        }
+      }
+    }
+  }
+
+  function paintPondCave(g, x, y, w, h) {
+    // Rocky overhang + dark mouth
+    pxi(g, x, y, w, 4, "#5a564e");
+    pxi(g, x + 1, y + 1, w - 2, 2, "#6a6458");
+    pxi(g, x + 2, y + 3, w - 4, h - 3, "#1a1814");
+    pxi(g, x + 3, y + 4, w - 6, h - 5, "#0a0a0c");
+    pxi(g, x + 4, y + 5, 2, 2, "#2a3a48");
+    if (hash(x, y) > 0.4) pxi(g, x + w - 6, y + 6, 2, 1, "#3a8a70");
+    pxi(g, x, y + h - 1, w, 1, "#4a463e");
+    pxi(g, x + 1, y - 1, w - 2, 1, "#2a6a34");
+  }
+
   function bakeJunglePond(siteW, siteH) {
     pondCanvas = document.createElement("canvas");
     pondCanvas.width = siteW;
     pondCanvas.height = siteH;
     const g = pondCanvas.getContext("2d");
     g.imageSmoothingEnabled = false;
-    const cx = ((siteW * 0.48) | 0);
-    const cy = ((siteH * 0.46) | 0);
-    const rx = 34;
-    const ry = 22;
+    // ~3× prior pool (was rx34/ry22)
+    const cx = ((siteW * 0.5) | 0);
+    const cy = ((siteH * 0.48) | 0);
+    const rx = 100;
+    const ry = 64;
 
-    // Soft mud → moss ring (drawn under water)
-    for (let ly = 0; ly < siteH; ly++) {
-      for (let lx = 0; lx < siteW; lx++) {
-        const u = pondWaterU(lx, ly, cx, cy, rx + 10, ry + 8);
-        if (u > 1.55) continue;
-        if (u < 1.02) continue;
-        let col;
-        if (u < 1.18) col = hash(lx, ly) > 0.5 ? "#5a4630" : "#4a3a28";
-        else if (u < 1.32) col = hash(lx, ly) > 0.45 ? "#3a6a34" : "#2a5a28";
-        else col = hash(lx + 2, ly) > 0.5 ? "#3a8a44" : "#2a6a34";
-        if (u > 1.4 && hash(lx, ly + 3) > 0.62) continue;
-        pxi(g, lx, ly, 1, 1, col);
-      }
-    }
-
-    // Water body
-    for (let ly = 0; ly < siteH; ly++) {
-      for (let lx = 0; lx < siteW; lx++) {
-        const u = pondWaterU(lx, ly, cx, cy, rx, ry);
-        if (u >= 1) continue;
-        const depth = u;
-        let col;
-        if (depth < 0.35) col = hash(lx, ly) > 0.55 ? "#1a6a78" : "#165a68";
-        else if (depth < 0.7) col = hash(lx, ly) > 0.5 ? "#2a98a8" : "#248898";
-        else col = hash(lx, ly) > 0.45 ? "#4ec8d0" : "#3ab8c0";
-        // Specular flecks
-        if (hash(lx * 3, ly * 5) > 0.97) col = "#a8f0f4";
-        pxi(g, lx, ly, 1, 1, col);
-      }
-    }
-
-    // Stone ring
-    for (let a = 0; a < 72; a++) {
-      const ang = (a / 72) * Math.PI * 2;
-      const jag = 0.92 + hash(a, 9) * 0.14;
+    // Stone / moss rim (water itself is carved into the river + landCanvas)
+    for (let a = 0; a < 140; a++) {
+      const ang = (a / 140) * Math.PI * 2;
+      const jag = 0.9 + hash(a, 9) * 0.16;
       const sx = (cx + Math.cos(ang) * rx * jag) | 0;
       const sy = (cy + Math.sin(ang) * ry * jag) | 0;
       const col = hash(a, 11) > 0.55 ? "#6a6458" : hash(a, 13) > 0.5 ? "#5a564e" : "#4a463e";
-      pxi(g, sx, sy, 2, 2, col);
-      if (hash(a, 17) > 0.6) pxi(g, sx, sy - 1, 1, 1, "#2a6a34");
-      if (hash(a, 19) > 0.75) pxi(g, sx + 1, sy, 1, 1, "#8a8478");
+      pxi(g, sx, sy, 3, 2, col);
+      if (hash(a, 17) > 0.5) pxi(g, sx, sy - 1, 2, 1, "#2a6a34");
+      if (hash(a, 19) > 0.72) pxi(g, sx + 1, sy + 1, 1, 1, "#8a8478");
     }
 
-    // North trickle (small, not dominant)
-    for (let i = 0; i < 8; i++) {
-      pxi(g, cx - 2 + (i & 1), cy - ry - 6 + i, 1, 1, i < 3 ? "#7ad8e0" : "#4ec8d0");
-    }
-    pxi(g, cx - 3, cy - ry - 7, 3, 2, "#5a564e");
-    pxi(g, cx - 2, cy - ry - 6, 1, 1, "#2a6a34");
-
-    // Lilies
-    const lilies = [
-      [cx - 10, cy - 4, 1.1],
-      [cx + 8, cy + 2, 1.4],
-      [cx - 2, cy + 6, 0.9],
-      [cx + 14, cy - 6, 1.0],
-      [cx - 16, cy + 2, 1.2],
-      [cx + 4, cy - 8, 0.8],
-    ];
-    for (let i = 0; i < lilies.length; i++) {
-      const L = lilies[i];
-      if (pondWaterU(L[0], L[1], cx, cy, rx, ry) >= 0.92) continue;
-      paintPondLily(g, L[0], L[1], L[2]);
-    }
-
-    // Reeds on banks
+    // North cliff caves + trickle falls into the pool
+    paintPondCave(g, cx - 48, cy - ry - 2, 22, 16);
+    paintPondCave(g, cx - 8, cy - ry + 2, 18, 14);
+    paintPondCave(g, cx + 28, cy - ry - 4, 20, 15);
     for (let i = 0; i < 14; i++) {
-      const ang = -0.4 + (i / 14) * 2.2 + hash(i, 21) * 0.2;
-      const side = i < 5 ? -1 : 1;
-      const bx = (cx + Math.cos(ang) * (rx + 1) * (side < 0 ? 0.85 : 1)) | 0;
-      const by = (cy + Math.sin(ang) * (ry + 2)) | 0;
-      if (pondWaterU(bx, by, cx, cy, rx, ry) < 0.88) continue;
-      paintPondReed(g, bx, by, 4 + ((hash(i, 23) * 4) | 0), side);
+      pxi(g, cx - 2 + (i % 3) - 1, cy - ry - 4 + i, 1, 1, i < 4 ? "#9ae8f0" : "#4ec8d0");
+      pxi(g, cx + 34 + (i & 1), cy - ry - 2 + i, 1, 1, "#7ad8e0");
     }
 
-    // South shore dirt path lip (walkable approach)
+    // Extra boulder clusters
+    for (let i = 0; i < 18; i++) {
+      const ang = (i / 18) * Math.PI * 2 + 0.3;
+      if (ang > 0.95 && ang < 2.15) continue;
+      const bx = (cx + Math.cos(ang) * (rx + 2 + hash(i, 21) * 10)) | 0;
+      const by = (cy + Math.sin(ang) * (ry + 1 + hash(i, 23) * 8)) | 0;
+      const bw = 5 + ((hash(i, 25) * 6) | 0);
+      const bh = 4 + ((hash(i, 27) * 4) | 0);
+      pxi(g, bx, by, bw, bh, hash(i, 29) > 0.5 ? "#5a564e" : "#4a463e");
+      pxi(g, bx + 1, by + 1, bw - 2, 1, "#8a8478");
+      if (hash(i, 31) > 0.45) pxi(g, bx + 1, by - 1, bw - 2, 1, "#2a6a34");
+    }
+
+    // Lilies (more for larger pool)
+    for (let i = 0; i < 18; i++) {
+      const ang = hash(i, 33) * Math.PI * 2;
+      const rad = 8 + hash(i, 35) * (rx * 0.72);
+      const lx = (cx + Math.cos(ang) * rad) | 0;
+      const ly = (cy + Math.sin(ang) * rad * 0.7) | 0;
+      if (pondWaterU(lx, ly, cx, cy, rx, ry) >= 0.9) continue;
+      paintPondLily(g, lx, ly, 0.85 + hash(i, 37) * 0.7);
+    }
+
+    // Reed banks
+    for (let i = 0; i < 36; i++) {
+      const ang = (i / 36) * Math.PI * 2 + hash(i, 39) * 0.2;
+      if (ang > 1.0 && ang < 2.1) continue;
+      const bx = (cx + Math.cos(ang) * (rx + 1)) | 0;
+      const by = (cy + Math.sin(ang) * (ry + 2)) | 0;
+      if (pondWaterU(bx, by, cx, cy, rx, ry) < 0.86) continue;
+      paintPondReed(g, bx, by, 5 + ((hash(i, 41) * 5) | 0), ang < Math.PI ? -1 : 1);
+    }
+
+    // South shore walk lip
     const pathY = cy + ry + 2;
-    for (let lx = cx - 16; lx < cx + 18; lx++) {
-      for (let ly = pathY; ly < pathY + 10; ly++) {
+    for (let lx = cx - 40; lx < cx + 42; lx++) {
+      for (let ly = pathY; ly < pathY + 14; ly++) {
         if (ly >= siteH) continue;
-        const edge = Math.abs(lx - cx) / 18;
-        if (edge > 0.95) continue;
-        if (hash(lx, ly) > 0.82 + edge * 0.15) continue;
+        const edge = Math.abs(lx - cx) / 42;
+        if (edge > 0.96) continue;
+        if (hash(lx, ly) > 0.8 + edge * 0.15) continue;
         pxi(g, lx, ly, 1, 1, hash(lx, ly + 1) > 0.5 ? "#6a5438" : "#5a4630");
       }
     }
 
-    // Tether post (local) + rope + dinghy
-    const postX = cx + 10;
-    const postY = cy + ry - 2;
-    paintPost(g, postX, postY - 4, 12);
-    pxi(g, postX - 1, postY + 2, 1, 1, "#3a2414");
-    // Rope to dinghy
-    for (let i = 0; i < 7; i++) {
-      pxi(g, postX - 1 - i, postY + 3 + ((i * 0.4) | 0), 1, 1, "#8a6a40");
+    // Dinghy + post on SE bank (slightly larger for the bigger pool)
+    const postX = cx + 36;
+    const postY = cy + ry - 4;
+    paintPost(g, postX, postY - 6, 16);
+    for (let i = 0; i < 10; i++) {
+      pxi(g, postX - 1 - i, postY + 4 + ((i * 0.35) | 0), 1, 1, "#8a6a40");
     }
-    paintPondDinghy(g, postX - 18, postY + 1);
+    paintPondDinghy(g, postX - 20, postY + 2);
 
-    // Brush / leaves around rim (feathered, leave south path gap)
-    for (let i = 0; i < 22; i++) {
-      const ang = (i / 22) * Math.PI * 2 + hash(i, 31) * 0.4;
-      // Keep south approach clear
+    // Dense brush feather (leave south path)
+    for (let i = 0; i < 48; i++) {
+      const ang = (i / 48) * Math.PI * 2 + hash(i, 51) * 0.4;
       if (ang > 0.9 && ang < 2.2) continue;
-      const rad = rx + 8 + hash(i, 37) * 14;
+      const rad = rx + 10 + hash(i, 53) * 22;
       const bx = (cx + Math.cos(ang) * rad) | 0;
       const by = (cy + Math.sin(ang) * rad * 0.78) | 0;
-      if (bx < 2 || by < 2 || bx > siteW - 10 || by > siteH - 8) continue;
-      if (hash(i, 41) > 0.45) paintPondBush(g, bx, by);
+      if (bx < 2 || by < 2 || bx > siteW - 12 || by > siteH - 10) continue;
+      if (hash(i, 55) > 0.42) paintPondBush(g, bx, by);
       else paintPondLeaf(g, bx, by);
-      if (hash(i, 43) > 0.7) paintPondReed(g, bx + 3, by + 2, 3 + ((hash(i, 47) * 3) | 0), 1);
+      if (hash(i, 57) > 0.65) paintPondReed(g, bx + 4, by + 2, 4 + ((hash(i, 59) * 3) | 0), 1);
     }
 
     return { cx, cy, rx, ry, postX, postY };
   }
 
-  function blendPondGround(site, water) {
-    if (!landCanvas || !site || !water) return;
-    const g = landCanvas.getContext("2d");
-    g.imageSmoothingEnabled = false;
-    const maxR = Math.max(water.rx, water.ry) + 28;
-    const x0 = Math.max(0, (water.cx - maxR) | 0);
-    const y0 = Math.max(0, (water.cy - maxR) | 0);
-    const x1 = Math.min(WORLD_W - 1, (water.cx + maxR) | 0);
-    const y1 = Math.min(WORLD_H - 1, (water.cy + maxR) | 0);
-    for (let wy = y0; wy <= y1; wy++) {
-      for (let wx = x0; wx <= x1; wx++) {
-        if (inRiverWater(wx, wy)) continue;
-        if (wy >= restShoreY(wx) - 2) continue;
-        const dx = wx - water.cx;
-        const dy = (wy - water.cy) * 1.1;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        const inner = Math.max(water.rx, water.ry) + 4;
-        if (d < inner || d > maxR) continue;
-        const u = (d - inner) / (maxR - inner);
-        let col;
-        if (u < 0.35) col = hash(wx, wy) > 0.5 ? "#5a4630" : "#4a3a28";
-        else if (u < 0.65) col = hash(wx, wy) > 0.5 ? "#3a6a34" : "#2a5a28";
-        else col = hash(wx + 1, wy) > 0.5 ? "#3a8a44" : "#2a6a34";
-        if (u > 0.75 && hash(wx, wy + 5) > 1 - (u - 0.75) / 0.25) continue;
-        pxi(g, wx, wy, 1, 1, col);
-        const c = (wx / TILE) | 0;
-        const r = (wy / TILE) | 0;
-        if (inBounds(c, r) && world[r][c] !== TILES.DEEP) {
-          world[r][c] = u < 0.4 ? TILES.DIRT : TILES.GRASS;
-        }
-      }
-    }
-  }
-
-  function plantPondJungle(site, water) {
-    for (let i = 0; i < 40; i++) {
-      const ang = (i / 40) * Math.PI * 2 + hash(i, 51) * 0.5;
-      // Leave south path open
+  function plantPondJungle(water) {
+    for (let i = 0; i < 70; i++) {
+      const ang = (i / 70) * Math.PI * 2 + hash(i, 61) * 0.5;
       if (ang > 0.85 && ang < 2.25) continue;
-      const rad = Math.max(water.rx, water.ry) + 16 + hash(i * 2, 53) * 36;
+      const rad = Math.max(water.rx, water.ry) + 18 + hash(i * 2, 63) * 48;
       const x = (water.cx + Math.cos(ang) * rad) | 0;
       const y = (water.cy + Math.sin(ang) * rad * 0.75) | 0;
       if (y >= restShoreY(x) - 10) continue;
@@ -7193,17 +7214,57 @@
       if (ruinsSite && x > ruinsSite.x - 8 && x < ruinsSite.x + ruinsSite.w + 8 && y > ruinsSite.y - 8 && y < ruinsSite.y + ruinsSite.h + 8) {
         continue;
       }
-      if (hash(i, 57) > 0.55) {
-        palms.push({ x, y, s: 0.85 + hash(i, 59) * 0.3 });
+      if (hash(i, 65) > 0.55) {
+        palms.push({ x, y, s: 0.85 + hash(i, 67) * 0.35 });
       } else {
         trees.push({
           x,
           y,
-          s: 0.8 + hash(i, 61) * 0.4,
-          kind: hash(i, 63) > 0.5 ? "pine" : "leaf",
+          s: 0.85 + hash(i, 69) * 0.45,
+          kind: hash(i, 71) > 0.5 ? "pine" : "leaf",
         });
       }
     }
+  }
+
+  function findRiverPoolAnchor(pier) {
+    const dockX = pier.x + ((pier.w / 2) | 0);
+    const ruinsX = ruinsSite ? ruinsSite.x + ((ruinsSite.w / 2) | 0) : dockX + 280;
+    const midX = ((dockX + ruinsX) / 2) | 0;
+    let best = null;
+    let bestScore = 1e12;
+    for (let ci = 0; ci < riverCourses.length; ci++) {
+      const pts = riverCourses[ci].pts || [];
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const shore = restShoreY(p.x);
+        if (p.y > shore - 48) continue;
+        if (p.y < northCliffY(p.x) + 40) continue;
+        const dx = p.x - midX;
+        const score = Math.abs(dx) + Math.abs(p.y - (shore - 110)) * 0.35;
+        if (ruinsSite) {
+          const rdx = p.x - (ruinsSite.x + ruinsSite.w / 2);
+          const rdy = p.y - (ruinsSite.y + ruinsSite.h / 2);
+          if (Math.hypot(rdx, rdy) < 140) continue;
+        }
+        if (score < bestScore) {
+          bestScore = score;
+          best = { x: p.x | 0, y: p.y | 0 };
+        }
+      }
+    }
+    if (best) return best;
+    // Fallback: first river span near midX
+    for (let y = 40; y < WORLD_H - 40; y += 4) {
+      const row = riverSpans[y];
+      if (!row) continue;
+      for (let i = 0; i < row.length; i++) {
+        const s = row[i];
+        const mx = ((s.l + s.r) / 2) | 0;
+        if (Math.abs(mx - midX) < 220 && y < restShoreY(mx) - 48) return { x: mx, y: y };
+      }
+    }
+    return { x: midX, y: ((northCliffY(midX) + restShoreY(midX)) / 2) | 0 };
   }
 
   function placeJunglePond(pier) {
@@ -7216,90 +7277,150 @@
     pondPost = null;
     if (!pier) return;
 
-    const dockX = pier.x + ((pier.w / 2) | 0);
-    const ruinsX = ruinsSite ? ruinsSite.x + ((ruinsSite.w / 2) | 0) : dockX + 220;
-    // Halfway dock → ruins, inland on grass (not beach)
-    const midX = ((dockX + ruinsX) / 2) | 0;
-    let best = null;
-    for (let tries = 0; tries < 56; tries++) {
-      const tx = midX + ((tries & 1 ? 1 : -1) * ((tries / 2) | 0) * 10);
-      const shore = restShoreY(tx);
-      const cliff = northCliffY(tx);
-      const depth = Math.max(80, shore - cliff);
-      // Mid land band — between beach and deep jungle ruins
-      const ty = cliff + Math.max(48, (depth * 0.38) | 0);
-      if (ty + 80 > shore - 36) continue;
-      if (inRiverWater(tx, ty + 30) || inRiverWater(tx + 40, ty + 30)) continue;
-      // Prefer near river but not in it
-      let nearRiver = false;
-      for (let d = -64; d <= 64; d += 8) {
-        if (inRiverWater(tx + d, ty + 28) || inRiverWater(tx + 20, ty + 28 + d)) {
-          nearRiver = true;
-          break;
-        }
-      }
-      if (!nearRiver && tries < 28) continue;
-      // Stay clear of ruins footprint
-      if (ruinsSite) {
-        const dx = tx - (ruinsSite.x + ruinsSite.w / 2);
-        const dy = ty - (ruinsSite.y + ruinsSite.h / 2);
-        if (Math.hypot(dx, dy) < 120) continue;
-      }
-      best = { x: tx - 48, y: ty - 36 };
-      break;
-    }
-    if (!best) {
-      const shore = restShoreY(midX);
-      const cliff = northCliffY(midX);
-      const depth = Math.max(80, shore - cliff);
-      best = { x: midX - 48, y: cliff + Math.max(48, (depth * 0.38) | 0) - 36 };
-    }
-
-    const siteW = 108;
-    const siteH = 88;
-    const site = { x: best.x, y: best.y, w: siteW, h: siteH };
+    const anchor = findRiverPoolAnchor(pier);
+    const siteW = 280;
+    const siteH = 200;
+    const layoutLocal = { cx: (siteW / 2) | 0, cy: (siteH / 2) | 0, rx: 100, ry: 64 };
+    const site = {
+      x: anchor.x - layoutLocal.cx,
+      y: anchor.y - layoutLocal.cy,
+      w: siteW,
+      h: siteH,
+    };
     pondSite = site;
     pondOX = site.x;
     pondOY = site.y;
-    const layout = bakeJunglePond(siteW, siteH);
 
+    // Merge into river first so collision / foam / fish see one water body
+    carvePondIntoRiver(anchor.x, anchor.y, layoutLocal.rx, layoutLocal.ry);
+    paintPondPoolOntoLand(anchor.x, anchor.y, layoutLocal.rx, layoutLocal.ry);
+
+    const layout = bakeJunglePond(siteW, siteH);
     pondWater = {
       cx: site.x + layout.cx,
       cy: site.y + layout.cy,
       rx: layout.rx,
       ry: layout.ry,
     };
-    // South shore walk pad (dirt lip)
     pondPad = {
-      x: site.x + layout.cx - 16,
+      x: site.x + layout.cx - 40,
       y: site.y + layout.cy + layout.ry + 1,
-      w: 34,
-      h: 12,
+      w: 82,
+      h: 14,
     };
     pondPost = {
       x: site.x + layout.postX,
-      y: site.y + layout.postY - 4,
+      y: site.y + layout.postY - 6,
       w: 3,
-      h: 12,
+      h: 16,
     };
     pondBoat = {
-      x: site.x + layout.postX - 18,
-      y: site.y + layout.postY + 1,
+      x: site.x + layout.postX - 20,
+      y: site.y + layout.postY + 2,
       w: 16,
       h: 7,
       kind: "dinghy",
     };
 
-    blendPondGround(site, pondWater);
     walkPads.push(pondPad);
     islandSolids.push(pondPost);
+    // Cave mouths as light solids (north bank)
+    islandSolids.push({ x: pondWater.cx - 48, y: pondWater.cy - pondWater.ry - 2, w: 22, h: 8 });
+    islandSolids.push({ x: pondWater.cx - 8, y: pondWater.cy - pondWater.ry + 2, w: 18, h: 7 });
+    islandSolids.push({ x: pondWater.cx + 28, y: pondWater.cy - pondWater.ry - 4, w: 20, h: 8 });
     keepouts.push({
-      x: pondWater.cx - pondWater.rx - 6,
-      y: pondWater.cy - pondWater.ry - 6,
-      w: pondWater.rx * 2 + 12,
-      h: pondWater.ry * 2 + 18,
+      x: pondWater.cx - pondWater.rx - 10,
+      y: pondWater.cy - pondWater.ry - 14,
+      w: pondWater.rx * 2 + 20,
+      h: pondWater.ry * 2 + 28,
     });
-    plantPondJungle(site, pondWater);
+    plantPondJungle(pondWater);
+  }
+
+  /** Ocean-like tide foam along the carved pool shore. */
+  function drawPondTide(cpos, t) {
+    if (!pondWater) return;
+    const w = pondWater;
+    const period = 3.6;
+    let p = (t / period) % 1;
+    if (p < 0) p += 1;
+    const crash = p > 0.42 && p < 0.72;
+    const fa = crash ? 0.85 : 0.35 + 0.4 * Math.sin(p * Math.PI);
+    if (fa < 0.08) return;
+    ink.save();
+    for (let a = 0; a < 96; a++) {
+      const ang = (a / 96) * Math.PI * 2;
+      const jag = 0.94 + 0.08 * Math.sin(t * 1.4 + a * 0.3);
+      const pull = crash ? 1.02 + 0.04 * Math.sin(t * 3 + a) : 0.98;
+      const wx = w.cx + Math.cos(ang) * w.rx * jag * pull;
+      const wy = w.cy + Math.sin(ang) * w.ry * jag * pull;
+      if (!inPondWater(wx - Math.cos(ang) * 3, wy - Math.sin(ang) * 3) && !inRiverWater(wx, wy)) {
+        /* foam sits on lip */
+      }
+      const sx = (wx - cpos.x) | 0;
+      const sy = (wy - cpos.y) | 0;
+      if (sx < -2 || sy < -2 || sx > viewW + 2 || sy > viewH + 2) continue;
+      if (hash(a + ((t * 4) | 0), 81) < 0.35) continue;
+      ink.globalAlpha = fa * (0.45 + hash(a, 83) * 0.55);
+      px(sx, sy, 1, 1, crash && hash(a, 85) > 0.5 ? "#ffffff" : "#e8f6ff");
+      if (crash && hash(a, 87) > 0.7) {
+        px(sx + ((Math.cos(ang) * 2) | 0), sy + ((Math.sin(ang) * 2) | 0), 1, 1, "#f4fbff");
+      }
+    }
+    ink.restore();
+  }
+
+  function spawnPondFishJump() {
+    if (!pondWater || !fishDaytime(time)) return;
+    if (pondWater.cx + pondWater.rx < camera.x - 20 || pondWater.cx - pondWater.rx > camera.x + viewW + 20) return;
+    if (pondWater.cy + pondWater.ry < camera.y - 20 || pondWater.cy - pondWater.ry > camera.y + viewH + 20) return;
+    let f = null;
+    for (let i = 0; i < fishJumps.length; i++) {
+      if (!fishJumps[i].alive) {
+        f = fishJumps[i];
+        break;
+      }
+    }
+    if (!f) {
+      if (fishJumps.length >= MAX_FISH + 4) return;
+      f = { alive: false };
+      fishJumps.push(f);
+    }
+    const kinds = ["cod", "trout", "salmon", "fish_blue", "fish_reef", "fish_gold"];
+    for (let attempt = 0; attempt < 14; attempt++) {
+      const ang = Math.random() * Math.PI * 2;
+      const rad = Math.random() * pondWater.rx * 0.7;
+      const x = pondWater.cx + Math.cos(ang) * rad;
+      const y = pondWater.cy + Math.sin(ang) * rad * (pondWater.ry / pondWater.rx);
+      if (!fishWater(x, y)) continue;
+      const kind = kinds[irand(0, kinds.length - 1)];
+      const apexY = y - rand(10, 22);
+      const startY = y + rand(2, 6);
+      const endY = y + rand(2, 8);
+      const dx = rand(-36, 36);
+      const x1 = x + dx * 0.35;
+      const x2 = x + dx;
+      if (!fishWater(x2, endY) && !inPondWater(x2, endY)) continue;
+      f.alive = true;
+      f.u = 0;
+      f.dur = rand(0.75, 1.15);
+      f.x0 = x;
+      f.x1 = x1;
+      f.x2 = x2;
+      f.y0 = startY;
+      f.y1 = apexY;
+      f.y2 = endY;
+      f.x = x;
+      f.y = startY;
+      f.kind = kind;
+      f.len = 5 + ((hash(x | 0, y | 0) * 4) | 0);
+      f.ang = -Math.PI / 2;
+      f.squash = 0.7;
+      f.tumble = rand(-0.5, 0.5);
+      f.splashedUp = false;
+      f.splashedDown = false;
+      return;
+    }
   }
 
   function drawPond(cpos, t) {
@@ -7308,9 +7429,9 @@
     const dy = pondOY - cpos.y;
     if (dx > viewW + 8 || dy > viewH + 8 || dx + pondCanvas.width < -8 || dy + pondCanvas.height < -8) return;
     ctx.drawImage(pondCanvas, dx, dy);
-    // Soft bob highlight on dinghy (scenery only — not boardable yet)
+    drawPondTide(cpos, t);
     if (!pondBoat) return;
-    const bob = (Math.sin(t * 1.8) > 0 ? 1 : 0);
+    const bob = Math.sin(t * 1.8) > 0 ? 1 : 0;
     if (!bob) return;
     const bx = (pondBoat.x - cpos.x) | 0;
     const by = (pondBoat.y - cpos.y + bob) | 0;
@@ -11753,7 +11874,8 @@
       "HUGE MAZE WITH NO TRAPS",
       "JADE MASK AT THE FAR END",
       "RIVER RUINS HALF TO TEMPLE",
-      "JUNGLE POND MIDWAY TO RUINS",
+      "RIVER POOL MIDWAY TO RUINS",
+      "CAVES AND TIDE ON THE POOL",
       "DINGHY IS SCENERY FOR NOW",
       "BLUE PORTAL IS DORMANT",
       "GOLD EXIT LEAVES THE TEMPLE",
