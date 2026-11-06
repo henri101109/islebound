@@ -44,6 +44,8 @@
     mini_shark: { name: "Mini shark", max: 24, xp: 18 },
     shark: { name: "Shark", max: 24, xp: 36 },
     blowfish: { name: "Blowfish", max: 24, xp: 55 },
+    waterfall_eel: { name: "Waterfall eel", max: 24, xp: 42 },
+    portal_leech: { name: "Portal leech", max: 16, xp: 70 },
     megalodon: { name: "Megalodon", max: 8, xp: 100 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
     wand: { name: "Wand", max: 1, xp: 0 },
@@ -88,6 +90,8 @@
     jelly_white: 80,
     jelly_gold: 120,
     blowfish: 140,
+    waterfall_eel: 95,
+    portal_leech: 180,
     jelly_rainbow: 160,
     megalodon: 250,
     fish_blue: 10,
@@ -106,6 +110,8 @@
     ["jelly_white", "WHITE"],
     ["jelly_gold", "GOLD"],
     ["blowfish", "BLOW"],
+    ["waterfall_eel", "EEL"],
+    ["portal_leech", "LEECH"],
     ["jelly_rainbow", "RAIN"],
     ["megalodon", "MEGA"],
   ];
@@ -178,6 +184,8 @@
     "mini_shark",
     "shark",
     "blowfish",
+    "waterfall_eel",
+    "portal_leech",
     "megalodon",
   ];
   const walkPads = [];
@@ -211,7 +219,7 @@
   let ruinsOY = 0;
   let ruinsSite = null;
   let ruinsPortal = null;
-  /** Inland jungle pond (dock ↔ ruins): scenery + hooks for future fishing. */
+  /** Inland jungle pond (dock ↔ ruins): scenery + dinghy fishing. */
   let pondCanvas = null;
   let pondOX = 0;
   let pondOY = 0;
@@ -223,8 +231,12 @@
   let pondPost = null;
   /** Animated waterfall sheets: [{ x, y, w, h }] world space. */
   let pondFalls = [];
-  /** Future: enable cast / dinghy board when true. */
+  /** Pond dinghy fishing is live when the pool exists. */
   let pondFishReady = false;
+  /** "skiff" | "dinghy" | null — which craft player.aboard refers to. */
+  let aboardKind = null;
+  /** Portal leech catch FX. */
+  let leechGlow = null;
   let mazeInfo = null;
   let shopDoor = null;
   let shopExit = null;
@@ -620,6 +632,8 @@
   let cosSelect = null;
   let cosTip = "";
   let cosTipT = 0;
+  let pondTip = "";
+  let pondTipT = 0;
   let useFx = null;
   let audioCtx = null;
   let oceanGain = null;
@@ -2365,7 +2379,12 @@
       !uiBlocksPlay() &&
       !chatCapturesInput()
     ) {
-      if (player.aboard && ownedBoat && scene === "island") {
+      if (player.aboard && aboardKind === "dinghy" && pondBoat && scene === "island") {
+        // Tethered dinghy — face left/right, stay seated.
+        if (dx !== 0) player.facing = dx < 0 ? -1 : 1;
+        player.moving = false;
+        seatPlayerOnDinghy();
+      } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
         steerOwnedBoat(dt, dx, dy);
       } else {
         const speed = (player.inWater || wadingPond ? 70 : 165) * dt;
@@ -2435,6 +2454,7 @@
         const now = playerCenter();
         if (Math.hypot(now.x - bx, now.y - by) < 14) {
           player.aboard = true;
+          aboardKind = "skiff";
           seatPlayerOnBoat();
           player.inWater = false;
           player.submerged = 0;
@@ -2452,6 +2472,7 @@
     if (player.hp <= 0) {
       player.dead = 1.4;
       player.aboard = false;
+      aboardKind = null;
       if (playMode === "normal") {
         const api = lbApi();
         if (api && api.noteNmEvent) api.noteNmEvent("deaths", 1);
@@ -2475,6 +2496,7 @@
         player.drownTick = 0;
         player.hurt = 0;
         player.aboard = false;
+        aboardKind = null;
         if (playMode === "speedrun" && srCat === "death" && srTiming && srWasDead && uiScreen !== "finish") {
           srWasDead = false;
           finishSpeedrun();
@@ -3162,6 +3184,7 @@
   }
 
   function promptText() {
+    if (pondTipT > 0 && pondTip) return pondTip;
     if (cosTipT > 0 && cosTip) return cosTip;
     if (nearCabinNpc()) {
       return holdingChest() ? "T OPENS YOUR CHEST" : "BRING A TREASURE CHEST";
@@ -3173,8 +3196,25 @@
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
     }
-    if (player.aboard && ownedBoat) return "ENTER → DOCK · WASD SAILS";
+    if (player.aboard && aboardKind === "dinghy") {
+      if (rod.phase === "wait") return "WAITING…";
+      if (rod.phase === "reel") return "GOT ONE!";
+      return "C CASTS · ENTER EXITS";
+    }
+    if (player.aboard && ownedBoat && aboardKind !== "dinghy") return "ENTER → DOCK · WASD SAILS";
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
+    if (
+      pondFishReady &&
+      pondBoat &&
+      !player.aboard &&
+      scene === "island" &&
+      player.dead <= 0
+    ) {
+      const mid = playerCenter();
+      const bx = pondBoat.x + pondBoat.w / 2;
+      const by = pondBoat.y + pondBoat.h / 2;
+      if (Math.hypot(mid.x - bx, mid.y - by) < 28) return "ENTER BOARDS DINGHY";
+    }
     if (
       !player.aboard &&
       ownedBoat &&
@@ -4460,7 +4500,7 @@
     b.tilt = 0;
     b.face = boatBerth.face;
     b.docked = true;
-    if (typeof player !== "undefined" && player.aboard) {
+    if (typeof player !== "undefined" && player.aboard && aboardKind !== "dinghy") {
       player.facing = boatBerth.face;
       seatPlayerOnBoat();
     }
@@ -4479,10 +4519,12 @@
 
   /** Enter while aboard → stand on the T-head and park the skiff in the slip. */
   function exitBoatToDockT() {
+    if (aboardKind === "dinghy") return false;
     if (!player.aboard || !ownedBoat || scene !== "island") return false;
     if (!boatBerth || !boatBerthDeck) return false;
     const deck = boatBerthDeck;
     player.aboard = false;
+    aboardKind = null;
     player.x = (deck.x + (deck.w - player.w) / 2) | 0;
     player.y = (deck.y + deck.h - player.h - 1) | 0;
     player.inWater = false;
@@ -4491,6 +4533,49 @@
     settleBoatInBerth(ownedBoat);
     boatBoardCool = 1.5;
     return true;
+  }
+
+  function seatPlayerOnDinghy() {
+    if (!pondBoat) return;
+    const bob = Math.sin(time * 2.1 + 0.4) * 0.6;
+    player.x = pondBoat.x + (pondBoat.w - player.w) / 2;
+    player.y = pondBoat.y + bob - 8;
+  }
+
+  function exitDinghy() {
+    if (aboardKind !== "dinghy" || !player.aboard || !pondPad) return false;
+    if (rod.phase !== "idle") {
+      rod.phase = "idle";
+      rod.catchId = null;
+      rodBaitId = null;
+    }
+    player.aboard = false;
+    aboardKind = null;
+    player.x = (pondPad.x + (pondPad.w - player.w) / 2) | 0;
+    player.y = (pondPad.y + pondPad.h - player.h - 1) | 0;
+    player.inWater = false;
+    player.submerged = 0;
+    player.moving = false;
+    return true;
+  }
+
+  function tryDinghyToggle() {
+    if (!pondFishReady || !pondBoat || scene !== "island" || boatThrow) return false;
+    if (player.aboard && aboardKind === "dinghy") return exitDinghy();
+    if (player.aboard) return false;
+    const mid = playerCenter();
+    const bx = pondBoat.x + pondBoat.w / 2;
+    const by = pondBoat.y + pondBoat.h / 2;
+    if (Math.hypot(mid.x - bx, mid.y - by) < 28) {
+      player.aboard = true;
+      aboardKind = "dinghy";
+      seatPlayerOnDinghy();
+      player.inWater = false;
+      player.submerged = 0;
+      player.moving = false;
+      return true;
+    }
+    return false;
   }
 
   function tryStepOffAtBerth() {
@@ -4556,12 +4641,13 @@
   }
 
   function tryStepOffBoat(ox, oy) {
-    if (!player.aboard || !ownedBoat) return false;
+    if (!player.aboard || aboardKind === "dinghy" || !ownedBoat) return false;
     if ((ownedBoat.docked || boatNearBerth(ownedBoat, 26)) && tryStepOffAtBerth()) return true;
     const x = player.x + ox;
     const y = player.y + oy;
     if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
       player.aboard = false;
+      aboardKind = null;
       player.x = x;
       player.y = y;
       player.inWater = false;
@@ -4688,7 +4774,7 @@
   }
 
   function tryBoatToggle() {
-    if (scene !== "island" || !ownedBoat || boatThrow) return false;
+    if (scene !== "island" || !ownedBoat || boatThrow || aboardKind === "dinghy") return false;
     const mid = playerCenter();
     if (player.aboard) {
       // Enter always drops you on the T-head and parks the skiff.
@@ -4699,6 +4785,7 @@
     const berthReach = ownedBoat.docked || boatNearBerth(ownedBoat, 30) ? 32 : 22;
     if (Math.hypot(mid.x - bx, mid.y - by) < berthReach) {
       player.aboard = true;
+      aboardKind = "skiff";
       seatPlayerOnBoat();
       player.inWater = false;
       player.submerged = 0;
@@ -4770,7 +4857,8 @@
 
   function onEnter() {
     if (player.dead > 0) return;
-    // Aboard → T-head of the dock. Always first so nothing else eats Enter.
+    // Dinghy exit / skiff → T-head. Always first so nothing else eats Enter.
+    if (player.aboard && aboardKind === "dinghy" && exitDinghy()) return;
     if (player.aboard && exitBoatToDockT()) return;
     if (tryEquipHeldCosmetic()) return;
     if (isIndoor()) {
@@ -4778,6 +4866,7 @@
       return;
     }
     if (tryHarborDeal()) return;
+    if (tryDinghyToggle()) return;
     if (tryBoatToggle()) return;
     dropHeld();
   }
@@ -4803,9 +4892,17 @@
   }
 
   function boatIsStill() {
-    if (!ownedBoat || !player.aboard || boatThrow) return false;
+    if (!player.aboard || boatThrow) return false;
+    if (aboardKind === "dinghy") return !player.moving;
+    if (!ownedBoat) return false;
     if (player.moving) return false;
     return Math.hypot(ownedBoat.vx || 0, ownedBoat.vy || 0) < 10;
+  }
+
+  function activeCraft() {
+    if (!player.aboard) return null;
+    if (aboardKind === "dinghy") return pondBoat;
+    return ownedBoat;
   }
 
   function distToRect(px, py, r) {
@@ -4931,17 +5028,39 @@
     return rollBandCatch(!!bait);
   }
 
+  /** Pond table: commons + blowfish + rare eel + 10% portal leech. Ocean odds untouched. */
+  function rollPondCatch() {
+    rodBaitId = null;
+    const r = Math.random();
+    if (r < 0.1) return "portal_leech";
+    if (r < 0.22) return "waterfall_eel";
+    if (r < 0.3) return "blowfish";
+    return ["cod", "trout", "salmon"][irand(0, 2)];
+  }
+
+  function startPortalLeechFx() {
+    leechGlow = { t: 0, dur: 2.6 };
+    pondTip = "I wonder what that could be used for?";
+    pondTipT = 3.2;
+  }
+
   function tryCastRod() {
     if (serpent) return;
-    if (scene !== "island" || !player.aboard || !ownedBoat || boatThrow) return;
+    if (scene !== "island" || !player.aboard || boatThrow) return;
     if (rod.phase !== "idle" || pickupAnims.length || player.dead > 0) return;
+    const pondCast = aboardKind === "dinghy";
+    if (pondCast) {
+      if (!pondFishReady || !pondBoat) return;
+    } else if (!ownedBoat) {
+      return;
+    }
     if (!boatIsStill()) return;
     rod.phase = "wait";
     rod.t = 0;
     rod.bit = false;
-    rod.wait = 15;
+    rod.wait = pondCast ? rand(4.5, 8.5) : 15;
     rod.face = player.facing;
-    rod.catchId = rollBoatCatch();
+    rod.catchId = pondCast ? rollPondCatch() : rollBoatCatch();
     rod.tugLeft = 0;
     rod.tugDx = 0;
     rod.tugDy = 0;
@@ -5050,17 +5169,22 @@
   }
 
   function landRodCatch() {
-    const id = rod.catchId || rollBoatCatch();
-    const b = ownedBoat;
-    const fx = b.x + b.w / 2 + rod.face * 16;
-    const fy = b.y + b.h + 6;
+    const pondCast = aboardKind === "dinghy";
+    const id = rod.catchId || (pondCast ? rollPondCatch() : rollBoatCatch());
+    const b = activeCraft();
+    if (!b) {
+      rodBaitId = null;
+      return;
+    }
+    const fx = b.x + b.w / 2 + rod.face * (pondCast ? 10 : 16);
+    const fy = b.y + b.h + (pondCast ? 4 : 6);
     rod.bit = false;
     if (!id) {
       emitSplash(fx, fy, 3);
       rodBaitId = null;
       return;
     }
-    emitSplash(fx, fy, id === "megalodon" ? 16 : 7);
+    emitSplash(fx, fy, id === "megalodon" ? 16 : id === "portal_leech" ? 10 : 7);
     if (!ITEM_DEFS[id] || !canTake(id)) {
       chestTalk = 0;
       harborTalk = 0;
@@ -5088,23 +5212,34 @@
       value: 0,
     });
     if (id === "blowfish") startBlowfishHearts();
+    if (id === "portal_leech") startPortalLeechFx();
   }
 
   function updateRod(dt) {
     if (chestTalk > 0) chestTalk = Math.max(0, chestTalk - dt);
+    if (pondTipT > 0) pondTipT = Math.max(0, pondTipT - dt);
+    if (leechGlow) {
+      leechGlow.t += dt;
+      if (leechGlow.t >= leechGlow.dur) leechGlow = null;
+    }
     if (rod.phase === "idle") return;
     const sharkFight =
       isSharkishCatch(rod.catchId) &&
       rod.phase === "wait" &&
       (rod.catchId === "megalodon" || rod.t >= rod.wait - 7);
-    if (!player.aboard || player.moving || (rod.phase === "wait" && !sharkFight && !boatIsStill())) {
+    const pondStill = aboardKind === "dinghy";
+    if (
+      !player.aboard ||
+      (!pondStill && player.moving) ||
+      (rod.phase === "wait" && !sharkFight && !boatIsStill())
+    ) {
       rod.phase = "idle";
       rod.catchId = null;
       rod.tugLeft = 0;
       rodBaitId = null;
       return;
     }
-    if (rod.phase === "wait" || rod.phase === "reel") updateSharkTug(dt);
+    if (!pondStill && (rod.phase === "wait" || rod.phase === "reel")) updateSharkTug(dt);
     rod.t += dt;
     if (rod.phase === "wait" && rod.t >= rod.wait) {
       rod.phase = "reel";
@@ -7522,6 +7657,7 @@
       h: pondWater.ry * 2 + 36,
     });
     plantPondJungle(pondWater);
+    pondFishReady = true;
   }
 
   /** Ocean-like tide foam along the carved pool shore. */
@@ -8861,7 +8997,7 @@
   }
 
   function drawRod(cpos) {
-    if (rod.phase === "idle" || !ownedBoat || !player.aboard) return;
+    if (rod.phase === "idle" || !player.aboard || !activeCraft()) return;
     const face = rod.face || player.facing;
     const px0 = Math.round(player.x + player.w / 2 - cpos.x);
     const py0 = Math.round(player.y + 4 - cpos.y);
@@ -8882,6 +9018,30 @@
     const bite = rod.phase === "reel" && rod.bit;
     px(bobX, bobY, 2, 2, bite ? "#e04a32" : "#e8c44a");
     px(bobX, bobY + 1, 2, 1, "#8a2018");
+    drawPondEelTease(cpos, bobX, bobY);
+  }
+
+  /** Rare waterfall eel — dark undulating shape under the bob before the pull-up. */
+  function drawPondEelTease(cpos, bobX, bobY) {
+    if (aboardKind !== "dinghy" || rod.catchId !== "waterfall_eel") return;
+    if (rod.phase !== "wait") return;
+    const remain = rod.wait - rod.t;
+    if (remain > 3.2 || remain < 0) return;
+    const u = 1 - remain / 3.2;
+    const sway = Math.sin(time * 7.2) * (2 + u * 2);
+    const rise = (u * 5) | 0;
+    const ex = (bobX + sway) | 0;
+    const ey = (bobY + 5 - rise) | 0;
+    ink.save();
+    ink.globalAlpha = 0.35 + u * 0.45;
+    // Long dark body with a pale eye flash
+    for (let i = 0; i < 7; i++) {
+      const ox = ((Math.sin(time * 9 + i * 0.7) * 1.2) | 0) + i;
+      const oy = ((i * 0.6) | 0) + ((Math.sin(time * 5 + i) * 0.8) | 0);
+      px(ex + ox - 3, ey + oy, 2, 1, i % 2 ? "#1a3a38" : "#0e2826");
+    }
+    if (u > 0.55) px(ex + 4, ey, 1, 1, "#c8ffe8");
+    ink.restore();
   }
 
   function drawHarborBubble(cpos, t) {
@@ -9082,6 +9242,23 @@
       px(x + 4, y + 5, 1, 1, "#8a6a28");
       px(x + 4, y + 2, 1, 1, "#1a1814");
       px(x + 1, y + 3, 1, 1, "#d08060");
+      return true;
+    }
+    if (id === "waterfall_eel") {
+      px(x, y + 2, 6, 2, "#1a4844");
+      px(x + 1, y + 1, 5, 1, "#2a6860");
+      px(x + 5, y + 3, 2, 1, "#0e302c");
+      px(x + 6, y + 2, 1, 1, "#c8ffe8");
+      px(x, y + 3, 1, 2, "#143834");
+      return true;
+    }
+    if (id === "portal_leech") {
+      px(x + 1, y + 1, 5, 4, "#3a1a58");
+      px(x + 2, y, 3, 1, "#6a38a0");
+      px(x, y + 2, 1, 2, "#2a1040");
+      px(x + 6, y + 2, 1, 2, "#2a1040");
+      px(x + 2, y + 2, 2, 2, "#c878ff");
+      px(x + 3, y + 3, 1, 1, "#f0d0ff");
       return true;
     }
     if (id === "catch_crab") {
@@ -10745,7 +10922,7 @@
   }
 
   function drawRodLit(cpos, shade) {
-    if (rod.phase === "idle" || !ownedBoat || !player.aboard) return;
+    if (rod.phase === "idle" || !player.aboard || !activeCraft()) return;
     drawLitRegion(cpos, rodViewBox(cpos), shade ? { shade: true, cover: true } : null, () => drawRod(cpos));
   }
 
@@ -11816,6 +11993,29 @@
     ctx.restore();
   }
 
+  /** Soft violet glow after landing a portal leech. */
+  function drawPortalLeechGlow() {
+    if (!leechGlow) return;
+    const u = leechGlow.t;
+    const dur = leechGlow.dur;
+    const fade = u < 0.2 ? u / 0.2 : u > dur - 0.5 ? Math.max(0, (dur - u) / 0.5) : 1;
+    const mid = playerCenter();
+    const base = worldToUi(mid.x, mid.y - 4);
+    ctx.save();
+    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+    for (let r = 18; r >= 4; r -= 3) {
+      ctx.globalAlpha = fade * (0.04 + (18 - r) * 0.012);
+      ctx.fillStyle = r > 10 ? "#c878ff" : "#f0d0ff";
+      ctx.beginPath();
+      ctx.arc(base.x, base.y, r + Math.sin(u * 6) * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = fade * 0.85;
+    drawTinyCatch("portal_leech", (base.x - 3) | 0, (base.y - 18 - u * 6) | 0);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
 
   function drawTemplePedestal(cpos, t) {
     if (!templePedestal || templeMaskTaken) return;
@@ -12265,6 +12465,7 @@
     drawDiveHud();
     drawGuide();
     drawBlowfishHearts();
+    drawPortalLeechGlow();
     drawPickupFx();
     drawUseFx();
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
