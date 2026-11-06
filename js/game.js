@@ -7105,44 +7105,134 @@
   }
 
   /**
-   * Cave mouth recessed into a cliff wall face (not a free-floating box).
-   * Wall band sits above the pool rim; mouth is inset with depth shading.
+   * Irregular arched cave mouth with nested depth, carved into an existing cliff face.
+   * Returns wet lip {x,y,w} for waterfall alignment.
    */
-  function paintPondCaveInWall(g, wallX, wallY, wallW, wallH, mouthX, mouthW, mouthH) {
-    // Cliff face strata
+  function paintPondCaveMouth(g, cx, cy, seed) {
+    const rw = 9 + ((hash(seed, 1) * 8) | 0); // half-width 9–16
+    const rh = 10 + ((hash(seed, 2) * 7) | 0); // half-height 10–16
+    const skew = (hash(seed, 3) - 0.5) * 0.35;
+    const lean = (hash(seed, 4) - 0.5) * 3;
+    const x0 = (cx - rw - 4) | 0;
+    const y0 = (cy - rh - 3) | 0;
+    const x1 = (cx + rw + 4) | 0;
+    const y1 = (cy + rh + 2) | 0;
+
+    // Stone arch ring + nested depth (outside → inside)
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const nx = (x - cx - lean * ((y - cy) / rh)) / rw;
+        const ny = (y - cy) / rh;
+        // Arch: fuller sides, flatter floor (ny < 0.85), jagged rim noise
+        const jagged = (n2(x * 0.19 + seed, y * 0.17) - 0.5) * 0.22;
+        const d = Math.sqrt(nx * nx + (ny < 0 ? ny * ny * 0.85 : ny * ny * 1.15)) + jagged + skew * nx * ny;
+        if (d > 1.28) continue;
+        if (d > 1.05) {
+          // Outer rock lip
+          const n = hash(x, y + seed);
+          pxi(g, x, y, 1, 1, n > 0.55 ? "#6a6458" : "#4a463e");
+          continue;
+        }
+        if (d > 0.82) {
+          pxi(g, x, y, 1, 1, hash(x + 2, y) > 0.5 ? "#3a3834" : "#2e2c28");
+          continue;
+        }
+        if (d > 0.55) {
+          pxi(g, x, y, 1, 1, "#1a1814");
+          continue;
+        }
+        if (d > 0.28) {
+          pxi(g, x, y, 1, 1, "#0c0e14");
+          continue;
+        }
+        // Deep void
+        pxi(g, x, y, 1, 1, hash(x, y) > 0.7 ? "#152030" : "#06080c");
+      }
+    }
+
+    // Stalactites hanging from arch ceiling (vary count/length)
+    const drops = 2 + ((hash(seed, 7) * 4) | 0);
+    for (let i = 0; i < drops; i++) {
+      const tx = (cx - rw * 0.55 + hash(seed + i, 8) * rw * 1.1) | 0;
+      const len = 2 + ((hash(seed + i, 9) * 5) | 0);
+      for (let k = 0; k < len; k++) {
+        pxi(g, tx, cy - rh + 2 + k, 1, 1, k === len - 1 ? "#2a2830" : "#3a3834");
+        if (k === len - 1 && hash(seed + i, 10) > 0.55) pxi(g, tx, cy - rh + 2 + k + 1, 1, 1, "#5a9ab0");
+      }
+    }
+
+    // Floor shelf / wet sill inside mouth
+    const sillY = (cy + rh * 0.72) | 0;
+    const sillW = Math.max(4, (rw * 1.1) | 0);
+    for (let ix = -sillW; ix <= sillW; ix++) {
+      const nx = ix / rw;
+      if (nx * nx > 1.05) continue;
+      pxi(g, cx + ix, sillY, 1, 1, hash(ix, seed) > 0.5 ? "#2a4a58" : "#1a3a48");
+      if (hash(ix, seed + 1) > 0.6) pxi(g, cx + ix, sillY + 1, 1, 1, WATER_BLUE);
+    }
+
+    // Moss / wet stains at edges
+    for (let i = 0; i < 6; i++) {
+      const ang = -Math.PI * 0.15 + (i / 5) * Math.PI * 1.3;
+      const mx = (cx + Math.cos(ang) * rw * 0.95) | 0;
+      const my = (cy + Math.sin(ang) * rh * 0.9) | 0;
+      pxi(g, mx, my, 1, 1, i & 1 ? "#2a6a34" : "#1a4a28");
+    }
+
+    const lipW = Math.max(3, (rw * 0.7) | 0);
+    return { x: cx - ((lipW / 2) | 0), y: sillY, w: lipW, h: 1, cx: cx };
+  }
+
+  function paintPondCliffWall(g, wallX, wallY, wallW, wallH) {
     for (let iy = 0; iy < wallH; iy++) {
       for (let ix = 0; ix < wallW; ix++) {
-        const n = hash(wallX + ix, wallY + iy);
-        let col = n > 0.66 ? "#6a6458" : n > 0.33 ? "#5a564e" : "#4a463e";
-        if (iy < 2) col = n > 0.5 ? "#3a3834" : "#4a463e";
-        if (iy > wallH - 3) col = n > 0.5 ? "#3a6a34" : "#2a5a28";
+        const n = hash(wallX + ix, wallY + iy + 9);
+        let col = n > 0.7 ? "#706a60" : n > 0.4 ? "#5a564e" : "#4a463e";
+        if (iy < 3) col = n > 0.5 ? "#3a3834" : "#4a463e";
+        // Subtle strata bands
+        if (((iy / 3) | 0) & 1) col = n > 0.5 ? "#5e5850" : "#48443e";
         pxi(g, wallX + ix, wallY + iy, 1, 1, col);
       }
     }
-    // Moss / vine streaks on face
-    for (let i = 0; i < 8; i++) {
+    for (let ix = 0; ix < wallW; ix += 2) {
+      if (hash(wallX + ix, wallY) < 0.35) continue;
+      pxi(g, wallX + ix, wallY - 1, 2, 1, "#2a6a34");
+      if (hash(wallX + ix, 2) > 0.55) pxi(g, wallX + ix, wallY - 2, 1, 1, "#3a8a44");
+    }
+    // Vine streaks
+    for (let i = 0; i < 10; i++) {
       const vx = wallX + 2 + ((hash(i, wallY) * (wallW - 4)) | 0);
-      for (let k = 0; k < 5 + ((hash(i, 3) * 6) | 0); k++) {
+      for (let k = 0; k < 6 + ((hash(i, 3) * 8) | 0); k++) {
         pxi(g, vx + ((((hash(i + k, 5) - 0.5) * 2) | 0)), wallY + 2 + k, 1, 1, k & 1 ? "#2a6a34" : "#1a4a28");
       }
     }
-    // Recessed mouth (inset from face)
-    const mx = mouthX;
-    const my = wallY + 4;
-    const mw = mouthW;
-    const mh = mouthH;
-    pxi(g, mx - 1, my - 1, mw + 2, 1, "#3a3834");
-    pxi(g, mx - 1, my, 1, mh, "#2e2c28");
-    pxi(g, mx + mw, my, 1, mh, "#6a6458");
-    pxi(g, mx, my, mw, mh, "#12141a");
-    pxi(g, mx + 1, my + 1, mw - 2, mh - 2, "#0a0c10");
-    pxi(g, mx + 2, my + 2, 2, Math.max(1, mh - 4), "#1a2838");
-    // Wet lip under mouth where fall starts
-    pxi(g, mx + 1, my + mh - 1, mw - 2, 1, "#2a6a78");
-    return { x: mx + 2, y: my + mh - 1, w: Math.max(2, mw - 4), h: 1 };
   }
 
-  function bakeJunglePond(siteW, siteH) {
+  /** Find where the river channel approaches the pool (inlet) for waterfall alignment. */
+  function findPoolRiverInlet(anchor) {
+    let best = null;
+    let bestD = 1e12;
+    for (let ci = 0; ci < riverCourses.length; ci++) {
+      const pts = riverCourses[ci].pts || [];
+      for (let i = 1; i < pts.length; i++) {
+        const p = pts[i];
+        const prev = pts[i - 1];
+        const d = Math.hypot(p.x - anchor.x, p.y - anchor.y);
+        if (d < bestD) {
+          bestD = d;
+          // Upstream is toward lower index inland (prev often more inland / smaller y travel)
+          const ux = p.x - prev.x;
+          const uy = p.y - prev.y;
+          best = { x: p.x | 0, y: p.y | 0, dx: ux, dy: uy, half: p.half || 14 };
+        }
+      }
+    }
+    if (!best) return { x: anchor.x, y: anchor.y - 40, half: 14 };
+    // Place inlet on the north rim of the pool, x locked to river channel
+    return { x: best.x, y: anchor.y - 50, half: Math.max(10, best.half | 0) };
+  }
+
+  function bakeJunglePond(siteW, siteH, inletLocalX) {
     pondCanvas = document.createElement("canvas");
     pondCanvas.width = siteW;
     pondCanvas.height = siteH;
@@ -7153,6 +7243,7 @@
     const cy = ((siteH * 0.48) | 0);
     const rx = 100;
     const ry = 64;
+    const inletX = inletLocalX != null ? inletLocalX | 0 : cx;
 
     // Stone / moss rim (water itself is carved into the river + landCanvas)
     for (let a = 0; a < 140; a++) {
@@ -7168,53 +7259,48 @@
       if (hash(a, 19) > 0.72) pxi(g, sx + 1, sy + 1, 1, 1, "#8a8478");
     }
 
-    // Continuous north cliff wall with caves recessed into the face
-    const wallY = cy - ry - 18;
-    const wallH = 28;
+    // Continuous north cliff wall — caves + falls centered on river inlet
+    const wallY = cy - ry - 20;
+    const wallH = 32;
     const wallX = cx - rx + 8;
     const wallW = rx * 2 - 16;
+    paintPondCliffWall(g, wallX, wallY, wallW, wallH);
+
+    // Clamp inlet to wall interior
+    const inletClamped = Math.max(wallX + 22, Math.min(wallX + wallW - 22, inletX));
+    const caveSpecs = [
+      { cx: inletClamped, cy: wallY + 16, seed: 11, fall: true }, // main — river entrance
+      { cx: inletClamped - 38 - ((hash(3, 1) * 10) | 0), cy: wallY + 14 + ((hash(3, 2) * 4) | 0), seed: 22, fall: true },
+      { cx: inletClamped + 36 + ((hash(5, 1) * 10) | 0), cy: wallY + 15 + ((hash(5, 2) * 3) | 0), seed: 33, fall: hash(5, 4) > 0.35 },
+    ];
     const fallLips = [];
-    // Base wall slab
-    for (let iy = 0; iy < wallH; iy++) {
-      for (let ix = 0; ix < wallW; ix++) {
-        const n = hash(wallX + ix, wallY + iy + 9);
-        let col = n > 0.7 ? "#706a60" : n > 0.4 ? "#5a564e" : "#4a463e";
-        if (iy < 3) col = n > 0.5 ? "#3a3834" : "#4a463e";
-        pxi(g, wallX + ix, wallY + iy, 1, 1, col);
-      }
+    for (let i = 0; i < caveSpecs.length; i++) {
+      const spec = caveSpecs[i];
+      if (spec.cx < wallX + 16 || spec.cx > wallX + wallW - 16) continue;
+      const lip = paintPondCaveMouth(g, spec.cx, spec.cy, spec.seed);
+      if (spec.fall && lip) fallLips.push(lip);
     }
-    // Cap moss on wall top
-    for (let ix = 0; ix < wallW; ix += 2) {
-      if (hash(wallX + ix, wallY) < 0.35) continue;
-      pxi(g, wallX + ix, wallY - 1, 2, 1, "#2a6a34");
-      if (hash(wallX + ix, 2) > 0.55) pxi(g, wallX + ix, wallY - 2, 1, 1, "#3a8a44");
-    }
-    fallLips.push(
-      paintPondCaveInWall(g, wallX + 10, wallY + 2, 36, wallH - 4, wallX + 18, 14, 12)
-    );
-    fallLips.push(
-      paintPondCaveInWall(g, wallX + ((wallW / 2) | 0) - 14, wallY + 4, 32, wallH - 6, wallX + ((wallW / 2) | 0) - 6, 12, 11)
-    );
-    fallLips.push(
-      paintPondCaveInWall(g, wallX + wallW - 44, wallY + 1, 34, wallH - 3, wallX + wallW - 34, 13, 12)
-    );
-    // Static waterfall sheets (animated highlights drawn later)
+
+    // Waterfalls from cave sills down into the pool (aligned to mouths / river inlet)
     const fallsLocal = [];
+    const waterLine = cy - ry + 4;
     for (let f = 0; f < fallLips.length; f++) {
       const lip = fallLips[f];
       if (!lip) continue;
-      const fallH = (cy - (lip.y + 1)) | 0;
-      if (fallH < 6) continue;
+      const fallH = Math.max(8, (waterLine - (lip.y + 1)) | 0);
+      // Wider sheet for the main inlet cave
+      const sheetW = f === 0 ? Math.max(lip.w, 8) : lip.w;
+      const sheetX = f === 0 ? (lip.cx - ((sheetW / 2) | 0)) : lip.x;
       for (let iy = 0; iy < fallH; iy++) {
-        const taper = iy > fallH - 4 ? 1 : 0;
-        for (let ix = taper; ix < lip.w - taper; ix++) {
+        const taper = iy > fallH - 5 ? 1 : 0;
+        const sway = ((Math.sin(iy * 0.45 + f) * 1.2) | 0);
+        for (let ix = taper; ix < sheetW - taper; ix++) {
           const col = iy < 2 ? "#c8ecf8" : iy % 3 === 0 ? "#7ec8e0" : WATER_BLUE;
-          pxi(g, lip.x + ix, lip.y + 1 + iy, 1, 1, col);
+          pxi(g, sheetX + ix + sway, lip.y + 1 + iy, 1, 1, col);
         }
       }
-      // Splash pool at base
-      pxi(g, lip.x - 1, lip.y + fallH, lip.w + 2, 2, "#a8d8e8");
-      fallsLocal.push({ x: lip.x, y: lip.y + 1, w: lip.w, h: fallH });
+      pxi(g, sheetX - 1, lip.y + fallH, sheetW + 2, 2, "#a8d8e8");
+      fallsLocal.push({ x: sheetX, y: lip.y + 1, w: sheetW, h: fallH });
     }
 
     // Boulder clusters along non-north banks
@@ -7384,7 +7470,8 @@
     carvePondIntoRiver(anchor.x, anchor.y, layoutLocal.rx, layoutLocal.ry);
     paintPondPoolOntoLand(anchor.x, anchor.y, layoutLocal.rx, layoutLocal.ry);
 
-    const layout = bakeJunglePond(siteW, siteH);
+    const inlet = findPoolRiverInlet(anchor);
+    const layout = bakeJunglePond(siteW, siteH, inlet.x - site.x);
     pondWater = {
       cx: site.x + layout.cx,
       cy: site.y + layout.cy,
