@@ -11320,22 +11320,23 @@
     const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
     if (n != null) {
       const t = api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
-      const online = String(n | 0);
-      const total = t != null && t >= 0 ? String(t | 0) : null;
-      const onlineTw = pixTextWidth(online);
-      const totalTw = total ? pixTextWidth(total) : 0;
-      const gap = 5;
-      const iconW = 8;
-      const pair1 = iconW + 2 + onlineTw;
-      const pair2 = total ? iconW + 2 + totalTw : 0;
-      const inner = total ? pair1 + gap + pair2 : pair1;
+      const onlineTxt = "ONLINE " + (n | 0);
+      const totalTxt = t != null && t >= 0 ? "TOTAL " + (t | 0) : null;
+      const iconW = 6;
+      const gapIcon = 2;
+      const gapPair = 5;
+      const onlineTw = pixTextWidthSm(onlineTxt);
+      const totalTw = totalTxt ? pixTextWidthSm(totalTxt) : 0;
+      const pair1 = iconW + gapIcon + onlineTw;
+      const pair2 = totalTxt ? iconW + gapIcon + totalTw : 0;
+      const inner = totalTxt ? pair1 + gapPair + pair2 : pair1;
       let x = uiW - 6 - inner;
       drawOnlineStatIcon(x, 6);
-      drawPixText(online, x + iconW + 2, 8, "#c9a227");
-      if (total) {
-        x += pair1 + gap;
+      drawPixTextSm(onlineTxt, x + iconW + gapIcon, 7, "#c9a227");
+      if (totalTxt) {
+        x += pair1 + gapPair;
         drawTotalStatIcon(x, 6);
-        drawPixText(total, x + iconW + 2, 8, "#c9a227");
+        drawPixTextSm(totalTxt, x + iconW + gapIcon, 7, "#c9a227");
       }
     }
   }
@@ -12783,21 +12784,42 @@
     return yy;
   }
 
-  /** Green live-player pip (8x7) for ONLINE. */
-  function drawOnlineStatIcon(x, y) {
-    px(x + 3, y, 2, 2, "#f3e2c4");
-    px(x + 2, y + 2, 4, 2, "#c4a574");
-    px(x + 1, y + 4, 6, 3, "#3ddc5a");
-    px(x + 1, y + 4, 6, 1, "#1a4020");
+  /** ~2/3 scale pixel text for compact HUD chips. */
+  function pixTextWidthSm(text) {
+    const n = String(text || "").length;
+    if (!n) return 0;
+    return Math.max(1, ((n * 6 * 2) / 3) | 0);
   }
 
-  /** Group of players (8x7) for TOTAL. */
+  function drawPixTextSm(text, x, y, color) {
+    const s = String(text || "").toUpperCase();
+    if (!s) return;
+    const prevInk = ink;
+    ink = ctx;
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(x | 0, y | 0);
+    ctx.scale(2 / 3, 2 / 3);
+    for (let i = 0; i < s.length; i++) drawPixChar(s[i], i * 6, 0, color);
+    ctx.restore();
+    ink = prevInk;
+  }
+
+  /** Compact green live-player (6x6) for ONLINE. */
+  function drawOnlineStatIcon(x, y) {
+    px(x + 2, y, 2, 2, "#f3e2c4");
+    px(x + 1, y + 2, 4, 1, "#c4a574");
+    px(x, y + 3, 6, 3, "#3ddc5a");
+    px(x, y + 3, 6, 1, "#1a4020");
+  }
+
+  /** Compact group (6x6) for TOTAL. */
   function drawTotalStatIcon(x, y) {
-    px(x + 1, y + 1, 2, 2, "#c4a574");
-    px(x, y + 3, 4, 3, "#5c3a21");
-    px(x + 5, y, 2, 2, "#f3e2c4");
-    px(x + 4, y + 2, 4, 2, "#c4a574");
-    px(x + 3, y + 4, 5, 3, "#8a5a32");
+    px(x, y + 1, 2, 2, "#c4a574");
+    px(x, y + 3, 3, 3, "#5c3a21");
+    px(x + 3, y, 2, 2, "#f3e2c4");
+    px(x + 2, y + 2, 4, 1, "#c4a574");
+    px(x + 2, y + 3, 4, 3, "#8a5a32");
   }
 
   function onlineLabel() {
@@ -12810,6 +12832,7 @@
     return "ONLINE " + online + " / TOTAL " + (t | 0);
   }
 
+  /** Compact [icon] ONLINE n  [icon] TOTAL n strip — sits just under the panel title. */
   function drawOnlineChip(cx, y) {
     nudgePresenceRefresh();
     const api = lbApi();
@@ -12817,22 +12840,25 @@
     const online = n == null || n < 0 ? "—" : String(n | 0);
     const t = api && api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
     const total = t == null || t < 0 ? null : String(t | 0);
-    const onlineTw = pixTextWidth(online);
-    const totalTw = total != null ? pixTextWidth(total) : 0;
-    const gap = 6;
-    const iconW = 8;
-    const pair1 = iconW + 2 + onlineTw;
-    const pair2 = total != null ? iconW + 2 + totalTw : 0;
-    const inner = total != null ? pair1 + gap + pair2 : pair1;
+    const iconW = 6;
+    const gapIcon = 2;
+    const gapPair = 5;
+    const onlineTxt = "ONLINE " + online;
+    const totalTxt = total != null ? "TOTAL " + total : null;
+    const onlineTw = pixTextWidthSm(onlineTxt);
+    const totalTw = totalTxt ? pixTextWidthSm(totalTxt) : 0;
+    const pair1 = iconW + gapIcon + onlineTw;
+    const pair2 = totalTxt ? iconW + gapIcon + totalTw : 0;
+    const inner = totalTxt ? pair1 + gapPair + pair2 : pair1;
     const x = (cx - inner / 2) | 0;
-    px(x - 4, y - 2, inner + 8, 11, "#3a2414");
-    px(x - 3, y - 1, inner + 6, 9, "#5c3a21");
-    drawOnlineStatIcon(x, y - 1);
-    drawPixText(online, x + iconW + 2, y, "#f3e2c4");
-    if (total != null) {
-      const tx = x + pair1 + gap;
-      drawTotalStatIcon(tx, y - 1);
-      drawPixText(total, tx + iconW + 2, y, "#f3e2c4");
+    px(x - 3, y - 1, inner + 6, 9, "#3a2414");
+    px(x - 2, y, inner + 4, 7, "#5c3a21");
+    drawOnlineStatIcon(x, y);
+    drawPixTextSm(onlineTxt, x + iconW + gapIcon, y + 1, "#f3e2c4");
+    if (totalTxt) {
+      const tx = x + pair1 + gapPair;
+      drawTotalStatIcon(tx, y);
+      drawPixTextSm(totalTxt, tx + iconW + gapIcon, y + 1, "#f3e2c4");
     }
   }
 
@@ -12850,11 +12876,12 @@
     const x0 = ((uiW - totalW) / 2) | 0;
     const y = ((uiH - h) / 2) | 0;
     drawPanelBox(x0, y, playW, h, "ISLEBOUND");
-    drawOnlineChip((x0 + playW / 2) | 0, y + 18);
+    // Title bar ends ~y+14; tuck player info tightly under it.
+    drawOnlineChip((x0 + playW / 2) | 0, y + 16);
     for (let i = 0; i < MODE_PLAY.length; i++) {
       const key = "mode:" + i;
       const sel = srCursor === i || menuHovering(key);
-      const oy = y + 32 + i * 12;
+      const oy = y + 30 + i * 12;
       if (sel) px(x0 + 10, oy - 2, playW - 20, 11, "#e8c44a");
       const label = MODE_PLAY[i];
       const lx = x0 + 14;
