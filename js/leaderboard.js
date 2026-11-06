@@ -16,9 +16,11 @@
   const CLIENT_IP_KEY = "islebound-client-ip";
   const LOCAL_BANS_KEY = "islebound-local-bans";
   const BANS_TABLE = "player_bans";
+  const IPS_TABLE = "player_ips";
   const NEW_SCORE_MS = 7 * 24 * 60 * 60 * 1000; // NEW badge = last week
   const PRESENCE_HEARTBEAT_MS = 12000; // keep board dots roughly fresh while menus are open
   const PRESENCE_ONLINE_MS = 75000; // last_seen within this = online
+  const IP_VISIT_MS = 60000; // re-touch last_seen / recount at most once a minute
   const CHAT_POLL_MS = 2500;
   const CHAT_RATE_MS = 1500;
   const CHAT_BODY_MAX = 80;
@@ -198,6 +200,9 @@
   let presenceHasMode = true; // false if mode/category columns missing
   let presenceHasHub = true; // false if hub pose columns missing
   let onlineCount = null; // null = unknown / unavailable
+  let totalPlayerCount = null; // all-time unique IPs (null = unknown / table missing)
+  let ipsAvailable = true; // false if player_ips table missing
+  let lastIpVisitAt = 0;
   let onlinePresence = []; // [{ client_id, username, user_id, mode, category, hub_* }]
   let lastPresenceAt = 0;
   let presenceActivity = { mode: "menu", category: null }; // set by game
@@ -2139,8 +2144,77 @@
     return onlineCount;
   }
 
+  function getTotalPlayerCount() {
+    return totalPlayerCount;
+  }
+
   function getOnlinePresence() {
     return onlinePresence.slice();
+  }
+
+  function isValidPublicIp(ip) {
+    return !!(ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(String(ip)));
+  }
+
+  function parseExactCount(res) {
+    const cr = res && res.headers ? res.headers.get("content-range") : "";
+    if (!cr) return null;
+    const m = String(cr).match(/\/(\d+)\s*$/);
+    if (!m) return null;
+    return Math.max(0, m[1] | 0);
+  }
+
+  async function fetchTotalPlayerCount() {
+    if (!configured() || !ipsAvailable) return totalPlayerCount;
+    try {
+      const res = await fetch(restBase() + "/" + IPS_TABLE + "?select=ip", {
+        method: "HEAD",
+        headers: anonHeaders("count=exact"),
+      });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 406) {
+          ipsAvailable = false;
+          totalPlayerCount = null;
+          return null;
+        }
+        return totalPlayerCount;
+      }
+      const n = parseExactCount(res);
+      if (n != null) totalPlayerCount = n;
+      return totalPlayerCount;
+    } catch (e) {
+      return totalPlayerCount;
+    }
+  }
+
+  /** Upsert this client's public IP so TOTAL grows for first-time visitors. */
+  async function recordPlayerIpVisit() {
+    if (!configured() || !ipsAvailable) return;
+    const now = Date.now();
+    if (now - lastIpVisitAt < IP_VISIT_MS && totalPlayerCount != null) return;
+    let ip = clientIp;
+    if (!isValidPublicIp(ip)) ip = await refreshClientIp();
+    if (!isValidPublicIp(ip)) return;
+    lastIpVisitAt = now;
+    try {
+      const res = await fetch(restBase() + "/" + IPS_TABLE + "?on_conflict=ip", {
+        method: "POST",
+        headers: anonHeaders("resolution=merge-duplicates,return=minimal"),
+        body: JSON.stringify({
+          ip: String(ip),
+          last_seen: new Date().toISOString(),
+        }),
+      });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 406) {
+          ipsAvailable = false;
+          totalPlayerCount = null;
+          return;
+        }
+        // Missing column soft-fail: first_seen is defaulted server-side
+      }
+      await fetchTotalPlayerCount();
+    } catch (e) {}
   }
 
   function presenceUsername() {
@@ -2520,14 +2594,17 @@
 
   async function tickPresence() {
     if (!configured() || !presenceAvailable) return;
+    await recordPlayerIpVisit();
     await upsertPresence();
     if (!presenceAvailable) return;
     await fetchOnlinePresence();
+    if (ipsAvailable) await fetchTotalPlayerCount();
   }
 
   function startPresence() {
     if (!configured()) {
       onlineCount = null;
+      totalPlayerCount = null;
       return;
     }
     if (presenceTimer) return;
@@ -3007,6 +3084,9 @@
     isNewScoreRow,
     getClientId,
     getOnlineCount,
+    getTotalPlayerCount,
+    fetchTotalPlayerCount,
+    recordPlayerIpVisit,
     getOnlinePresence,
     rowIsOnline,
     fetchOnlinePresence,

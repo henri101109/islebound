@@ -121,6 +121,25 @@ create policy "Users upsert own speedrun_prs" on public.speedrun_prs for insert 
 drop policy if exists "Users update own speedrun_prs" on public.speedrun_prs;
 create policy "Users update own speedrun_prs" on public.speedrun_prs for update to anon, authenticated using (true) with check (true);
 
+-- ========== unique player IPs (all-time TOTAL next to ONLINE) ==========
+-- One row per public IP that has ever opened the game / presence heartbeat.
+create table if not exists public.player_ips (
+  ip text primary key,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now()
+);
+alter table public.player_ips enable row level security;
+drop policy if exists "Public read player_ips" on public.player_ips;
+create policy "Public read player_ips" on public.player_ips
+  for select to anon, authenticated using (true);
+drop policy if exists "Public insert player_ips" on public.player_ips;
+create policy "Public insert player_ips" on public.player_ips
+  for insert to anon, authenticated
+  with check (ip is not null and char_length(ip) between 7 and 64);
+drop policy if exists "Public update player_ips" on public.player_ips;
+create policy "Public update player_ips" on public.player_ips
+  for update to anon, authenticated using (true) with check (true);
+
 -- ========== presence ==========
 create table if not exists public.players_online (
   client_id text primary key,

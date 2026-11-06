@@ -11318,7 +11318,11 @@
     }
     const api = lbApi();
     const n = api && api.getOnlineCount ? api.getOnlineCount() : null;
-    if (n != null) drawPixText("ONLINE " + n, uiW - 6, 8, "#c9a227", "right");
+    if (n != null) {
+      const t = api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
+      const label = t != null && t >= 0 ? "ONLINE " + n + " · TOTAL " + (t | 0) : "ONLINE " + n;
+      drawPixText(label, uiW - 6, 8, "#c9a227", "right");
+    }
   }
 
   function tryHubEmote() {
@@ -12768,8 +12772,10 @@
     const api = lbApi();
     if (!api || typeof api.getOnlineCount !== "function") return "ONLINE —";
     const n = api.getOnlineCount();
-    if (n == null || n < 0) return "ONLINE —";
-    return "ONLINE " + (n | 0);
+    const online = n == null || n < 0 ? "—" : String(n | 0);
+    const t = api.getTotalPlayerCount ? api.getTotalPlayerCount() : null;
+    if (t == null || t < 0) return "ONLINE " + online;
+    return "ONLINE " + online + " · TOTAL " + (t | 0);
   }
 
   function drawOnlineChip(cx, y) {
