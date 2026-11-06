@@ -299,6 +299,10 @@
   let dockExit = null;
   /** Designated skiff slip at the finger-pier tip: { x, y, w, h, face }. */
   let boatBerth = null;
+  /** T-head deck at the end of the finger pier (where Enter drops you off). */
+  let boatBerthDeck = null;
+  /** Blocks walk-on auto-board after hopping off the berth (old magnet was yanking you back). */
+  let boatBoardCool = 0;
   let doorCool = 0;
   const foamBlockers = [];
   const dockBlit = [];
@@ -2360,6 +2364,8 @@
       maybeStartSpeedTimer();
     }
 
+    if (boatBoardCool > 0) boatBoardCool = Math.max(0, boatBoardCool - dt);
+
     if (
       !guideOpen &&
       !uiBlocksPlay() &&
@@ -2369,27 +2375,23 @@
       ownedBoat.landed &&
       !boatThrow &&
       scene === "island" &&
-      player.dead <= 0
+      player.dead <= 0 &&
+      boatBoardCool <= 0
     ) {
-      const bx = ownedBoat.x + ownedBoat.w / 2;
-      const by = ownedBoat.y + ownedBoat.h / 2;
-      const now = playerCenter();
-      const atBerth = !!ownedBoat.docked || boatNearBerth(ownedBoat, 30);
-      const onBerthDeck =
-        !!boatBerth &&
-        hitPad(player.x + 4, player.y + player.h - 2, walkPads) &&
-        player.y + player.h >= boatBerth.y - 18 &&
-        player.y <= boatBerth.y + 6 &&
-        player.x + player.w > boatBerth.x - 10 &&
-        player.x < boatBerth.x + boatBerth.w + 10;
-      const reach = atBerth || onBerthDeck ? 28 : 14;
-      if (Math.hypot(now.x - bx, now.y - by) < reach) {
-        player.aboard = true;
-        seatPlayerOnBoat();
-        player.inWater = false;
-        player.submerged = 0;
-        if (atBerth || onBerthDeck) settleBoatInBerth(ownedBoat);
-        checkBoatSpeedEnd();
+      // Docked slip: no proximity auto-board (Enter boards). Walk-on only for free boats.
+      if (ownedBoat.docked) {
+        /* skip — Enter / tryBoatToggle handles berth boarding */
+      } else {
+        const bx = ownedBoat.x + ownedBoat.w / 2;
+        const by = ownedBoat.y + ownedBoat.h / 2;
+        const now = playerCenter();
+        if (Math.hypot(now.x - bx, now.y - by) < 14) {
+          player.aboard = true;
+          seatPlayerOnBoat();
+          player.inWater = false;
+          player.submerged = 0;
+          checkBoatSpeedEnd();
+        }
       }
     }
   }
@@ -3123,7 +3125,7 @@
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
     }
-    if (player.aboard && ownedBoat && ownedBoat.docked) return "ENTER EXITS · WASD SAILS";
+    if (player.aboard && ownedBoat) return "ENTER → DOCK · WASD SAILS";
     if (player.aboard && heldBaitId() && rod.phase === "idle") return "BAIT READY";
     if (
       !player.aboard &&
@@ -4427,48 +4429,24 @@
     b.berthIgnore = Math.max(b.berthIgnore || 0, cool == null ? 1.35 : cool);
   }
 
-  /** Standable spot on the T-head / finger just north of the slip. */
-  function berthStandSpot() {
-    if (!boatBerth) return null;
-    const cx = (boatBerth.x + (boatBerth.w - player.w) / 2) | 0;
-    const tries = [
-      [cx, boatBerth.y - player.h - 1],
-      [(boatBerth.x + 2) | 0, boatBerth.y - player.h - 1],
-      [(boatBerth.x + boatBerth.w - player.w - 2) | 0, boatBerth.y - player.h - 1],
-      [cx, boatBerth.y - player.h - 6],
-      [cx, boatBerth.y - player.h - 12],
-      [cx, boatBerth.y - player.h - 20],
-      [(boatBerth.x - 10) | 0, boatBerth.y - player.h - 4],
-      [(boatBerth.x + boatBerth.w + 4) | 0, boatBerth.y - player.h - 4],
-      [cx, boatBerth.y - player.h - 28],
-    ];
-    for (let i = 0; i < tries.length; i++) {
-      const x = tries[i][0];
-      const y = tries[i][1];
-      const fx = x + 4;
-      const fy = y + player.h - 2;
-      // Prefer any dry dock walk pad; skip solids only.
-      if (isSolidPoint(x, y) || isSolidPoint(fx, fy)) continue;
-      if (hitPad(fx, fy, walkPads) || hitPad(fx, fy, deckPads)) return { x, y };
-      if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(fx, fy)) return { x, y };
-    }
-    // Last resort: snap onto the T-head center even if collision is fussy.
-    return { x: cx, y: boatBerth.y - player.h - 2 };
-  }
-
-  function tryStepOffAtBerth() {
-    if (!player.aboard || !ownedBoat || !boatBerth) return false;
-    if (!ownedBoat.docked && !boatNearBerth(ownedBoat, 34)) return false;
-    const spot = berthStandSpot();
-    if (!spot) return false;
+  /** Enter while aboard → stand on the T-head and park the skiff in the slip. */
+  function exitBoatToDockT() {
+    if (!player.aboard || !ownedBoat || scene !== "island") return false;
+    if (!boatBerth || !boatBerthDeck) return false;
+    const deck = boatBerthDeck;
     player.aboard = false;
-    player.x = spot.x;
-    player.y = spot.y;
+    player.x = (deck.x + (deck.w - player.w) / 2) | 0;
+    player.y = (deck.y + deck.h - player.h - 1) | 0;
     player.inWater = false;
     player.submerged = 0;
     player.moving = false;
-    if (boatNearBerth(ownedBoat, 28)) settleBoatInBerth(ownedBoat);
+    settleBoatInBerth(ownedBoat);
+    boatBoardCool = 1.5;
     return true;
+  }
+
+  function tryStepOffAtBerth() {
+    return exitBoatToDockT();
   }
 
   /**
@@ -4665,29 +4643,8 @@
     if (scene !== "island" || !ownedBoat || boatThrow) return false;
     const mid = playerCenter();
     if (player.aboard) {
-      // Docked / in the slip: Enter always hops onto the T-head and leaves the skiff parked.
-      if (ownedBoat.docked || boatNearBerth(ownedBoat, 34)) {
-        if (tryStepOffAtBerth()) return true;
-      }
-      const spots = [
-        [ownedBoat.x - 10, ownedBoat.y - 2],
-        [ownedBoat.x + ownedBoat.w + 2, ownedBoat.y - 2],
-        [ownedBoat.x + 4, ownedBoat.y - 12],
-        [ownedBoat.x + 4, ownedBoat.y + ownedBoat.h + 2],
-      ];
-      for (let i = 0; i < spots.length; i++) {
-        const x = spots[i][0];
-        const y = spots[i][1];
-        if (canStand(x, y) && canStand(x + 4, y + 6) && !isWaterAt(x + 2, y + 8)) {
-          player.aboard = false;
-          player.x = x;
-          player.y = y;
-          player.inWater = false;
-          player.submerged = 0;
-          return true;
-        }
-      }
-      return false;
+      // Enter always drops you on the T-head and parks the skiff.
+      return exitBoatToDockT();
     }
     const bx = ownedBoat.x + ownedBoat.w / 2;
     const by = ownedBoat.y + ownedBoat.h / 2;
@@ -4765,16 +4722,8 @@
 
   function onEnter() {
     if (player.dead > 0) return;
-    // Docked exit first — don't let cosmetics / drop steal Enter at the berth.
-    if (
-      player.aboard &&
-      ownedBoat &&
-      scene === "island" &&
-      (ownedBoat.docked || boatNearBerth(ownedBoat, 34)) &&
-      tryStepOffAtBerth()
-    ) {
-      return;
-    }
+    // Aboard → T-head of the dock. Always first so nothing else eats Enter.
+    if (player.aboard && exitBoatToDockT()) return;
     if (tryEquipHeldCosmetic()) return;
     if (isIndoor()) {
       dropHeld();
@@ -7687,6 +7636,7 @@
     const finger = { x: pier.x + 96, y: rest + 6, w: 18, h: 88 };
     // T-head + slip at the outer tip of the finger pier (south end, clear of the offshore sub).
     const berthDeck = { x: finger.x - 8, y: finger.y + finger.h - 10, w: 34, h: 12 };
+    boatBerthDeck = berthDeck;
     boatBerth = {
       x: finger.x - 2,
       y: berthDeck.y + berthDeck.h + 1,
