@@ -13,11 +13,18 @@ Scripted speedrun agent that repeats a category hundreds of times, keeps the bes
 http://127.0.0.1:8765/?tas=1&auto=1&cat=blowfish&scale=4&max=400
 ```
 
-Death% / boat% (Henri TAS cords):
+Death% / boat% grind (Henri TAS cords):
 
 ```
 http://127.0.0.1:8765/?tas=1&auto=1&cat=death&scale=4&max=200
 http://127.0.0.1:8765/?tas=1&auto=1&cat=boat&scale=4&max=400
+```
+
+**Optimal hold-tape demo (slow-mo, not BFS):**
+
+```
+http://127.0.0.1:8765/?tas=1&auto=1&cat=death&tape=1&scale=0.25
+http://127.0.0.1:8765/?tas=1&auto=1&cat=boat&tape=1&scale=0.25
 ```
 
 | Param | Meaning |
@@ -25,9 +32,10 @@ http://127.0.0.1:8765/?tas=1&auto=1&cat=boat&scale=4&max=400
 | `tas=1` | Required — enables seeded RNG + frame clock |
 | `auto=1` | Enable the grinder |
 | `cat=` | `blowfish` (default), `mask`, `death`, or `boat` |
-| `scale=` | Sim speed `0.25`–`8` (default `4`) |
-| `max=` | Stop after N attempts (default `400`) |
-| `watch` | Force `1×` for comfortable spectating |
+| `tape=1` | Replay dump `input_holds` (death/boat; aliases `replay`/`demo`) |
+| `scale=` | Sim speed `0.05`–`8` (default `4`; tape default `0.25`) |
+| `max=` | Stop after N attempts (default `400`; tape default `1`) |
+| `watch` | Spectate; keeps explicit `scale=` (else `1×` when not tape) |
 
 **Chrome extension TAS:** load `tas/chrome-extension`, then use the same URL **without** double-loading in-page TAS, or use `?auto=1` only if the extension already booted TAS.
 
