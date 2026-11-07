@@ -391,6 +391,53 @@ where name_norm in ('ANDREW')
      )
    );
 
+-- Unban Alex / Alex Pringle (floor auto-ban + name matches).
+delete from public.player_bans
+where name_norm in ('ALEX', 'ALEX PRINGLE', 'PRINGLE')
+   or name_norm like 'ALEX%'
+   or (
+     user_id is not null
+     and user_id in (
+       select a.id
+       from public.player_accounts a
+       where upper(regexp_replace(a.username, '[^A-Z0-9 ]', '', 'g')) like 'ALEX%'
+          or upper(trim(a.username)) in ('ALEX', 'ALEX PRINGLE', 'PRINGLE')
+     )
+   );
+
+-- Policy change: times under the soft floor are rejected, never banned.
+delete from public.player_bans
+where reason = 'cheat: time below floor';
+
+-- Unban Spincastle (floor auto-ban).
+delete from public.player_bans
+where name_norm in ('SPINCASTLE')
+   or user_id = 'fe568ea6-63b1-45d0-b1bb-0a4bda51c7dd'
+   or client_id = '2cb534fa-187f-460a-82c4-841486992571'
+   or ip = '104.51.54.17'
+   or (
+     user_id is not null
+     and user_id in (
+       select a.id
+       from public.player_accounts a
+       where upper(trim(a.username)) = 'SPINCASTLE'
+     )
+   );
+
+-- Grant Spincastle EEL% 11.56 (owner adjustment; was briefly posted as Alex Pringle).
+delete from public.speedrun_scores
+where category = 'waterfall_eel'
+  and time_ms = 11560
+  and upper(trim(player_name)) = 'ALEX PRINGLE';
+insert into public.speedrun_scores (category, time_ms, player_name, is_account)
+select 'waterfall_eel', 11560, 'SPINCASTLE', false
+where not exists (
+  select 1 from public.speedrun_scores
+  where category = 'waterfall_eel'
+    and time_ms = 11560
+    and upper(trim(player_name)) = 'SPINCASTLE'
+);
+
 -- Rebuild Henri PRs from evidenced speedrun_scores bests (scores were never wiped;
 -- PR rows were empty). Safe to re-run; keeps the better of existing vs score-min.
 insert into public.speedrun_prs (user_id, category, time_ms, updated_at)

@@ -345,7 +345,10 @@
   let bldgOY = 0;
   let fishSpawnT = 0.85;
   let fishCursor = Math.random();
-  let landCanvas = null;
+  /** Chunked land bake — one 8320×2368 canvas exceeds Safari/iOS limits → all-water worlds. */
+  const LAND_CHUNK_W = 2048;
+  let landChunks = [];
+  let landCanvas = null; // legacy null-check alias; real pixels live in landChunks
   let shoreLut = null;
   let foamMask = null;
   let waveCycle = 0;
@@ -1383,7 +1386,8 @@
       return;
     }
     if (scene !== "island") return;
-    if (player.aboard && ownedBoat) return;
+    // Mid-ocean skiff is fine; dinghy / missing hull / open water feet → dock.
+    if (player.aboard && ownedBoat && ownedBoat.kind !== "dinghy") return;
     if (dryFooting(player.x, player.y)) return;
     placeAtDock();
   }
@@ -6298,6 +6302,59 @@
     }
   }
 
+  function landReady() {
+    return !!(landChunks && landChunks.length);
+  }
+
+  /** World-space fill that spans landChunks (coords match old single landCanvas). */
+  function landFillRect(wx, wy, w, h, col) {
+    if (!landReady()) return;
+    const x = wx | 0;
+    const y = wy | 0;
+    const rw = w | 0;
+    const rh = h | 0;
+    if (rw <= 0 || rh <= 0) return;
+    for (let i = 0; i < landChunks.length; i++) {
+      const ch = landChunks[i];
+      const x0 = Math.max(x, ch.x0);
+      const x1 = Math.min(x + rw, ch.x0 + ch.w);
+      if (x1 <= x0) continue;
+      ch.g.fillStyle = col;
+      ch.g.fillRect(x0 - ch.x0, y, x1 - x0, rh);
+    }
+  }
+
+  /** Shim 2d context so existing pxi/paint* helpers keep using world coordinates. */
+  function landGfx() {
+    const shim = {
+      imageSmoothingEnabled: false,
+      fillStyle: WATER_BLUE,
+      fillRect(x, y, w, h) {
+        landFillRect(x, y, w, h, shim.fillStyle);
+      },
+    };
+    return shim;
+  }
+
+  function initLandChunks() {
+    landChunks = [];
+    landCanvas = null;
+    for (let x0 = 0; x0 < WORLD_W; x0 += LAND_CHUNK_W) {
+      const w = Math.min(LAND_CHUNK_W, WORLD_W - x0);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = WORLD_H;
+      if (c.width !== w || c.height !== WORLD_H) continue;
+      const g = c.getContext("2d");
+      if (!g) continue;
+      g.imageSmoothingEnabled = false;
+      g.fillStyle = WATER_BLUE;
+      g.fillRect(0, 0, w, WORLD_H);
+      landChunks.push({ canvas: c, g, x0, w });
+    }
+    landCanvas = landChunks.length ? landChunks[0].canvas : null;
+  }
+
   function bakeStaticWorld() {
     shoreLut = new Int16Array(WORLD_W);
     for (let wx = 0; wx < WORLD_W; wx++) shoreLut[wx] = shoreYAt(wx) | 0;
@@ -6310,13 +6367,8 @@
       }
     }
 
-    landCanvas = document.createElement("canvas");
-    landCanvas.width = WORLD_W;
-    landCanvas.height = WORLD_H;
-    const g = landCanvas.getContext("2d");
-    g.imageSmoothingEnabled = false;
-    g.fillStyle = WATER_BLUE;
-    g.fillRect(0, 0, WORLD_W, WORLD_H);
+    initLandChunks();
+    const g = landGfx();
 
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -6335,21 +6387,18 @@
         const riverish = riverTouchesTile(wx0, wy0);
 
         if (fullyOcean && !riverish) {
-          g.fillStyle = WATER_BLUE;
-          g.fillRect(wx0, wy0, TILE, TILE);
+          landFillRect(wx0, wy0, TILE, TILE, WATER_BLUE);
           continue;
         }
 
         if (fullyWater && !riverish && wy0 >= sMax + 40) {
-          g.fillStyle = WATER_DEEP;
-          g.fillRect(wx0, wy0, TILE, TILE);
+          landFillRect(wx0, wy0, TILE, TILE, WATER_DEEP);
           continue;
         }
 
         for (let ly = 0; ly < TILE; ly++) {
           for (let lx = 0; lx < TILE; lx++) {
-            g.fillStyle = landColor(wx0 + lx, wy0 + ly);
-            g.fillRect(wx0 + lx, wy0 + ly, 1, 1);
+            landFillRect(wx0 + lx, wy0 + ly, 1, 1, landColor(wx0 + lx, wy0 + ly));
           }
         }
       }
@@ -7581,9 +7630,8 @@
 
   /** Soft sand → dirt → grass ring under/around the ruins so they sit in jungle, not beach. */
   function blendRuinsGround(site) {
-    if (!landCanvas || !site) return;
-    const g = landCanvas.getContext("2d");
-    g.imageSmoothingEnabled = false;
+    if (!landReady() || !site) return;
+    const g = landGfx();
     const cx = site.x + ((site.w / 2) | 0);
     const cy = site.y + ((site.h / 2) | 0);
     const maxR = Math.max(site.w, site.h) * 0.92;
@@ -7786,9 +7834,8 @@
 
   /** Paint pool water + banks onto landCanvas — colors match river WATER_BLUE / WATER_DEEP. */
   function paintPondPoolOntoLand(cx, cy, rx, ry) {
-    if (!landCanvas) return;
-    const g = landCanvas.getContext("2d");
-    g.imageSmoothingEnabled = false;
+    if (!landReady()) return;
+    const g = landGfx();
     const x0 = Math.max(0, (cx - rx - 22) | 0);
     const y0 = Math.max(0, (cy - ry - 22) | 0);
     const x1 = Math.min(WORLD_W - 1, (cx + rx + 22) | 0);
@@ -9245,8 +9292,7 @@
       pxi(g, moorPlank.x + moorPlank.w - 1, moorPlank.y, 1, moorPlank.h, "#3a2414");
       paintMooredBoat(g, moorDeck, moorDoor);
     }
-    const g = landCanvas.getContext("2d");
-    g.imageSmoothingEnabled = false;
+    const g = landGfx();
     paintDockBits(g);
     for (let i = 0; i < 6; i++) {
       const postX = pier.x + 8 + i * 28;
@@ -10124,13 +10170,21 @@
 
   function drawLand(cpos) {
     px(-1, -1, (viewW | 0) + 3, (viewH | 0) + 3, WATER_BLUE);
-    if (!landCanvas) return;
+    if (!landReady()) return;
     const sx = Math.max(0, cpos.x | 0);
     const sy = Math.max(0, cpos.y | 0);
-    const sw = Math.min(WORLD_W - sx, Math.ceil(viewW) + 1);
-    const sh = Math.min(WORLD_H - sy, Math.ceil(viewH) + 1);
-    if (sw <= 0 || sh <= 0) return;
-    ctx.drawImage(landCanvas, sx, sy, sw, sh, sx - cpos.x, sy - cpos.y, sw, sh);
+    const ex = Math.min(WORLD_W, sx + Math.ceil(viewW) + 1);
+    const ey = Math.min(WORLD_H, sy + Math.ceil(viewH) + 1);
+    if (ex <= sx || ey <= sy) return;
+    const sh = ey - sy;
+    for (let i = 0; i < landChunks.length; i++) {
+      const ch = landChunks[i];
+      const x0 = Math.max(sx, ch.x0);
+      const x1 = Math.min(ex, ch.x0 + ch.w);
+      if (x1 <= x0) continue;
+      const sw = x1 - x0;
+      ctx.drawImage(ch.canvas, x0 - ch.x0, sy, sw, sh, x0 - cpos.x, sy - cpos.y, sw, sh);
+    }
   }
 
   function drawFoam(cpos, t) {
@@ -10194,15 +10248,23 @@
   }
 
   function blitWorldRects(list, cpos) {
-    if (!landCanvas) return;
+    if (!landReady()) return;
     for (let i = 0; i < list.length; i++) {
       const r = list[i];
       const sx = Math.max(r.x, cpos.x | 0) | 0;
       const sy = Math.max(r.y, cpos.y | 0) | 0;
-      const sw = Math.min(r.x + r.w, (cpos.x + viewW) | 0) - sx;
-      const sh = Math.min(r.y + r.h, (cpos.y + viewH) | 0) - sy;
-      if (sw <= 0 || sh <= 0) continue;
-      ctx.drawImage(landCanvas, sx, sy, sw, sh, sx - cpos.x, sy - cpos.y, sw, sh);
+      const ex = Math.min(r.x + r.w, (cpos.x + viewW) | 0);
+      const ey = Math.min(r.y + r.h, (cpos.y + viewH) | 0);
+      if (ex <= sx || ey <= sy) continue;
+      const sh = ey - sy;
+      for (let j = 0; j < landChunks.length; j++) {
+        const ch = landChunks[j];
+        const x0 = Math.max(sx, ch.x0);
+        const x1 = Math.min(ex, ch.x0 + ch.w);
+        if (x1 <= x0) continue;
+        const sw = x1 - x0;
+        ctx.drawImage(ch.canvas, x0 - ch.x0, sy, sw, sh, x0 - cpos.x, sy - cpos.y, sw, sh);
+      }
     }
   }
 
