@@ -439,91 +439,21 @@
   }
 
   /**
-   * Immediately ban a cheater for 24h: localStorage + in-memory, then best-effort
-   * POST to player_bans (needs RLS insert policy from SETUP_ALL.sql).
+   * Auto-ban disabled (owner mass-unban). Kept as a no-op so old call sites
+   * don't re-ban after the wipe. Rejects still happen in submitScore.
    */
-  async function applyCheatBan(opts) {
-    const o = opts || {};
-    if (!clientIp) {
-      try {
-        await refreshClientIp();
-      } catch (e) {}
-    }
-    const expires = new Date(Date.now() + AUTO_BAN_MS).toISOString();
-    const reason = String(o.reason || "cheat: auto").slice(0, 80);
-    const row = normalizeBanRow({
-      name_norm: o.name ? normalizeIdentityName(o.name) : null,
-      user_id: o.user_id ? String(o.user_id) : null,
-      client_id: o.client_id ? String(o.client_id) : getClientId(),
-      ip: o.ip != null ? o.ip : clientIp,
-      match_mode: o.name ? "name_exact" : "client_id",
-      expires_at: expires,
-      reason,
-    });
-    if (!row) return null;
-    // Persist locally first so this browser is blocked even if REST insert fails.
-    const next = loadLocalBans().filter(banStillActive);
-    next.push(row);
-    saveLocalBans(next);
-    lastBanHit = {
-      banned: true,
-      reason: row.reason,
-      until: row.expires_at,
-      kind: row.user_id ? "account" : row.client_id ? "device" : "name",
-    };
-    if (configured() && bansAvailable && bansInsertOk) {
-      try {
-        const body = {
-          name_norm: row.name_norm,
-          user_id: row.user_id,
-          client_id: row.client_id,
-          ip: row.ip,
-          match_mode: row.match_mode || "name_exact",
-          expires_at: row.expires_at,
-          reason: row.reason,
-        };
-        const res = await fetch(restBase() + "/" + BANS_TABLE, {
-          method: "POST",
-          headers: anonHeaders("return=minimal"),
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          // 401/403 = RLS blocked; 404 = table missing. Keep local ban either way.
-          if (res.status === 401 || res.status === 403 || res.status === 404) {
-            bansInsertOk = false;
-          }
-          if (res.status === 404 || res.status === 406) bansAvailable = false;
-        } else {
-          // Refresh server list so other tabs / devices pick it up on next poll.
-          fetchBans().catch(() => {});
-        }
-      } catch (e) {}
-    }
-    return row;
+  async function applyCheatBan() {
+    return null;
   }
 
   async function banForCheat(identity, reason) {
-    const id = identity || {};
-    await applyCheatBan({
-      name: id.name || "",
-      user_id: id.user_id || null,
-      client_id: id.client_id || getClientId(),
-      ip: id.ip != null ? id.ip : clientIp,
-      reason: reason || "cheat: auto",
-    });
-    const hit = checkBanIdentity({
-      name: id.name || "",
-      user_id: id.user_id || null,
-      client_id: id.client_id || getClientId(),
-      ip: id.ip != null ? id.ip : clientIp,
-    });
-    const block = banBlockResult(
-      hit && hit.banned
-        ? hit
-        : { banned: true, reason: reason || "cheat: auto", until: new Date(Date.now() + AUTO_BAN_MS).toISOString(), kind: "device" }
-    );
-    block.cheated = true;
-    return block;
+    return {
+      ok: false,
+      banned: false,
+      cheated: true,
+      error: reason || "cheat rejected",
+      shortError: "REJECTED",
+    };
   }
 
   function nameMatchesBan(name, ban) {
@@ -679,31 +609,35 @@
     return saveLocalBans(kept);
   }
 
+  function clearAllLocalBans() {
+    try {
+      localStorage.removeItem(LOCAL_BANS_KEY);
+    } catch (e) {}
+    localBans = [];
+    return localBans;
+  }
+
   function startBanPoll() {
     if (banPollTimer) return;
-    // Owner unban: strip local auto-bans immediately on this device.
-    clearLocalBansForNames([
-      "HENRI",
-      "ANDREW",
-      "ALEX",
-      "ALEX PRINGLE",
-      "PRINGLE",
-      "SPINCASTLE",
-    ]);
-    // Drop stale "time below floor" auto-bans (policy: reject, don't ban).
-    try {
-      const kept = loadLocalBans().filter((b) => {
-        const r = b && b.reason ? String(b.reason) : "";
-        return r.indexOf("cheat: time below floor") !== 0;
-      });
-      saveLocalBans(kept);
-    } catch (e) {}
-    localBans = loadLocalBans();
-    fetchBans().catch(() => {});
+    // Owner mass-unban: wipe every local auto-ban on this device.
+    clearAllLocalBans();
+    banRows = [];
+    lastBanHit = null;
+    fetchBans()
+      .then(() => {
+        // Ignore any server ban rows until SQL wipe lands — treat everyone as clear client-side.
+        banRows = [];
+      })
+      .catch(() => {});
     refreshClientIp().catch(() => {});
     banPollTimer = setInterval(() => {
-      localBans = loadLocalBans();
-      fetchBans().catch(() => {});
+      localBans = [];
+      banRows = [];
+      fetchBans()
+        .then(() => {
+          banRows = [];
+        })
+        .catch(() => {});
     }, BAN_POLL_MS);
   }
 

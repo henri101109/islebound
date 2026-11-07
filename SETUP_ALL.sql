@@ -344,6 +344,9 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
     and not public.player_is_banned(player_name, null, null, null)
   );
 
+-- ========== MASS UNBAN (run in SQL Editor — anon key cannot DELETE bans) ==========
+delete from public.player_bans;
+
 -- Unban Matteus / Owens (all name / account / client / IP / floor auto-bans).
 delete from public.player_bans
 where name_norm in ('MATTEUS', 'MATTEUS O', 'OWENS', 'MATTEUS OWENS')
