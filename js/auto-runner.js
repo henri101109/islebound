@@ -1,7 +1,12 @@
 /**
  * Islebound watchable auto-runner / route grinder.
- * Enable with ?tas=1&auto=1&cat=blowfish (or mask). Requires TAS boot (seeded RNG + time scale).
+ * Enable with ?tas=1&auto=1&cat=blowfish (or mask|death|boat). Requires TAS boot (seeded RNG + time scale).
  * Scripted policies + seed search. No god mode / free resources / leaderboard spoof.
+ *
+ * Optimal-path demo (Henri TAS dump input_holds / bot_plan), not BFS:
+ *   ?tas=1&auto=1&cat=death&tape=1&scale=0.25
+ *   ?tas=1&auto=1&cat=boat&tape=1&scale=0.25
+ * Aliases: replay=1, demo=1. Optional &watch (spectate; keeps explicit scale).
  */
 (() => {
   if (window.__IsleboundAuto) return;
@@ -20,21 +25,102 @@
     mask: "mask",
     jade: "mask",
     serpent: "serpent",
+    death: "death",
+    die: "death",
+    drown: "death",
+    boat: "boat",
+    skiff: "boat",
+    harbor: "boat",
   };
   const rawCat = (params.get("cat") || autoParam || "blowfish").toLowerCase();
   const category = CAT_ALIAS[rawCat] || (rawCat === "1" || rawCat === "true" ? "blowfish" : rawCat);
 
-  const maxAttempts = Math.max(1, Math.min(5000, parseInt(params.get("max") || "400", 10) || 400));
-  const scaleWanted = Math.max(0.25, Math.min(8, parseFloat(params.get("scale") || "4") || 4));
-  const watchSlow = params.has("watch"); // force 1x for spectating
+  const tapeParam = params.get("tape") || params.get("replay") || params.get("demo");
+  const tapeMode =
+    tapeParam === "1" ||
+    tapeParam === "true" ||
+    tapeParam === "opt" ||
+    tapeParam === "wr" ||
+    params.has("tape") ||
+    params.has("replay") ||
+    params.has("demo");
+
+  const maxDefault = tapeMode ? "1" : "400";
+  const maxAttempts = Math.max(1, Math.min(5000, parseInt(params.get("max") || maxDefault, 10) || 400));
+  const scaleParamSet = params.has("scale");
+  const scaleWanted = Math.max(
+    0.05,
+    Math.min(8, parseFloat(params.get("scale") || (tapeMode ? "0.25" : "4")) || (tapeMode ? 0.25 : 4))
+  );
+  const watchSlow = params.has("watch"); // spectate; do not override an explicit scale=
   /** v2: sim-adjusted times (wall * scale). Ignore legacy wall-only PBs under category floors. */
   const STORE_KEY = "islebound-auto-grind-v2";
-  const CAT_FLOOR_MS = { blowfish: 9900, mask: 22000, serpent: 20000 };
+  // death theoretical ~9.17s; boat LB floor 5s / TAS band ~6.5–7.2s
+  const CAT_FLOOR_MS = { blowfish: 9900, mask: 22000, serpent: 20000, death: 9000, boat: 5000 };
+  const FRAME_DT_MS = 1000 / 60;
+
+  /** Henri TAS dump cords (islebound-tas-bot-v1). */
+  const DEATH_WATER = { x: 854.19, y: 1798.38 };
+  const DEATH_DOCK_X = 839;
+  const BOAT_HARBOR_WAIT = { x: 870, y: 1847 };
+
+  /**
+   * Embedded islebound-tas-bot-v1 input_holds (+ bot_plan improvements for boat%).
+   * TELEPORT markers → empty holds (door fade). T/Enter via discrete_actions.
+   * Boat: cut WR door idle 2500–2800 (−300ms); harbor T at coin credit (not +133ms late).
+   */
+  const HOLD_TAPES = {
+    death: {
+      source: "islebound-tas-bot-v1 categories.death.input_holds",
+      holds: [
+        { t0: 0, t1: 133, keys: ["D"] },
+        { t0: 133, t1: 266, keys: ["D", "S"] },
+        { t0: 266, t1: 9165, keys: [] },
+        { t0: 9165, t1: 9199, keys: ["A", "W"] },
+      ],
+      actions: [],
+    },
+    boat: {
+      source: "islebound-tas-bot-v1 categories.boat.input_holds + bot_plan improvements",
+      holds: [
+        { t0: 0, t1: 300, keys: ["D"] },
+        { t0: 300, t1: 466, keys: ["D", "S"] },
+        { t0: 466, t1: 600, keys: ["D"] },
+        { t0: 600, t1: 733, keys: ["D", "S"] },
+        { t0: 733, t1: 1166, keys: ["D"] },
+        { t0: 1166, t1: 1233, keys: ["D", "W"] },
+        { t0: 1233, t1: 1300, keys: ["A", "W"] },
+        { t0: 1300, t1: 1500, keys: ["A"] },
+        { t0: 1500, t1: 1633, keys: ["A", "W"] },
+        { t0: 1633, t1: 2400, keys: ["A"] },
+        { t0: 2400, t1: 2500, keys: ["A", "W"] },
+        { t0: 2500, t1: 3167, keys: [] },
+        { t0: 3167, t1: 3242, keys: ["S"] },
+        { t0: 3242, t1: 3616, keys: [] },
+        { t0: 3616, t1: 3683, keys: ["S"] },
+        { t0: 3683, t1: 4733, keys: [] },
+        { t0: 4733, t1: 4841, keys: ["S"] },
+        { t0: 4841, t1: 5491, keys: [] },
+        { t0: 5491, t1: 5699, keys: ["D"] },
+        { t0: 5699, t1: 5833, keys: ["D", "S"] },
+        { t0: 5833, t1: 6116, keys: ["S"] },
+        { t0: 6116, t1: 6516, keys: [] },
+        { t0: 6516, t1: 6716, keys: ["S"] },
+        { t0: 6716, t1: 7650, keys: [] },
+        { t0: 7650, t1: 7661, keys: ["A", "S"] },
+      ],
+      actions: [
+        { t: 2533, type: "PRESS_T_SHOP" },
+        { t: 6483, type: "PRESS_T_HARBOR_BUY" },
+      ],
+    },
+  };
 
   const api = {
     enabled: !!enabled,
     category,
-    version: 1,
+    tapeMode: !!tapeMode,
+    version: 2,
   };
   window.__IsleboundAuto = api;
   if (!enabled) return;
@@ -60,9 +146,15 @@
     navMode: "north",
     tick: 0,
     attemptTick: 0,
+    traded: false,
+    bought: false,
     traj: [],
     running: true,
     pausedByUser: false,
+    tapeSimMs: 0,
+    tapeArmed: false,
+    tapeActionI: 0,
+    tapeHoldLabel: "",
   };
 
   function loadStore() {
@@ -284,16 +376,25 @@
     state.pathScene = null;
     state.traj = [];
     state.castFrames = 0;
-    state.navMode = "north";
+    state.navMode =
+      category === "death" ? "east" : category === "boat" ? "loot" : "north";
     state.attemptTick = 0;
+    state.traded = false;
+    state.bought = false;
+    state.tapeSimMs = 0;
+    state.tapeArmed = false;
+    state.tapeActionI = 0;
+    state.tapeHoldLabel = "";
     state.path = [];
     state.pathI = 0;
     state.pathScene = null;
-    // Fresh seed each attempt — search surface
-    const seed = (Math.imul(state.attempt, 2654435761) ^ (Date.now() & 0xfffffff) ^ (tas.rng.getCalls() * 97)) >>> 0;
+    // Tape demo: fixed seed for stable shop RNG. Grind: fresh seed each attempt.
+    const seed = tapeMode
+      ? 1
+      : (Math.imul(state.attempt, 2654435761) ^ (Date.now() & 0xfffffff) ^ (tas.rng.getCalls() * 97)) >>> 0;
     tas.rng.reseed(seed || 1);
     game.beginCategory(category);
-    state.note = "Attempt #" + state.attempt + " seed=" + (seed >>> 0);
+    state.note = (tapeMode ? "TAPE #" : "Attempt #") + state.attempt + " seed=" + (seed >>> 0);
     saveStore({
       attempts: state.attempt,
       successes: state.successes,
@@ -540,10 +641,475 @@
 
   function serpentStub(game, tas, obs, keys) {
     // Serpent needs shell + wand + ocean fight — mark as planned; fall back message.
-    state.note = "Serpent% agent not yet routed — use blowfish/mask";
+    state.note = "Serpent% agent not yet routed — use blowfish/mask/death/boat";
     state.phase = "done";
     state.running = false;
     clearKeys(keys);
+  }
+
+  function applyHoldKeys(keys, list) {
+    if (!list || !list.length) return;
+    for (let i = 0; i < list.length; i++) {
+      const k = String(list[i] || "").toLowerCase();
+      if (!k || k === "." || k === "teleport") continue;
+      keys[k] = true;
+      if (k === "d") keys.arrowright = true;
+      else if (k === "a") keys.arrowleft = true;
+      else if (k === "w") keys.arrowup = true;
+      else if (k === "s") keys.arrowdown = true;
+    }
+  }
+
+  function holdAt(tape, tMs) {
+    const holds = tape.holds || [];
+    for (let i = 0; i < holds.length; i++) {
+      const h = holds[i];
+      if (tMs >= h.t0 && tMs < h.t1) return h;
+    }
+    if (holds.length && tMs >= holds[holds.length - 1].t1) return holds[holds.length - 1];
+    return null;
+  }
+
+  function fireTapeActions(game, obs, tape, tMs) {
+    const actions = tape.actions || [];
+    while (state.tapeActionI < actions.length && tMs >= actions[state.tapeActionI].t) {
+      const act = actions[state.tapeActionI++];
+      if (act.type === "PRESS_T_SHOP") {
+        if (obs.scene === "shop" && !obs.fadeMode) {
+          if (typeof game.holdItem === "function") game.holdItem("crystal");
+          if (typeof game.trade === "function") game.trade();
+          state.traded = true;
+          state.note = "TAPE T shop @" + (tMs | 0) + "ms";
+        } else {
+          // Retry next ticks until shop fade clears
+          state.tapeActionI--;
+          break;
+        }
+      } else if (act.type === "PRESS_T_HARBOR_BUY") {
+        if ((obs.player.coins | 0) >= 10 && !obs.srBoughtBoat && obs.scene === "island" && !obs.fadeMode) {
+          if (typeof game.trade === "function") game.trade();
+          else game.enter();
+          state.bought = true;
+          state.note = "TAPE T harbor @" + (tMs | 0) + "ms";
+        } else if (!obs.srBoughtBoat && !obs.ownedBoat) {
+          state.tapeActionI--;
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Replay dump input_holds on sim clock (not wall srElapsed, not BFS).
+   * Door fades / auto-pickup / boarding still use game physics.
+   */
+  function tapePolicy(game, tas, obs, keys) {
+    const tape = HOLD_TAPES[category];
+    if (!tape) {
+      state.note = "No hold tape for " + category;
+      state.running = false;
+      return;
+    }
+
+    if (obs.uiScreen === "finish") {
+      onFinish(obs, tas);
+      return;
+    }
+    if (obs.uiScreen === "ready") {
+      state.menuFrames++;
+      if (state.menuFrames > 4) {
+        game.startTimer();
+        state.phase = "run";
+        state.menuFrames = 0;
+        state.tapeArmed = true;
+        state.tapeSimMs = 0;
+        state.tapeActionI = 0;
+        state.note = "TAPE armed @" + scaleWanted + "x";
+      }
+      return;
+    }
+    if (obs.uiScreen && obs.uiScreen !== null) return;
+
+    if (!state.tapeArmed) {
+      state.note = "TAPE waiting timer…";
+      return;
+    }
+
+    // Advance sim clock by this tick's scaled frame (matches TAS virtual dt + game dt cap).
+    const scale = typeof tas.getTimeScale === "function" ? tas.getTimeScale() : 1;
+    state.tapeSimMs += Math.min(50, FRAME_DT_MS * (scale > 0 ? scale : 1));
+    state.attemptTick++;
+    recordSample(obs, tas.rng.getSeed0());
+
+    const tMs = state.tapeSimMs;
+    const lastT = tape.holds.length ? tape.holds[tape.holds.length - 1].t1 : 0;
+    if (tMs > lastT + 4000) {
+      state.note = "TAPE overrun — reset";
+      state.phase = "restart";
+      return;
+    }
+
+    fireTapeActions(game, obs, tape, tMs);
+
+    // Board assist once skiff exists (WR ends aboard; Enter if docked).
+    if (obs.ownedBoat && obs.ownedBoat.landed && !obs.player.aboard && !obs.boatThrow) {
+      const b = obs.ownedBoat;
+      if (dist(obs.player.cx, obs.player.cy, b.cx, b.cy) < 30) {
+        clearKeys(keys);
+        game.enter();
+        state.note = "TAPE Enter board @" + (tMs | 0) + "ms";
+        return;
+      }
+    }
+
+    const hold = holdAt(tape, tMs);
+    let list = hold && hold.keys ? hold.keys.slice() : [];
+
+    // Death%: once the dump goes idle, keep DS into water until submerged — never stand on the shop door.
+    if (category === "death") {
+      if (obs.scene === "shop" || obs.fadeMode) {
+        clearKeys(keys);
+        state.note = "TAPE death wrong scene " + obs.scene + " — reset";
+        state.phase = "restart";
+        return;
+      }
+      const drowning = !!obs.player.inWater || (obs.player.dead || 0) > 0 || (obs.player.hp | 0) < 7;
+      if (!drowning) {
+        if (obs.player.x < DEATH_DOCK_X) list = ["D"];
+        else list = ["D", "S"];
+      } else {
+        list = []; // idle drown — dump hold after water
+      }
+    }
+
+    applyHoldKeys(keys, list);
+    state.tapeHoldLabel = list.length ? list.join("") : ".";
+
+    // Boat only: door/exit assists when the dump has idle/TELEPORT (empty hold).
+    if (category === "boat" && !list.length && !obs.fadeMode) {
+      if (obs.scene === "island" && obs.shopDoor && !state.traded && tMs >= 2400 && tMs < 3200) {
+        const d = obs.shopDoor;
+        const dx = d.x + d.w / 2 - obs.player.w / 2;
+        const dy = d.y + d.h / 2 - obs.player.h / 2;
+        if (dist(obs.player.x, obs.player.y, dx, dy) > 4) seekKeys(keys, obs.player.x, obs.player.y, dx, dy);
+      } else if (obs.scene === "shop" && obs.shopExit && state.traded) {
+        const ex = obs.shopExit;
+        const gx = ex.x + (ex.w || 14) / 2 - obs.player.w / 2;
+        const gy = ex.y + (ex.h || 10) / 2 - obs.player.h / 2;
+        if (dist(obs.player.x, obs.player.y, gx, gy) > 4) seekKeys(keys, obs.player.x, obs.player.y, gx, gy);
+      }
+    }
+
+    state.note =
+      "TAPE " +
+      (tMs / 1000).toFixed(2) +
+      "s [" +
+      state.tapeHoldLabel +
+      "] " +
+      (obs.scene || "") +
+      " @" +
+      scale +
+      "x";
+  }
+
+  /**
+   * Death%: D east on dock → DS into river water ~ (854, 1798) → idle drown.
+   * From Henri TAS bot_plan / input_holds (WR ~9.20s, TAS floor ~9.17s).
+   */
+  function deathPolicy(game, tas, obs, keys) {
+    if (obs.uiScreen === "finish") {
+      onFinish(obs, tas);
+      return;
+    }
+    if (obs.uiScreen === "ready") {
+      state.menuFrames++;
+      if (state.menuFrames > 4) {
+        game.startTimer();
+        state.phase = "run";
+        state.menuFrames = 0;
+        state.navMode = "east";
+      }
+      return;
+    }
+    if (obs.uiScreen && obs.uiScreen !== null) return;
+
+    if (obs.scene !== "island") {
+      state.note = "Wrong scene " + obs.scene + " — reset";
+      state.phase = "restart";
+      return;
+    }
+
+    recordSample(obs, tas.rng.getSeed0());
+    state.attemptTick++;
+
+    if ((obs.srElapsed | 0) > 18000 || state.attemptTick > 60 * 20) {
+      state.note = "Death timeout — reset";
+      state.phase = "restart";
+      return;
+    }
+
+    // Dead anim / already submerged: stay still until finish after dead anim.
+    if ((obs.player.dead || 0) > 0 || state.navMode === "idle") {
+      clearKeys(keys);
+      state.navMode = "idle";
+      state.note =
+        (obs.player.dead || 0) > 0
+          ? "Dead anim… hp=" + (obs.player.hp | 0)
+          : "Drowning… hp=" + (obs.player.hp | 0) + " sub=" + ((obs.player.submerged || 0) * 10 | 0) / 10;
+      return;
+    }
+
+    const px = obs.player.x;
+    const py = obs.player.y;
+    const inWater = !!obs.player.inWater;
+
+    // Settled in kill water — stop moving (no post-water travel).
+    if (inWater && (px > DEATH_DOCK_X + 8 || dist(px, py, DEATH_WATER.x, DEATH_WATER.y) < 18)) {
+      clearKeys(keys);
+      state.navMode = "idle";
+      state.note = "In water @(" + (px | 0) + "," + (py | 0) + ") — idle drown";
+      return;
+    }
+
+    // bot_plan: D until past dock edge, then DS into river.
+    if (px < DEATH_DOCK_X) {
+      keys.d = keys.arrowright = true;
+      state.navMode = "east";
+      state.note = "D east x=" + (px | 0);
+      return;
+    }
+
+    keys.d = keys.arrowright = true;
+    keys.s = keys.arrowdown = true;
+    state.navMode = "into";
+    state.note = "DS → water (" + (DEATH_WATER.x | 0) + "," + (DEATH_WATER.y | 0) + ")";
+  }
+
+  function nearestLoot(obs, id) {
+    const list = obs.lootNear || [];
+    for (let i = 0; i < list.length; i++) {
+      if (!id || list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function hasInv(obs, id) {
+    const inv = obs.inventory || [];
+    for (let i = 0; i < inv.length; i++) {
+      if (inv[i] && inv[i].id === id) return true;
+    }
+    return obs.held === id;
+  }
+
+  /**
+   * Boat%: beach crystal → shop T sell → exit during coin HUD → harbor T buy → board.
+   * Seed-searches shop think/flight RNG (TAS band ~6.5–7.2s).
+   */
+  function boatPolicy(game, tas, obs, keys) {
+    if (obs.uiScreen === "finish") {
+      onFinish(obs, tas);
+      return;
+    }
+    if (obs.uiScreen === "ready") {
+      state.menuFrames++;
+      if (state.menuFrames > 4) {
+        game.startTimer();
+        state.phase = "run";
+        state.menuFrames = 0;
+        state.navMode = "loot";
+        state.traded = false;
+        state.bought = false;
+      }
+      return;
+    }
+    if (obs.uiScreen && obs.uiScreen !== null) return;
+
+    if (obs.scene !== "island" && obs.scene !== "shop") {
+      state.note = "Wrong scene " + obs.scene + " — reset";
+      state.phase = "restart";
+      return;
+    }
+
+    recordSample(obs, tas.rng.getSeed0());
+    state.attemptTick++;
+
+    if ((obs.srElapsed | 0) > 28000 || state.attemptTick > 60 * 35) {
+      state.note = "Boat timeout — reset";
+      state.phase = "restart";
+      return;
+    }
+
+    // Win path already boarded.
+    if (obs.player.aboard && (obs.srBoughtBoat || obs.aboardKind === "skiff")) {
+      clearKeys(keys);
+      state.note = "Aboard — waiting finish";
+      return;
+    }
+
+    const px = obs.player.x;
+    const py = obs.player.y;
+    const fading = !!obs.fadeMode;
+
+    // --- Shop interior ---
+    if (obs.scene === "shop") {
+      if (fading) {
+        clearKeys(keys);
+        state.note = "Shop fade…";
+        return;
+      }
+      if (hasInv(obs, "crystal") || obs.held === "crystal") {
+        if (typeof game.holdItem === "function") game.holdItem("crystal");
+      }
+      const trade = obs.shopTrade || {};
+      const thinking = trade.phase === "think" || (trade.sales | 0) > 0;
+      if (!state.traded && !thinking) {
+        clearKeys(keys);
+        if (typeof game.trade === "function") game.trade();
+        state.traded = true;
+        state.note = "T sell crystal";
+        return;
+      }
+      if (thinking) {
+        // Exit south toward shop exit as soon as think starts — overlap coin HUD / flight.
+        const ex = obs.shopExit;
+        if (ex) {
+          const gx = ex.x + (ex.w || 14) / 2 - obs.player.w / 2;
+          const gy = ex.y + (ex.h || 10) / 2 - obs.player.h / 2;
+          seekKeys(keys, px, py, gx, gy);
+          state.note = "Exit during trade HUD";
+        } else {
+          keys.s = keys.arrowdown = true;
+          state.note = "S → shop exit";
+        }
+        return;
+      }
+      // Trade done / coins flying — leave shop.
+      const ex = obs.shopExit;
+      if (ex) {
+        const gx = ex.x + (ex.w || 14) / 2 - obs.player.w / 2;
+        const gy = ex.y + (ex.h || 10) / 2 - obs.player.h / 2;
+        seekKeys(keys, px, py, gx, gy);
+      } else {
+        keys.s = keys.arrowdown = true;
+      }
+      state.navMode = "harbor";
+      state.note = "Leaving shop";
+      return;
+    }
+
+    // Island fade (door transit)
+    if (fading) {
+      clearKeys(keys);
+      state.path = [];
+      state.pathScene = null;
+      state.note = "Door fade…";
+      return;
+    }
+
+    // Bought / throwing / boarding
+    if (obs.srBoughtBoat || obs.ownedBoat || obs.boatThrow) {
+      state.bought = true;
+      state.navMode = "board";
+      const boat = obs.ownedBoat;
+      const throwInfo = obs.boatThrow;
+      const berth = obs.boatBerth;
+      let tx = BOAT_HARBOR_WAIT.x;
+      let ty = BOAT_HARBOR_WAIT.y;
+      if (throwInfo && throwInfo.x1 != null) {
+        tx = throwInfo.x1;
+        ty = throwInfo.y1;
+      } else if (boat) {
+        tx = boat.x;
+        ty = boat.y;
+      } else if (berth) {
+        tx = berth.x;
+        ty = berth.y;
+      }
+      // Stand in board radius during throw; Enter boards docked slip.
+      seekKeys(keys, px, py, tx, ty);
+      const targetCx = boat ? boat.cx : tx + 11;
+      const targetCy = boat ? boat.cy : ty + 5;
+      if (boat && boat.landed && dist(obs.player.cx, obs.player.cy, targetCx, targetCy) < 28) {
+        clearKeys(keys);
+        game.enter();
+        state.note = "Enter board skiff";
+        return;
+      }
+      if (!boat && throwInfo) {
+        state.note = "Wait throw → berth";
+      } else {
+        state.note = "→ board (" + (tx | 0) + "," + (ty | 0) + ")";
+      }
+      trackStuck(obs, keys);
+      return;
+    }
+
+    // After shop sell (or coins ready): hold harbor for coin HUD credit, then T buy.
+    if ((state.traded || (obs.player.coins | 0) >= 10) && !obs.srBoughtBoat) {
+      state.navMode = (obs.player.coins | 0) >= 10 ? "buy" : "harbor";
+      const harbor = obs.harbor;
+      const hx = harbor ? harbor.cx - obs.player.w / 2 : BOAT_HARBOR_WAIT.x;
+      const hy = harbor ? harbor.cy - obs.player.h / 2 : BOAT_HARBOR_WAIT.y;
+      if ((obs.player.coins | 0) >= 10 && harbor && dist(obs.player.cx, obs.player.cy, harbor.cx, harbor.cy) < 30) {
+        clearKeys(keys);
+        if (typeof game.trade === "function") game.trade();
+        else game.enter();
+        state.bought = true;
+        state.note = "T buy boat";
+        return;
+      }
+      seekKeys(keys, px, py, hx, hy);
+      state.note =
+        (obs.player.coins | 0) >= 10
+          ? "→ harbor buy coins=" + (obs.player.coins | 0)
+          : "Harbor wait coins=" + (obs.player.coins | 0);
+      trackStuck(obs, keys);
+      return;
+    }
+
+    // Have crystal (or any sellable) → shop door. Prefer crystal.
+    if (hasInv(obs, "crystal") || hasInv(obs, "gem") || hasInv(obs, "jelly")) {
+      if (hasInv(obs, "crystal") && typeof game.holdItem === "function") game.holdItem("crystal");
+      else if (hasInv(obs, "gem") && typeof game.holdItem === "function") game.holdItem("gem");
+      state.navMode = "to_shop";
+      const door = obs.shopDoor;
+      if (!door) {
+        state.note = "No shop door";
+        return;
+      }
+      const dx = door.x + door.w / 2 - obs.player.w / 2;
+      const dy = door.y + door.h / 2 - obs.player.h / 2;
+      // Cut WR door idle — walk straight in, no pause.
+      seekKeys(keys, px, py, dx, dy);
+      state.note = "→ shop door";
+      trackStuck(obs, keys);
+      if (state.stuckFrames > 90) {
+        state.stuckFrames = 0;
+        keys.w = keys.arrowup = true;
+      }
+      return;
+    }
+
+    // Loot nearest beach crystal (fallback: gem).
+    state.navMode = "loot";
+    let target = nearestLoot(obs, "crystal");
+    if (!target) target = nearestLoot(obs, "gem");
+    if (!target) {
+      // Deterministic beach loot should exist — soft reset if missing too long.
+      if (state.attemptTick > 60 * 6) {
+        state.note = "No crystal/gem — reset";
+        state.phase = "restart";
+        return;
+      }
+      // Nudge east along beach from spawn toward typical WR loot (~998, 1818)
+      seekKeys(keys, px, py, 1000, 1818);
+      state.note = "Seek beach loot…";
+      trackStuck(obs, keys);
+      return;
+    }
+    seekKeys(keys, px, py, target.x - 2, target.y - 4);
+    state.note = "→ " + target.id + " d=" + (target.d | 0);
+    trackStuck(obs, keys);
   }
 
   function bootMenus(game, obs) {
@@ -602,8 +1168,14 @@
       return;
     }
 
+    if (tapeMode && (category === "death" || category === "boat")) {
+      tapePolicy(game, tas, obs, keys);
+      return;
+    }
     if (category === "blowfish") blowfishPolicy(game, tas, obs, keys);
     else if (category === "mask") maskPolicy(game, tas, obs, keys);
+    else if (category === "death") deathPolicy(game, tas, obs, keys);
+    else if (category === "boat") boatPolicy(game, tas, obs, keys);
     else if (category === "serpent") serpentStub(game, tas, obs, keys);
     else {
       state.note = "Unsupported cat " + category;
@@ -620,7 +1192,7 @@
     const el = document.createElement("div");
     el.id = "islebound-auto-panel";
     el.innerHTML =
-      '<div class="ia-title">AUTO GRIND</div>' +
+      '<div class="ia-title" id="ia-title">AUTO GRIND</div>' +
       '<div class="ia-row"><span>Cat</span><b id="ia-cat"></b></div>' +
       '<div class="ia-row"><span>Phase</span><b id="ia-phase"></b></div>' +
       '<div class="ia-row"><span>Scene</span><b id="ia-scene"></b></div>' +
@@ -630,7 +1202,7 @@
       '<div class="ia-row"><span>Last</span><b id="ia-last"></b></div>' +
       '<div class="ia-row"><span>Seed</span><b id="ia-seed"></b></div>' +
       '<div class="ia-note" id="ia-note"></div>' +
-      '<div class="ia-help">G pause · H dump best · ?tas=1&amp;auto=1&amp;cat=blowfish</div>';
+      '<div class="ia-help">G pause · H dump · tape=1&amp;scale=0.25 for optimal holds</div>';
     const style = document.createElement("style");
     style.textContent =
       "#islebound-auto-panel{position:fixed;left:10px;bottom:10px;z-index:99999;min-width:220px;max-width:320px;" +
@@ -651,7 +1223,8 @@
       const n = document.getElementById(id);
       if (n) n.textContent = v;
     };
-    set("ia-cat", category.toUpperCase());
+    set("ia-title", tapeMode ? "TAPE DEMO" : "AUTO GRIND");
+    set("ia-cat", category.toUpperCase() + (tapeMode ? " · TAPE" : ""));
     set("ia-phase", state.phase + (state.running ? "" : " (paused)"));
     try {
       const g = window.__IsleboundTAS && window.__IsleboundTAS.game && window.__IsleboundTAS.game();
@@ -660,7 +1233,12 @@
     } catch (e) {
       set("ia-scene", "—");
     }
-    set("ia-attempt", state.attempt + " / " + maxAttempts);
+    set(
+      "ia-attempt",
+      tapeMode
+        ? (state.tapeSimMs / 1000).toFixed(2) + "s sim"
+        : state.attempt + " / " + maxAttempts
+    );
     set("ia-hits", String(state.successes));
     set("ia-best", fmtMs(state.bestMs) + (state.bestSeed != null ? " @" + (state.bestSeed >>> 0) : ""));
     set("ia-last", fmtMs(state.lastMs));
@@ -703,12 +1281,21 @@
         requestAnimationFrame(tryBind);
         return;
       }
-      if (!watchSlow) tas.setTimeScale(scaleWanted);
-      else tas.setTimeScale(1);
+      // watch alone → 1×; explicit scale= (incl. slow-mo 0.25) always wins.
+      if (watchSlow && !scaleParamSet && !tapeMode) tas.setTimeScale(1);
+      else tas.setTimeScale(scaleWanted);
       tas.setAgentController(agentTick);
       state.phase = "boot";
-      state.note = "Booting menus → " + category;
-      console.info("[IsleboundAuto] grinding", category, "scale", tas.getTimeScale(), "max", maxAttempts);
+      state.note = (tapeMode ? "TAPE demo → " : "Booting menus → ") + category;
+      console.info(
+        "[IsleboundAuto]",
+        tapeMode ? "tape" : "grinding",
+        category,
+        "scale",
+        tas.getTimeScale(),
+        "max",
+        maxAttempts
+      );
       setInterval(refreshOverlay, 200);
       refreshOverlay();
     };

@@ -13,14 +13,29 @@ Scripted speedrun agent that repeats a category hundreds of times, keeps the bes
 http://127.0.0.1:8765/?tas=1&auto=1&cat=blowfish&scale=4&max=400
 ```
 
+Death% / boat% grind (Henri TAS cords):
+
+```
+http://127.0.0.1:8765/?tas=1&auto=1&cat=death&scale=4&max=200
+http://127.0.0.1:8765/?tas=1&auto=1&cat=boat&scale=4&max=400
+```
+
+**Optimal hold-tape demo (slow-mo, not BFS):**
+
+```
+http://127.0.0.1:8765/?tas=1&auto=1&cat=death&tape=1&scale=0.25
+http://127.0.0.1:8765/?tas=1&auto=1&cat=boat&tape=1&scale=0.25
+```
+
 | Param | Meaning |
 |-------|---------|
 | `tas=1` | Required — enables seeded RNG + frame clock |
 | `auto=1` | Enable the grinder |
-| `cat=` | `blowfish` (default) or `mask` |
-| `scale=` | Sim speed `0.25`–`8` (default `4`) |
-| `max=` | Stop after N attempts (default `400`) |
-| `watch` | Force `1×` for comfortable spectating |
+| `cat=` | `blowfish` (default), `mask`, `death`, or `boat` |
+| `tape=1` | Replay dump `input_holds` (death/boat; aliases `replay`/`demo`) |
+| `scale=` | Sim speed `0.05`–`8` (default `4`; tape default `0.25`) |
+| `max=` | Stop after N attempts (default `400`; tape default `1`) |
+| `watch` | Spectate; keeps explicit `scale=` (else `1×` when not tape) |
 
 **Chrome extension TAS:** load `tas/chrome-extension`, then use the same URL **without** double-loading in-page TAS, or use `?auto=1` only if the extension already booted TAS.
 
@@ -55,6 +70,22 @@ Target: hundreds of attempts via `max=` + `scale=4`–`8`. WR report notes first
 3. Repeat for cleaner island approaches / stuck recovery
 
 Largest pure-routing category per WR analysis.
+
+### Death%
+
+1. Spawn pier `(816, 1791)` → hold **D** east on dock
+2. Past dock edge → **DS** into river water settle `~(854, 1798)`
+3. Idle until drown lock + dead anim finishes (~9.17s theoretical floor)
+
+Uses Henri TAS `bot_plan` / `input_holds` (no post-water movement).
+
+### Boat%
+
+1. Loot nearest beach **crystal** (seed-stable beach pack)
+2. Shop door → **T** sell as fade clears → walk out during coin HUD
+3. Harbor approach → **T** buy when coins ≥ 10 → stand in board radius → **Enter** board
+
+Reseeds each attempt to grind shop think/flight RNG (TAS band ~6.5–7.2s).
 
 ## Best path storage
 
