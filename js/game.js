@@ -16779,7 +16779,11 @@
         return;
       }
       now = decision.now;
-      if (decision.resyncLast) last = now - (tas.FRAME_DT_MS || 1000 / 60);
+      if (decision.resyncLast) {
+        const adv =
+          decision.advanceMs > 0 ? decision.advanceMs : tas.FRAME_DT_MS || 1000 / 60;
+        last = now - adv;
+      }
     }
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;

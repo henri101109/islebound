@@ -1,6 +1,6 @@
 # Islebound TAS
 
-Tool-assisted play for Islebound: frame pause/step, input record/playback, seeded RNG observation, catch prediction, and savestates.
+Tool-assisted play for Islebound: frame pause/step, slow-motion time scale, input record/playback, seeded RNG observation, catch prediction, and savestates.
 
 **No cheats.** This does not grant resources, god mode, skip validation, or spoof leaderboard scores. RNG can be *observed*, *reseeding*, and *planned around* (savestate retry) through normal game rules — catch rolls still go through the real `rollBoatCatch` / `rollPondCatch` paths.
 
@@ -64,15 +64,16 @@ Do **not** run both the extension and the in-page scripts at once (double boot).
 |-------|--------|
 | `` ` `` (backquote) | Pause / resume |
 | `]` | Advance one frame (while paused) |
+| `,` / `.` | Slow-mo slower / faster (presets + fine steps) |
 | `[` | Toggle overlay panel |
 | `F6` / `F7` | Save / load savestate slot 1 |
 | `F9` | Toggle input recording |
 | `F10` | Play recorded tape |
 | `F11` | Export tape JSON |
 
-Panel buttons mirror these: Pause, Step, Rec/Play, Save/Load, Reseed, Export/Import.
+Panel: Pause, Step, **speed slider + 0.25× / 0.5× / 1×**, Rec/Play, Save/Load, Reseed, Export/Import.
 
-While TAS is active, the sim runs on a **fixed 60 Hz** virtual clock (pause freezes it; step advances one tick).
+While TAS is active, the sim uses a **60 Hz virtual clock**. **Time scale** multiplies each running tick’s `dt` (0.25× / 0.5× feel like slow motion across movement, fishing, wildlife, etc.). Pause still freezes; **Step** always advances one full 60 Hz tick regardless of scale.
 
 ## RNG workflow (legitimate exploitation)
 
