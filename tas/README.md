@@ -4,31 +4,59 @@ Tool-assisted play for Islebound: frame pause/step, input record/playback, seede
 
 **No cheats.** This does not grant resources, god mode, skip validation, or spoof leaderboard scores. RNG can be *observed*, *reseeding*, and *planned around* (savestate retry) through normal game rules — catch rolls still go through the real `rollBoatCatch` / `rollPondCatch` paths.
 
-## Why an in-page overlay?
+## Delivery: Chrome extension
 
-Islebound is a single canvas page with the sim inside a closed IIFE (`js/game.js`). Input lives on a `keys` map, the clock is `requestAnimationFrame`, and every roll uses `Math.random()`. An in-page stack fits best:
+Primary delivery is a **Chrome / Chromium extension** (Manifest V3) under `tas/chrome-extension/`.
 
-1. `js/tas-boot.js` runs **before** `game.js` and replaces `Math.random` with a seeded PRNG when TAS is on.
-2. Light hooks inside `game.js` pause/step the loop, bind `keys`, and expose catch context + savestate snapshots.
-3. `js/tas.js` draws the overlay UI after the game loads.
+Islebound is a single canvas page with the sim inside a closed IIFE (`js/game.js`). The extension injects:
 
-A userscript/extension would only wrap the same hooks with more install friction. The existing speedrun “VID” replay is pose playback for anti-cheat spectating — not an input TAS — so this tooling sits beside it rather than reusing it.
+1. **`page/tas-boot.js`** at `document_start` (sync) — seeded `Math.random` + frame-gate API  
+2. **`page/tas.js`** at `document_idle` — overlay UI + hotkeys  
 
-## Enable
+Light hooks inside `js/game.js` (already in this repo) pause/step the loop, bind `keys`, and expose catch context + savestate snapshots. The existing speedrun “VID” replay is pose spectating — not an input TAS.
 
-Open the game with a query flag:
+### Install (Load unpacked)
 
+1. Open Chrome → `chrome://extensions`
+2. Enable **Developer mode**
+3. **Load unpacked** → select `tas/chrome-extension/`
+4. Open Islebound (local server, `file://`, or matching host)
+5. For `file://` pages: on the extension card, enable **Allow access to file URLs**
+
+The TAS overlay appears top-right. Toolbar popup summarizes hotkeys.
+
+### Hosts matched
+
+- `http://localhost` / `http://127.0.0.1`
+- `file://`
+- `*.github.io` (incl. project pages)
+
+Edit `manifest.json` `content_scripts` / `web_accessible_resources` matches if you host elsewhere.
+
+### Syncing scripts
+
+`js/tas-boot.js` and `js/tas.js` are the editable sources. After changing them, copy into the extension package:
+
+```bash
+cp js/tas-boot.js tas/chrome-extension/page/tas-boot.js
+cp js/tas.js tas/chrome-extension/page/tas.js
 ```
-index.html?tas=1
+
+Then click **Reload** on the extension card.
+
+## Optional: page fallback (no extension)
+
+If you are not using the extension, you can still enable TAS by loading boot **before** `game.js` and the overlay after:
+
+```html
+<script src="js/tas-boot.js"></script>
+<script src="js/game.js"></script>
+<script src="js/tas.js"></script>
 ```
 
-Or persist:
+Then open with `?tas=1` or `localStorage.setItem("islebound-tas","1")`.
 
-```js
-localStorage.setItem("islebound-tas", "1");
-```
-
-Without the flag, `tas-boot.js` is inert (`enabled: false`) and `Math.random` stays native.
+Do **not** run both the extension and the in-page scripts at once (double boot).
 
 ## Controls
 
@@ -53,24 +81,15 @@ While TAS is active, the sim runs on a **fixed 60 Hz** virtual clock (pause free
 3. If the predicted catch is wrong for your route, **savestate load** (or reseed) and approach the cast again so ambient wildlife rolls reshuffle — or keep stepping until the peek looks right, then cast.
 4. Casting still calls the real roll functions; we never overwrite `rod.catchId`.
 
-`seed0` / `calls` / `state` in the panel show the PRNG cursor. **Reseed** sets a new uint32 seed (call count resets to 0).
-
-## Input tape
-
-- **Rec** stores per-frame key snapshots (movement, cast, slots, etc.).
-- **Play** reapplies them each tick (best with the same seed/savestate you recorded from).
-- Export/import JSON for sharing routes offline.
-
-Playback is deterministic only when the seeded PRNG position and game snapshot match the recording start. Ambient systems also consume RNG each frame — prefer recording from a savestate + known seed.
-
 ## Files
 
-| File | Role |
+| Path | Role |
 |------|------|
-| `js/tas-boot.js` | Optional seeded `Math.random`, frame gate API |
-| `js/tas.js` | Overlay + hotkeys + catch planner |
-| `js/game.js` | Loop gate + `bindGame` snapshot/restore (TAS-only) |
-| `index.html` | Script order: boot → game → overlay |
+| `tas/chrome-extension/` | Chrome extension (Load unpacked) |
+| `tas/chrome-extension/page/tas-boot.js` | Injected seeded PRNG + frame API |
+| `tas/chrome-extension/page/tas.js` | Injected overlay |
+| `js/tas-boot.js` / `js/tas.js` | Source copies (keep in sync) |
+| `js/game.js` | Loop gate + `bindGame` (TAS hooks) |
 
 ## Fair play note
 

@@ -1,10 +1,12 @@
 /**
- * Islebound TAS overlay — UI + hotkeys. Requires tas-boot.js (?tas=1).
+ * Islebound TAS overlay — UI + hotkeys. Requires tas-boot.js (extension or ?tas=1).
  * Legitimate tooling only: pause/step, input tape, RNG observe/plan, savestates.
  */
 (() => {
+  if (window.__IsleboundTAS_UI) return;
   const tas = window.__IsleboundTAS;
   if (!tas || !tas.enabled) return;
+  window.__IsleboundTAS_UI = true;
 
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
   const CATCH_RARE = ["catch_crab", "mini_shark", "jelly_green"];
@@ -469,7 +471,7 @@
   if (!fixedDtWarn) {
     fixedDtWarn = true;
     console.info(
-      "[Islebound TAS] Active. Seeded Math.random + fixed 60Hz ticks while TAS is on. Open with ?tas=1"
+      "[Islebound TAS] Active. Seeded Math.random + fixed 60Hz ticks. Use the Chrome extension (or ?tas=1 fallback)."
     );
   }
 })();

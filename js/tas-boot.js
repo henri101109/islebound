@@ -1,11 +1,14 @@
 /**
- * Islebound TAS boot — loads BEFORE game.js when ?tas=1 (or localStorage islebound-tas=1).
+ * Islebound TAS boot — loads BEFORE game.js.
+ * Enable via Chrome extension (`__IsleboundTAS_EXT`), `?tas=1`, or localStorage islebound-tas=1.
  * Installs a seeded PRNG over Math.random and a frame-gate scaffold.
  * Does not rewrite game outcomes; only observes / reseeds / pauses time.
  */
 (() => {
+  if (window.__IsleboundTAS && window.__IsleboundTAS.enabled) return; // already booted
   const params = new URLSearchParams(location.search);
   const enabled =
+    window.__IsleboundTAS_EXT === true ||
     params.has("tas") ||
     params.get("tas") === "1" ||
     localStorage.getItem("islebound-tas") === "1";
