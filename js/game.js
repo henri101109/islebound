@@ -2130,6 +2130,65 @@
     updateSandBits(dt);
   }
 
+  function crabIsCatchable(c) {
+    if (!c) return false;
+    if (c.state === "hidden") return false;
+    // Fully buried / mid-sink — not grab-able
+    if ((c.bury || 0) >= 0.85 && (c.hop || 0) < 1) return false;
+    return true;
+  }
+
+  /** Index of a beach crab the player is standing over, or -1. */
+  function nearestCatchableCrab() {
+    if (scene !== "island" || player.aboard || player.dead > 0) return -1;
+    const mid = playerCenter();
+    const footY = player.y + player.h - 1;
+    let best = -1;
+    let bestD = 18;
+    for (let i = 0; i < crabs.length; i++) {
+      const c = crabs[i];
+      if (!crabIsCatchable(c)) continue;
+      const dx = Math.abs(mid.x - c.x);
+      const dy = Math.abs(footY - c.y);
+      if (dx > 12 || dy > 14) continue;
+      const d = dx + dy * 0.6;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  /** Space on land: scoop a crab underfoot into the bag. */
+  function tryCatchLandCrab() {
+    const idx = nearestCatchableCrab();
+    if (idx < 0) return false;
+    const toBag = canTake("catch_crab");
+    const toSatchel = !toBag && canTakeSatchel("catch_crab");
+    if (!toBag && !toSatchel) {
+      cosTip = "CAN'T HOLD MORE CRAB";
+      cosTipT = 1.4;
+      return true;
+    }
+    const c = crabs[idx];
+    const from = worldToUi(c.x, c.y - 2);
+    crabs.splice(idx, 1);
+    pickupAnims.push({
+      id: "catch_crab",
+      t: 0,
+      fromX: from.x,
+      fromY: from.y,
+      slot: toSatchel ? satchelSlotFor("catch_crab") : slotIndexFor("catch_crab"),
+      dest: toSatchel ? "satchel" : "slot",
+      value: 0,
+    });
+    cosTip = "CAUGHT CRAB";
+    cosTipT = 1.15;
+    if (typeof checkCatchSpeedEnd === "function") checkCatchSpeedEnd("catch_crab");
+    return true;
+  }
+
   function emitSplash(wx, wy, n, fromFish) {
     if (fishOverDock(wx, wy)) return;
     // Allow splashes on river / pond pool; block dry island land only.
@@ -3686,6 +3745,9 @@
       if (cloakOn) return "SERPENT CONFUSED";
       if (serpent.phase === "breach") return "WAND — STRIKE!";
       return "STEER TO DODGE";
+    }
+    if (scene === "island" && !player.aboard && nearestCatchableCrab() >= 0) {
+      return "SPACE CATCH";
     }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return "PORTAL DORMANT";
@@ -17011,7 +17073,9 @@
       cosSelect = null;
     }
     if (k === "enter") onEnter();
-    if (k === " ") useHeld();
+    if (k === " ") {
+      if (!tryCatchLandCrab()) useHeld();
+    }
     if (k === "t") tryTradeKey();
     if (k === "e" && scene === "hub") tryHubEmote();
     else if (k === "e" && playMode === "normal" && !uiBlocksPlay() && !guideOpen && !cabinCut.kind) {
