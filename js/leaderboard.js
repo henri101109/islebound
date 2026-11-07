@@ -27,11 +27,6 @@
   const CHAT_BODY_MAX = 80;
   const CHAT_FETCH_LIMIT = 50;
   const BAN_POLL_MS = 60000;
-  const AUTO_BAN_MS = 24 * 60 * 60 * 1000; // 24h temp ban for detected cheats
-  // Friendly copy for banned players (shown in HUD / chat status).
-  const BAN_USER_MSG = "You're temporarily banned from online features.";
-  // Client-side hard bans (name hide + feature block). Empty = nobody hard-banned.
-  const HARD_BANS = [];
   // Lightweight aliases: map variants onto one canonical label (≤12 chars for DB).
   const NAME_ALIASES = {
     "HENRI P": "HENRI",
@@ -42,159 +37,28 @@
     "MATTEUS OWENS": "MATTEUS O",
   };
 
-  // floorMs = soft minimum for accepting a board time. Times under floor are
-  // rejected only — never auto-banned (was banning honest fast pond/ocean runs).
-  const FLOOR_MS_MIN = 5000;
+  // No timing floors / anti-cheat — any positive time is accepted.
   const CATEGORIES = {
-    shark: { id: "shark", label: "SHARK%", floorMs: FLOOR_MS_MIN },
-    jelly_white: { id: "jelly_white", label: "WHITE JELLY%", floorMs: FLOOR_MS_MIN },
-    chest: { id: "chest", label: "CHEST%", floorMs: FLOOR_MS_MIN },
-    death: { id: "death", label: "DEATH%", floorMs: FLOOR_MS_MIN },
-    boat: { id: "boat", label: "BOAT%", floorMs: FLOOR_MS_MIN },
-    full_inv: { id: "full_inv", label: "FULL INV%", floorMs: FLOOR_MS_MIN },
-    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%", floorMs: FLOOR_MS_MIN },
-    serpent: { id: "serpent", label: "SERPENT%", floorMs: FLOOR_MS_MIN },
-    blowfish: { id: "blowfish", label: "BLOWFISH%", floorMs: FLOOR_MS_MIN },
-    megalodon: { id: "megalodon", label: "MEGALODON%", floorMs: FLOOR_MS_MIN },
-    coins_10: { id: "coins_10", label: "10 COINS%", floorMs: FLOOR_MS_MIN },
-    coins_25: { id: "coins_25", label: "25 COINS%", floorMs: FLOOR_MS_MIN },
-    coins_100: { id: "coins_100", label: "100 COINS%", floorMs: FLOOR_MS_MIN },
-    mask: { id: "mask", label: "MASK%", floorMs: FLOOR_MS_MIN },
-    waterfall_eel: { id: "waterfall_eel", label: "EEL%", floorMs: FLOOR_MS_MIN },
-    portal_leech: { id: "portal_leech", label: "LEECH%", floorMs: FLOOR_MS_MIN },
+    shark: { id: "shark", label: "SHARK%" },
+    jelly_white: { id: "jelly_white", label: "WHITE JELLY%" },
+    chest: { id: "chest", label: "CHEST%" },
+    death: { id: "death", label: "DEATH%" },
+    boat: { id: "boat", label: "BOAT%" },
+    full_inv: { id: "full_inv", label: "FULL INV%" },
+    shark_cloak: { id: "shark_cloak", label: "INVIS SHARK%" },
+    serpent: { id: "serpent", label: "SERPENT%" },
+    blowfish: { id: "blowfish", label: "BLOWFISH%" },
+    megalodon: { id: "megalodon", label: "MEGALODON%" },
+    coins_10: { id: "coins_10", label: "10 COINS%" },
+    coins_25: { id: "coins_25", label: "25 COINS%" },
+    coins_100: { id: "coins_100", label: "100 COINS%" },
+    mask: { id: "mask", label: "MASK%" },
+    waterfall_eel: { id: "waterfall_eel", label: "EEL%" },
+    portal_leech: { id: "portal_leech", label: "LEECH%" },
   };
 
-  const FISH_STEP_CATS = {
-    shark: 1,
-    jelly_white: 1,
-    chest: 1,
-    blowfish: 1,
-    megalodon: 1,
-    shark_cloak: 1,
-  };
-
-  /** Jungle pond dinghy cats — shorter cast than ocean 15s wait. */
-  const POND_FISH_STEP_CATS = {
-    waterfall_eel: 1,
-    portal_leech: 1,
-  };
-
-  /**
-   * Replay step anti-cheat. Frame layout from game captureReplayFrame:
-   * [t,x,y,face,aboard,cloak,coins,hp,bx,by,bface,rod,scene,held,inv,serpent]
-   * rod: 0 idle, 1 wait, 2 reel
-   */
-  function validateReplaySteps(category, frames) {
-    if (!frames || !frames.length) return { ok: false, error: "no frames" };
-    let sawBoat = false;
-    let sawAboard = false;
-    let sawAboardBeforeRod = false;
-    let sawBoatBeforeRod = false;
-    let sawRod = false;
-    let rodWaitMs = 0;
-    let prevT = frames[0][0] | 0;
-    let sawCloak = false;
-    let sawSerpent = false;
-    let maxCoins = 0;
-    let minHp = 99;
-    let sawFullInv = false;
-    let sawHeart = false;
-    let firstRodT = -1;
-    let sawTemple = false;
-    let sawMask = false;
-
-    for (let i = 0; i < frames.length; i++) {
-      const f = frames[i];
-      if (!f || !f.length) continue;
-      const t = f[0] | 0;
-      const dt = Math.max(0, Math.min(250, t - prevT));
-      prevT = t;
-      const aboard = !!f[4];
-      const cloak = !!f[5];
-      const coins = f[6] | 0;
-      const hp = f[7] | 0;
-      const bx = f[8];
-      const rod = f[11] | 0;
-      const inv = f[14];
-      const serp = f[15];
-      const sceneId = f[12] | 0;
-      if (sceneId === 4) sawTemple = true;
-
-      if (bx != null && bx >= 0) sawBoat = true;
-      if (aboard) sawAboard = true;
-      if (cloak) sawCloak = true;
-      if (serp) sawSerpent = true;
-      if (coins > maxCoins) maxCoins = coins;
-      if (hp < minHp) minHp = hp;
-
-      if (Array.isArray(inv)) {
-        let filled = 0;
-        for (let s = 0; s < inv.length; s++) {
-          const raw = inv[s] || "";
-          if (raw) filled++;
-          if (String(raw).indexOf("serpent_heart") === 0) sawHeart = true;
-          if (String(raw).indexOf("jade_mask") === 0) sawMask = true;
-          if (String(raw).indexOf("cloak") === 0) {
-            /* owned cloak at some point */
-          }
-        }
-        if (filled >= 8) sawFullInv = true;
-      }
-
-      if (rod > 0) {
-        if (firstRodT < 0) {
-          firstRodT = t;
-          sawBoatBeforeRod = sawBoat;
-          sawAboardBeforeRod = sawAboard;
-        }
-        sawRod = true;
-        if (rod === 1) rodWaitMs += dt;
-      }
-    }
-
-    if (FISH_STEP_CATS[category]) {
-      if (!sawBoatBeforeRod && !sawBoat) return { ok: false, error: "need boat first" };
-      if (!sawBoatBeforeRod) return { ok: false, error: "boat before fish" };
-      if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board boat first" };
-      if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
-      if (!sawRod) return { ok: false, error: "must cast rod" };
-      // Soft barrier only — board floor is 5s; do not require full ocean cast length.
-      if (rodWaitMs < 500) return { ok: false, error: "cast too short" };
-      if (category === "shark_cloak" && !sawCloak) return { ok: false, error: "need cloak on" };
-    }
-
-    if (POND_FISH_STEP_CATS[category]) {
-      if (!sawBoatBeforeRod && !sawBoat) return { ok: false, error: "need dinghy first" };
-      if (!sawBoatBeforeRod) return { ok: false, error: "dinghy before fish" };
-      if (!sawAboardBeforeRod && !sawAboard) return { ok: false, error: "board dinghy first" };
-      if (!sawAboardBeforeRod) return { ok: false, error: "board before fish" };
-      if (!sawRod) return { ok: false, error: "must cast rod" };
-      if (rodWaitMs < 500) return { ok: false, error: "cast too short" };
-    }
-
-    if (category === "serpent") {
-      if (!sawBoat || !sawAboard) return { ok: false, error: "need boat" };
-      if (!sawSerpent) return { ok: false, error: "need serpent fight" };
-      if (!sawHeart) return { ok: false, error: "need sea heart" };
-    }
-
-    if (category === "boat") {
-      // Boat costs 10 coins; owning/boarding the boat is the proof (coin count drops after buy).
-      if (!sawBoat) return { ok: false, error: "need buy boat" };
-      if (!sawAboard) return { ok: false, error: "need board boat" };
-    }
-
-    if (category === "coins_10" && maxCoins < 10) return { ok: false, error: "need 10 coins" };
-    if (category === "coins_25" && maxCoins < 25) return { ok: false, error: "need 25 coins" };
-    if (category === "coins_100" && maxCoins < 100) return { ok: false, error: "need 100 coins" };
-
-    if (category === "full_inv" && !sawFullInv) return { ok: false, error: "need full inv" };
-    if (category === "death" && minHp > 0) return { ok: false, error: "need death" };
-    if (category === "mask") {
-      if (!sawTemple) return { ok: false, error: "need temple" };
-      if (!sawMask) return { ok: false, error: "need jade mask" };
-    }
-
+  /** Replay validation removed — always accept. */
+  function validateReplaySteps() {
     return { ok: true };
   }
 
@@ -385,31 +249,7 @@
   }
 
   function allActiveBans() {
-    const out = [];
-    const seen = {};
-    function push(raw) {
-      const b = normalizeBanRow(raw);
-      if (!b || !banStillActive(b)) return;
-      const key =
-        (b.user_id || "") +
-        "|" +
-        (b.client_id || "") +
-        "|" +
-        (b.ip || "") +
-        "|" +
-        (b.name_norm || "") +
-        "|" +
-        (b.match_mode || "") +
-        "|" +
-        (b.expires_at || "");
-      if (seen[key]) return;
-      seen[key] = 1;
-      out.push(b);
-    }
-    for (let i = 0; i < HARD_BANS.length; i++) push(HARD_BANS[i]);
-    for (let i = 0; i < localBans.length; i++) push(localBans[i]);
-    for (let i = 0; i < banRows.length; i++) push(banRows[i]);
-    return out;
+    return [];
   }
 
   function loadLocalBans() {
@@ -441,103 +281,33 @@
     return clean;
   }
 
-  /**
-   * Auto-ban disabled (owner mass-unban). Kept as a no-op so old call sites
-   * don't re-ban after the wipe. Rejects still happen in submitScore.
-   */
   async function applyCheatBan() {
     return null;
   }
 
-  async function banForCheat(identity, reason) {
-    return {
-      ok: false,
-      banned: false,
-      cheated: true,
-      error: reason || "cheat rejected",
-      shortError: "REJECTED",
-    };
+  async function banForCheat() {
+    return { ok: true, banned: false };
   }
 
-  function nameMatchesBan(name, ban) {
-    const n = normalizeIdentityName(name);
-    const target = normalizeIdentityName(ban && ban.name_norm);
-    if (!n || !target) return false;
-    const mode = (ban && ban.match_mode) || "name_fuzzy";
-    if (mode === "name_exact" || mode === "exact") return n === target;
-    if (mode === "name_prefix" || mode === "prefix") {
-      return n === target || n.indexOf(target + " ") === 0;
-    }
-    // name_fuzzy (default): exact, shared first token, or existing alias fuzzy match
-    if (n === target) return true;
-    const ta = nameTokens(n);
-    const tb = nameTokens(target);
-    if (ta[0] && tb[0] && ta[0].length >= 4 && ta[0] === tb[0]) return true;
-    if (namesFuzzyMatch(n, target)) return true;
+  function nameMatchesBan() {
     return false;
   }
 
-  /** Permanent board/VID hide for HARD_BANS names (ignores ban expiry — SQL wipe may lag). */
-  function isBoardHiddenName(name) {
-    const n = normalizeIdentityName(name);
-    if (!n) return false;
-    for (let i = 0; i < HARD_BANS.length; i++) {
-      const b = HARD_BANS[i];
-      if (b && b.name_norm && nameMatchesBan(n, b)) return true;
-    }
+  function isBoardHiddenName() {
     return false;
   }
 
-  function banUserMessage(hit) {
-    if (!hit || !hit.banned) return "";
-    let msg = BAN_USER_MSG;
-    if (hit.until) {
-      const ms = Date.parse(hit.until) - Date.now();
-      if (ms > 0) {
-        const hrs = Math.max(1, Math.ceil(ms / 3600000));
-        msg += hrs === 1 ? " Try again in about an hour." : " Try again in about " + hrs + " hours.";
-      }
-    }
-    return msg;
+  function banUserMessage() {
+    return "";
   }
 
-  function checkBanIdentity(opts) {
-    const o = opts || {};
-    const name = o.name || "";
-    const uid = o.user_id || null;
-    const cid = o.client_id || getClientId();
-    const ip = o.ip != null ? o.ip : clientIp;
-    const bans = allActiveBans();
-    for (let i = 0; i < bans.length; i++) {
-      const b = bans[i];
-      if (b.user_id && uid && String(b.user_id) === String(uid)) {
-        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "account" };
-        return lastBanHit;
-      }
-      if (b.client_id && cid && String(b.client_id) === String(cid)) {
-        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "device" };
-        return lastBanHit;
-      }
-      if (b.ip && ip && String(b.ip) === String(ip)) {
-        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "ip" };
-        return lastBanHit;
-      }
-      if (b.name_norm && name && nameMatchesBan(name, b)) {
-        lastBanHit = { banned: true, reason: b.reason, until: b.expires_at, kind: "name" };
-        return lastBanHit;
-      }
-    }
+  function checkBanIdentity() {
     lastBanHit = { banned: false };
     return lastBanHit;
   }
 
-  function getBanStatus(opts) {
-    return checkBanIdentity(opts || {
-      name: displayName() || getLastName() || "",
-      user_id: session && session.user ? session.user.id : null,
-      client_id: getClientId(),
-      ip: clientIp,
-    });
+  function getBanStatus() {
+    return { banned: false };
   }
 
   function getClientIp() {
@@ -621,39 +391,15 @@
   }
 
   function startBanPoll() {
-    if (banPollTimer) return;
-    // Owner mass-unban: wipe every local auto-ban on this device.
     clearAllLocalBans();
     banRows = [];
     lastBanHit = null;
-    fetchBans()
-      .then(() => {
-        // Ignore any server ban rows until SQL wipe lands — treat everyone as clear client-side.
-        banRows = [];
-      })
-      .catch(() => {});
-    refreshClientIp().catch(() => {});
-    banPollTimer = setInterval(() => {
-      localBans = [];
-      banRows = [];
-      fetchBans()
-        .then(() => {
-          banRows = [];
-        })
-        .catch(() => {});
-    }, BAN_POLL_MS);
+    bansAvailable = false;
+    bansInsertOk = false;
   }
 
-  function banBlockResult(hit) {
-    const msg = banUserMessage(hit) || BAN_USER_MSG;
-    return {
-      ok: false,
-      banned: true,
-      error: msg,
-      shortError: "TEMP BANNED",
-      until: hit && hit.until,
-      kind: hit && hit.kind,
-    };
+  function banBlockResult() {
+    return { ok: true, banned: false };
   }
 
   function nameTokens(name) {
@@ -1464,43 +1210,9 @@
     const resolved = await resolveSubmitIdentity(playerName);
     const name = resolved.name || sanitizeName(playerName);
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
-    const banHit = checkBanIdentity({
-      name,
-      user_id: resolved.user_id || (session && session.user && session.user.id) || null,
-      client_id: getClientId(),
-      ip: clientIp,
-    });
-    if (banHit.banned) return banBlockResult(banHit);
     const ms = timeMs | 0;
-    if (ms < 0) return { ok: false, error: "bad time" };
-    const cheatIdentity = {
-      name,
-      user_id: resolved.user_id || (session && session.user && session.user.id) || null,
-      client_id: getClientId(),
-      ip: clientIp,
-    };
-    // Soft floor: reject only — never ban for being under the minimum.
-    if (ms < (def.floorMs | 0)) {
-      return { ok: false, error: "time below minimum (" + ((def.floorMs / 1000) | 0) + "s)" };
-    }
+    if (ms <= 0) return { ok: false, error: "bad time" };
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
-    // Replay must exist and its last sample must match the submitted clock
-    // (stops posting a fake 15s time with a forged payload).
-    const frames = options.replay && options.replay.frames;
-    if (!frames || !frames.length) {
-      return banForCheat(cheatIdentity, "cheat: invalid replay");
-    }
-    const lastT = frames[frames.length - 1][0] | 0;
-    if (lastT < (def.floorMs | 0)) {
-      return { ok: false, error: "time below minimum (" + ((def.floorMs / 1000) | 0) + "s)" };
-    }
-    if (Math.abs(lastT - ms) > 2000) {
-      return banForCheat(cheatIdentity, "cheat: invalid replay");
-    }
-    const steps = validateReplaySteps(category, frames);
-    if (!steps.ok) {
-      return banForCheat(cheatIdentity, "cheat: invalid replay");
-    }
     setLastName(name);
     if (!configured()) {
       if (options.replay && options.replay.frames) {

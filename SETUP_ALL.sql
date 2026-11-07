@@ -287,10 +287,7 @@ create policy "Insert cheat auto bans" on public.player_bans
     and expires_at <= now() + interval '24 hours 5 minutes'
   );
 
--- Harden score / chat / presence inserts against banned identities (name + account).
--- Note: true client IP is not visible to PostgREST RLS from the browser anon key;
--- IP bans are enforced by the client (ipify) + this table's `ip` column. For server
--- IP enforcement, add an Edge Function that reads request headers.
+-- Bans / anti-cheat removed: inserts no longer check player_is_banned.
 drop policy if exists "Insert speedrun_scores guests or accounts" on public.speedrun_scores;
 create policy "Insert speedrun_scores guests or accounts"
   on public.speedrun_scores for insert to anon, authenticated
@@ -302,7 +299,6 @@ create policy "Insert speedrun_scores guests or accounts"
     and time_ms > 0
     and char_length(player_name) between 3 and 12
     and ((user_id is null and is_account = false) or (user_id is not null))
-    and not public.player_is_banned(player_name, user_id, null, null)
   );
 
 drop policy if exists "Public insert chat_messages" on public.chat_messages;
@@ -313,23 +309,19 @@ create policy "Public insert chat_messages" on public.chat_messages for insert t
     and char_length(body) between 1 and 80
     and body !~* '<[[:space:]]*script'
     and body !~* 'javascript[[:space:]]*:'
-    and not public.player_is_banned(player_name, user_id, client_id, null)
   );
 
 drop policy if exists "Public insert players_online" on public.players_online;
 create policy "Public insert players_online" on public.players_online for insert to anon, authenticated
-  with check (not public.player_is_banned(username, user_id, client_id, null));
+  with check (true);
 drop policy if exists "Public update players_online" on public.players_online;
 create policy "Public update players_online" on public.players_online for update to anon, authenticated
   using (true)
-  with check (not public.player_is_banned(username, user_id, client_id, null));
+  with check (true);
 
 drop policy if exists "Public insert player_accounts" on public.player_accounts;
 create policy "Public insert player_accounts" on public.player_accounts for insert to anon, authenticated
-  with check (
-    char_length(username) between 3 and 12
-    and not public.player_is_banned(username, null, null, null)
-  );
+  with check (char_length(username) between 3 and 12);
 
 drop policy if exists "Public insert speedrun_replays" on public.speedrun_replays;
 create policy "Public insert speedrun_replays" on public.speedrun_replays for insert to anon, authenticated
@@ -341,8 +333,19 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
     and time_ms > 0
     and char_length(player_name) between 3 and 12
     and jsonb_typeof(frames) = 'array'
-    and not public.player_is_banned(player_name, null, null, null)
   );
+
+-- Drop cheat auto-ban insert policy; wipe any leftover bans.
+drop policy if exists "Insert cheat auto bans" on public.player_bans;
+delete from public.player_bans;
+
+-- Owner grant: Chinn MASK% 1:32.06
+insert into public.speedrun_scores (category, time_ms, player_name, is_account)
+select 'mask', 92060, 'CHINN', false
+where not exists (
+  select 1 from public.speedrun_scores
+  where category = 'mask' and time_ms = 92060 and upper(trim(player_name)) = 'CHINN'
+);
 
 -- ========== MASS UNBAN (run in SQL Editor — anon key cannot DELETE bans) ==========
 delete from public.player_bans;
