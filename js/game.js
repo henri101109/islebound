@@ -17432,6 +17432,25 @@
       /** Live observe API for the watchable auto-runner (no cheats). */
       observe() {
         const mid = playerCenter();
+        const harbor = harborNpc();
+        const held = heldStackId();
+        const lootNear = [];
+        for (let i = 0; i < loot.length; i++) {
+          const item = loot[i];
+          if (!item || item.taken || item.drift) continue;
+          if ((item.scene || "island") !== scene) continue;
+          if (item.id !== "crystal" && item.id !== "gem" && item.id !== "jelly" && item.id !== "shell") continue;
+          const d = Math.hypot(item.x + 4 - mid.x, item.y + 4 - mid.y);
+          if (d > 520) continue;
+          lootNear.push({ id: item.id, x: item.x, y: item.y, d: d | 0 });
+        }
+        lootNear.sort((a, b) => a.d - b.d);
+        if (lootNear.length > 12) lootNear.length = 12;
+        const inv = [];
+        for (let i = 0; i < inventory.length; i++) {
+          const s = inventory[i];
+          if (s && s.id) inv.push({ slot: i, id: s.id, count: s.count | 0 });
+        }
         return {
           uiScreen,
           playMode,
@@ -17442,6 +17461,7 @@
             ? Math.max(0, (performance.now() - srStartPerf) | 0)
             : srElapsed | 0,
           srFinalMs: srFinalMs | 0,
+          srBoughtBoat: !!srBoughtBoat,
           scene,
           fadeMode: fadeMode || 0,
           time,
@@ -17457,12 +17477,48 @@
             dead: player.dead || 0,
             coins: player.coins | 0,
             hp: player.hp | 0,
+            inWater: !!player.inWater,
+            submerged: player.submerged || 0,
           },
+          held: held || null,
+          heldSlot: heldSlot | 0,
+          inventory: inv,
+          lootNear,
           aboardKind: aboardKind || null,
           pondBoat: pondBoat
             ? { x: pondBoat.x, y: pondBoat.y, w: pondBoat.w, h: pondBoat.h, cx: pondBoat.x + pondBoat.w / 2, cy: pondBoat.y + pondBoat.h / 2 }
             : null,
           pondFishReady: !!pondFishReady,
+          shopDoor: shopDoor ? { x: shopDoor.x, y: shopDoor.y, w: shopDoor.w, h: shopDoor.h } : null,
+          shopExit: shopExit ? { x: shopExit.x, y: shopExit.y, w: shopExit.w, h: shopExit.h } : null,
+          shopTrade: {
+            phase: shopTrade.phase || "idle",
+            t: shopTrade.t || 0,
+            id: shopTrade.id || null,
+            value: shopTrade.value | 0,
+            sales: shopSales.length | 0,
+          },
+          harbor: harbor
+            ? { x: harbor.x, y: harbor.y, cx: harbor.x + 3, cy: harbor.y + 2 }
+            : null,
+          boatBerth: boatBerth
+            ? { x: boatBerth.x, y: boatBerth.y, w: boatBerth.w, h: boatBerth.h, cx: boatBerth.x + boatBerth.w / 2, cy: boatBerth.y + boatBerth.h / 2 }
+            : null,
+          ownedBoat: ownedBoat
+            ? {
+                x: ownedBoat.x,
+                y: ownedBoat.y,
+                w: ownedBoat.w || 22,
+                h: ownedBoat.h || 10,
+                cx: ownedBoat.x + (ownedBoat.w || 22) / 2,
+                cy: ownedBoat.y + (ownedBoat.h || 10) / 2,
+                landed: !!ownedBoat.landed,
+                docked: !!ownedBoat.docked,
+              }
+            : null,
+          boatThrow: boatThrow
+            ? { t: boatThrow.t || 0, dur: boatThrow.dur || 0.95, x1: boatThrow.x1, y1: boatThrow.y1 }
+            : null,
           templeDoor: templeDoor ? { x: templeDoor.x, y: templeDoor.y, w: templeDoor.w, h: templeDoor.h } : null,
           templeExit: templeExit ? { x: templeExit.x, y: templeExit.y, w: templeExit.w, h: templeExit.h } : null,
           templePedestal: templePedestal
@@ -17500,6 +17556,28 @@
       },
       enter() {
         onEnter();
+      },
+      /** Shop sell / harbor buy (T). Edge-triggered helpers — call once per intended press. */
+      trade() {
+        tryTradeKey();
+      },
+      holdSlot(slot) {
+        const n = inventory.length | 0;
+        if (n <= 0) return false;
+        heldSlot = Math.max(0, Math.min(n - 1, slot | 0));
+        cosSelect = null;
+        return true;
+      },
+      holdItem(id) {
+        if (!id) return false;
+        for (let i = 0; i < inventory.length; i++) {
+          if (inventory[i] && inventory[i].id === id) {
+            heldSlot = i;
+            cosSelect = null;
+            return true;
+          }
+        }
+        return false;
       },
       resetRun() {
         if (playMode === "speedrun" && srCat) {
