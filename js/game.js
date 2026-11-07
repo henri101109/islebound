@@ -15047,13 +15047,30 @@
       const lab = type === "skin" ? skinLabel(id) : cosmeticLabel(id);
       drawPixTextSm(lab, x + ((w / 2) | 0), y + h + 2, eq ? "#e8c44a" : "#8a6a42", "center");
     }
-    if (opts && opts.hit === false) return;
+    // Clip hit box to the browse grid so scrolled / bottom-row skins stay clickable
+    // (old logic required the full cell inside the viewport and blocked quest skins).
+    let hx = x | 0;
+    let hy = y | 0;
+    let hw = w | 0;
+    let hh = (h + (showLabel ? 8 : 0)) | 0;
+    if (lockerGridBounds) {
+      const g = lockerGridBounds;
+      const x0 = Math.max(hx, g.x);
+      const y0 = Math.max(hy, g.y);
+      const x1 = Math.min(hx + hw, g.x + g.w);
+      const y1 = Math.min(hy + hh, g.y + g.h);
+      if (x1 <= x0 || y1 <= y0) return;
+      hx = x0;
+      hy = y0;
+      hw = x1 - x0;
+      hh = y1 - y0;
+    }
     addMenuHit(
       "lockitem:" + type + ":" + id,
-      x,
-      y,
-      w,
-      h + (showLabel ? 8 : 0),
+      hx,
+      hy,
+      hw,
+      hh,
       () => {
         if (type === "skin") equipSkin(id);
         else {
@@ -15064,7 +15081,7 @@
       },
       { hover: true }
     );
-    addLockerHit("item:" + type + ":" + id, x, y, w, h, {
+    addLockerHit("item:" + type + ":" + id, hx, hy, hw, hh, {
       type,
       id,
       kind: type === "skin" ? "skin" : cosmeticKindOf(id),
@@ -15291,13 +15308,10 @@
           const ix = panelX + gridPad + col * (cell + cellGap);
           const iy = gridTop - lockerScrollCosmetics + row * rowPitch;
           if (iy + cell + labelH < gridTop || iy > gridBot) continue;
-          const hit =
-            iy >= gridTop && iy + cell + (labelH ? 8 : 0) <= gridBot;
           drawLockerStripItem(ix, iy, cosList[i], "cosmetic", {
             w: cell,
             h: cell,
             label: true,
-            hit,
           });
         }
         ctx.restore();
@@ -15349,14 +15363,12 @@
           const row = (i / skinCols) | 0;
           const iy = gridTop - lockerScrollSkins + row * rowPitch;
           if (iy + skinCell + labelH < gridTop || iy > gridBot) continue;
-          const hit =
-            iy >= gridTop && iy + skinCell + 8 <= gridBot;
           drawLockerStripItem(
             skinPadX + col * (skinCell + skinGapX),
             iy,
             skinList[i],
             "skin",
-            { w: skinCell, h: skinCell, label: true, hit }
+            { w: skinCell, h: skinCell, label: true }
           );
         }
         ctx.restore();
