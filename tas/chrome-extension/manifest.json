@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Islebound TAS",
+  "version": "1.0.0",
+  "description": "Tool-assisted play for Islebound: frame pause/step, input tape, RNG observation. No cheats.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Islebound TAS",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://127.0.0.1/*",
+        "https://localhost/*",
+        "file:///*",
+        "*://*.github.io/*"
+      ],
+      "js": ["inject-boot.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://127.0.0.1/*",
+        "https://localhost/*",
+        "file:///*",
+        "*://*.github.io/*"
+      ],
+      "js": ["inject-ui.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["page/tas-boot.js", "page/tas.js"],
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://127.0.0.1/*",
+        "https://localhost/*",
+        "file:///*",
+        "*://*.github.io/*"
+      ]
+    }
+  ]
+}
