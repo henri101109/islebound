@@ -48,3 +48,7 @@ create policy "Insert own weekly_spins" on public.weekly_spins
 drop policy if exists "Update own weekly_spins" on public.weekly_spins;
 create policy "Update own weekly_spins" on public.weekly_spins
   for update to anon, authenticated using (true) with check (true);
+
+-- Account-bound locker blob (owned cosmetics/skins + equipped loadout).
+alter table public.profiles add column if not exists locker jsonb;
+alter table public.profiles add column if not exists updated_at timestamptz default now();

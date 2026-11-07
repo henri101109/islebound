@@ -2767,22 +2767,46 @@
   }
 
   function saveLockerProfile() {
+    const snap = {
+      face: cosmetics.face,
+      back: cosmetics.back,
+      skin: playerSkin,
+      ownedCosmetics: ownedCosmetics.slice(),
+      ownedSkins: ownedSkins.slice(),
+      skinsGrantedLegacy: !!skinsGrantedLegacy,
+      questMaskRuns: questMaskRuns | 0,
+      questDone: questDone || {},
+      questClaimed: questClaimed || {},
+    };
     try {
-      localStorage.setItem(
-        LOCKER_PROFILE_KEY,
-        JSON.stringify({
-          face: cosmetics.face,
-          back: cosmetics.back,
-          skin: playerSkin,
-          ownedCosmetics: ownedCosmetics.slice(),
-          ownedSkins: ownedSkins.slice(),
-          skinsGrantedLegacy: !!skinsGrantedLegacy,
-          questMaskRuns: questMaskRuns | 0,
-          questDone: questDone || {},
-          questClaimed: questClaimed || {},
-        })
-      );
+      localStorage.setItem(LOCKER_PROFILE_KEY, JSON.stringify(snap));
     } catch (e) {}
+    // Account sync so cosmetics survive browser clears / other devices.
+    const api = lbApi();
+    if (api && api.isSignedIn && api.isSignedIn() && api.syncLockerSoon) {
+      api.syncLockerSoon(snap);
+    }
+  }
+
+  /** Merge a cloud locker blob into local ownership (union; keep better progress). */
+  function mergeCloudLocker(locker) {
+    if (!locker || typeof locker !== "object") return false;
+    applyLockerSnapshot(locker);
+    saveLockerProfile();
+    return true;
+  }
+
+  function pullCloudLocker() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return;
+    const cached = api.getCachedCloudLocker && api.getCachedCloudLocker();
+    if (cached) mergeCloudLocker(cached);
+    if (!api.fetchLocker) return;
+    api.fetchLocker().then((res) => {
+      if (res && res.locker) mergeCloudLocker(res.locker);
+      // Push local (now merged) up so cloud catches any local-only unlocks.
+      saveLockerProfile();
+    });
   }
 
   function grantCosmetic(id) {
@@ -17426,8 +17450,9 @@
     saveGame();
     saveLockerProfile();
     const api = lbApi();
-    if (api && api.isSignedIn && api.isSignedIn() && api.syncNmStatsToProfile) {
-      api.syncNmStatsToProfile();
+    if (api && api.isSignedIn && api.isSignedIn()) {
+      if (api.syncNmStatsToProfile) api.syncNmStatsToProfile();
+      if (api.syncLocker) api.syncLocker(lockerSnapshot());
     }
   });
 
@@ -17471,11 +17496,13 @@
           if (api.isSignedIn && api.isSignedIn()) {
             srName = api.displayName() || srName;
             guestNameLocked = true;
+            pullCloudLocker();
           } else {
             guestNameLocked = false;
           }
         });
       }
+      if (api.isSignedIn && api.isSignedIn()) pullCloudLocker();
       if (api.onChatUpdate) {
         api.onChatUpdate(() => {
           try {

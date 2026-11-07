@@ -236,6 +236,9 @@
   let weeklySpinsAvailable = true;
   const WEEKLY_SPINS = "weekly_spins";
   const WEEKLY_SPIN_KEY = "islebound-weekly-spins";
+  let lockerCloudAvailable = true;
+  let lockerSyncTimer = null;
+  let lastLockerCloud = null; // last locker blob pulled from profiles.locker
   let chatAvailable = true; // false if table missing / hard fail
   let chatMessages = []; // newest last
   let chatPollTimer = null;
@@ -1845,6 +1848,7 @@
 
   function profileFromRow(row) {
     if (!row) return null;
+    if (row.locker && typeof row.locker === "object") lastLockerCloud = row.locker;
     return {
       id: row.id,
       display_name: String(row.display_name || "").toUpperCase(),
@@ -1859,7 +1863,89 @@
       nm_chests: row.nm_chests | 0,
       nm_level_high: row.nm_level_high | 0 || 1,
       created_at: row.created_at,
+      locker: row.locker && typeof row.locker === "object" ? row.locker : null,
     };
+  }
+
+  function lockerColumnMissing(detail) {
+    const msg = String(detail || "").toLowerCase();
+    return msg.indexOf("locker") >= 0 || msg.indexOf("pgrst204") >= 0;
+  }
+
+  /** Pull account locker (cosmetics/skins). Soft-fails if column/table missing. */
+  async function fetchLocker() {
+    if (!session || !session.user || !configured() || !lockerCloudAvailable) {
+      return { ok: false, locker: lastLockerCloud };
+    }
+    try {
+      const url =
+        restBase() +
+        "/" +
+        PROFILES +
+        "?id=eq." +
+        encodeURIComponent(session.user.id) +
+        "&select=locker&limit=1";
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String((err && (err.message || err.code)) || res.status);
+        if (lockerColumnMissing(detail)) lockerCloudAvailable = false;
+        return { ok: false, locker: lastLockerCloud, error: detail };
+      }
+      const rows = await res.json();
+      const locker = rows && rows[0] && rows[0].locker && typeof rows[0].locker === "object" ? rows[0].locker : null;
+      if (locker) lastLockerCloud = locker;
+      return { ok: true, locker: locker || lastLockerCloud };
+    } catch (e) {
+      return { ok: false, locker: lastLockerCloud, error: "network" };
+    }
+  }
+
+  /** Push locker blob to profiles.locker (debounced via syncLockerSoon). */
+  async function syncLocker(locker) {
+    if (!session || !session.user || !configured() || !lockerCloudAvailable) {
+      return { ok: false, local: true };
+    }
+    if (!locker || typeof locker !== "object") return { ok: false, error: "bad locker" };
+    const body = {
+      locker: locker,
+      updated_at: new Date().toISOString(),
+    };
+    try {
+      const res = await fetch(restBase() + "/" + PROFILES + "?id=eq." + encodeURIComponent(session.user.id), {
+        method: "PATCH",
+        headers: anonHeaders("return=minimal"),
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String((err && (err.message || err.code)) || res.status);
+        if (lockerColumnMissing(detail)) lockerCloudAvailable = false;
+        return { ok: false, error: detail, local: true };
+      }
+      lastLockerCloud = locker;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: "network", local: true };
+    }
+  }
+
+  function syncLockerSoon(locker) {
+    if (lockerSyncTimer) clearTimeout(lockerSyncTimer);
+    lockerSyncTimer = setTimeout(() => {
+      lockerSyncTimer = null;
+      syncLocker(locker).catch(() => {});
+    }, 600);
+  }
+
+  function getCachedCloudLocker() {
+    return lastLockerCloud;
   }
 
   async function ensureProfile(preferredName) {
@@ -3406,6 +3492,10 @@
     getWeeklySpins,
     getWeeklySpinsLocal,
     recordWeeklySpin,
+    fetchLocker,
+    syncLocker,
+    syncLockerSoon,
+    getCachedCloudLocker,
     startPresence,
     stopPresence,
     tickPresence,
