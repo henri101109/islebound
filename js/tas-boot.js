@@ -78,12 +78,23 @@
   Math.random = random;
 
   const FRAME_DT_MS = 1000 / 60;
+  const TIME_SCALE_MIN = 0.05;
+  const TIME_SCALE_MAX = 2;
+  const TIME_SCALE_PRESETS = [0.25, 0.5, 1];
   let paused = false;
   let stepRequests = 0;
   let virtualNow = 0;
   let clockStarted = false;
   let resyncLast = false;
   let frameIndex = 0;
+  /** Perceived sim rate vs wall clock (1 = normal). Scales virtual dt while running. */
+  let timeScale = 1;
+
+  function clampTimeScale(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return timeScale;
+    return Math.min(TIME_SCALE_MAX, Math.max(TIME_SCALE_MIN, n));
+  }
   let recordMode = false;
   let playMode = false;
   let playCursor = 0;
@@ -173,6 +184,39 @@
     getFrameIndex: () => frameIndex,
     getVirtualNow: () => virtualNow,
 
+    TIME_SCALE_MIN,
+    TIME_SCALE_MAX,
+    TIME_SCALE_PRESETS: TIME_SCALE_PRESETS.slice(),
+    getTimeScale: () => timeScale,
+    setTimeScale(v) {
+      timeScale = clampTimeScale(v);
+      return timeScale;
+    },
+    /** Nudge toward slower (−1) or faster (+1), snapping to presets then fine steps. */
+    nudgeTimeScale(dir) {
+      const d = dir < 0 ? -1 : 1;
+      const presets = TIME_SCALE_PRESETS;
+      const eps = 0.001;
+      if (d < 0) {
+        for (let i = presets.length - 1; i >= 0; i--) {
+          if (presets[i] < timeScale - eps) {
+            timeScale = presets[i];
+            return timeScale;
+          }
+        }
+        timeScale = clampTimeScale(timeScale - 0.05);
+      } else {
+        for (let i = 0; i < presets.length; i++) {
+          if (presets[i] > timeScale + eps) {
+            timeScale = presets[i];
+            return timeScale;
+          }
+        }
+        timeScale = clampTimeScale(timeScale + 0.05);
+      }
+      return timeScale;
+    },
+
     isRecording: () => recordMode,
     isPlaying: () => playMode,
     getTape: () => tape.slice(),
@@ -240,33 +284,37 @@
 
     /**
      * Called at the top of the game loop.
-     * @returns {{ run: boolean, now: number, drawOnly: boolean }}
+     * Running: advance virtual clock by FRAME_DT_MS * timeScale (slow-mo / speed-up).
+     * Step while paused: always one full 60 Hz tick so frame-advance stays precise.
+     * @returns {{ run: boolean, now: number, drawOnly: boolean, resyncLast?: boolean, advanceMs?: number }}
      */
     decideFrame(realNow) {
       lastDrawn = false;
-      const wrap = (run, drawOnly) => {
-        const out = { run, now: virtualNow, drawOnly, resyncLast };
+      const wrap = (run, drawOnly, advanceMs) => {
+        const out = { run, now: virtualNow, drawOnly, resyncLast, advanceMs: advanceMs || 0 };
         resyncLast = false;
         return out;
       };
       if (!clockStarted) {
         virtualNow = realNow;
         clockStarted = true;
-        // First tick after bind: advance one fixed frame so dt stays ~1/60.
-        virtualNow += FRAME_DT_MS;
+        const adv = FRAME_DT_MS * timeScale;
+        virtualNow += adv;
         resyncLast = true;
-        return wrap(true, false);
+        return wrap(true, false, adv);
       }
       if (!paused) {
-        virtualNow += FRAME_DT_MS;
-        return wrap(true, false);
+        const adv = FRAME_DT_MS * timeScale;
+        virtualNow += adv;
+        return wrap(true, false, adv);
       }
       if (stepRequests > 0) {
         stepRequests--;
+        // Full tick — independent of slow-mo so Step stays one discrete frame.
         virtualNow += FRAME_DT_MS;
-        return wrap(true, false);
+        return wrap(true, false, FRAME_DT_MS);
       }
-      return wrap(false, true);
+      return wrap(false, true, 0);
     },
 
     beforeTick() {
@@ -311,6 +359,7 @@
         state: state >>> 0,
         frameIndex,
         virtualNow,
+        timeScale,
         game: gameApi.snapshot(),
       };
     },
@@ -319,6 +368,7 @@
       tas.rng.restore(snap.seed0 >>> 0, snap.calls | 0);
       frameIndex = snap.frameIndex | 0;
       virtualNow = snap.virtualNow || performance.now();
+      if (snap.timeScale != null) timeScale = clampTimeScale(snap.timeScale);
       clockStarted = true;
       resyncLast = true;
       gameApi.restore(snap.game);

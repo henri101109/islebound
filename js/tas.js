@@ -21,9 +21,18 @@
   const MEGA_BAIT = { shark: 0.5, mini_shark: 0.25 };
 
   let panelOpen = true;
-  let statusLine = "TAS ready — ` pause · ] step · [ panel";
+  let statusLine = "TAS ready — ` pause · ] step · ,/. slow-mo · [ panel";
   let savestates = [null, null, null]; // slots 1–3
   let fixedDtWarn = false;
+
+  function formatScale(s) {
+    const n = Number(s);
+    if (!Number.isFinite(n)) return "1×";
+    if (Math.abs(n - 1) < 0.001) return "1×";
+    if (Math.abs(n - 0.5) < 0.001) return "0.5×";
+    if (Math.abs(n - 0.25) < 0.001) return "0.25×";
+    return (Math.round(n * 100) / 100) + "×";
+  }
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -104,8 +113,53 @@
   const help = el("div", {
     style: { marginTop: "8px", opacity: "0.75", fontSize: "11px" },
     text:
-      "Hotkeys: ` pause/resume · ] frame step · [ toggle panel · F6/F7/F8 save/load/slot+ · F9 record · F10 play · F11 export tape. No cheats — RNG via seed/savestate only.",
+      "Hotkeys: ` pause · ] step · , slower · . faster · [ panel · F6/F7 save/load · F9 rec · F10 play · F11 export. Slow-mo scales sim dt (not cheats).",
   });
+
+  const speedRow = el("div", {
+    style: {
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "center",
+      gap: "6px",
+      marginTop: "8px",
+    },
+  });
+  const speedLabel = el("span", {
+    style: { color: "#9fd4a8", minWidth: "72px" },
+    text: "Speed 1×",
+  });
+  const speedSlider = el("input", {
+    type: "range",
+    min: "5",
+    max: "200",
+    step: "5",
+    value: "100",
+    title: "Sim time scale (slow motion ↔ normal)",
+    style: { flex: "1", minWidth: "100px", cursor: "pointer", pointerEvents: "auto" },
+  });
+  speedSlider.addEventListener("input", () => {
+    const v = (Number(speedSlider.value) || 100) / 100;
+    tas.setTimeScale(v);
+    statusLine = "Time scale " + formatScale(tas.getTimeScale());
+    refresh();
+  });
+  speedRow.append(
+    speedLabel,
+    speedSlider,
+    btn("0.25×", () => {
+      tas.setTimeScale(0.25);
+      statusLine = "Slow-mo 0.25×";
+    }),
+    btn("0.5×", () => {
+      tas.setTimeScale(0.5);
+      statusLine = "Slow-mo 0.5×";
+    }),
+    btn("1×", () => {
+      tas.setTimeScale(1);
+      statusLine = "Speed 1×";
+    })
+  );
 
   function btn(label, onClick, title) {
     return el(
@@ -220,6 +274,7 @@
       text: "ISLEBOUND TAS",
     }),
     live,
+    speedRow,
     btns,
     rngBox,
     help
@@ -289,8 +344,11 @@
   }
 
   function refresh() {
+    const scale = tas.getTimeScale ? tas.getTimeScale() : 1;
     badge.textContent =
       (tas.isPaused() ? "⏸ PAUSED" : "▶ RUN") +
+      "  " +
+      formatScale(scale) +
       "  f" +
       tas.getFrameIndex() +
       (tas.isRecording() ? "  ●REC" : "") +
@@ -298,6 +356,10 @@
       (panelOpen ? "" : "  ([] panel)");
 
     panel.style.display = panelOpen ? "block" : "none";
+    if (speedLabel) speedLabel.textContent = "Speed " + formatScale(scale);
+    if (speedSlider && document.activeElement !== speedSlider) {
+      speedSlider.value = String(Math.round(scale * 100));
+    }
 
     const g = tas.game && tas.game();
     const ctx = g && g.getCatchContext ? g.getCatchContext() : null;
@@ -330,7 +392,9 @@
       }),
       el("div", {
         text:
-          "tape=" +
+          "scale=" +
+          formatScale(scale) +
+          "  tape=" +
           tas.tapeLength() +
           "  slots=" +
           savestates.map((s, i) => (s ? i + 1 : "·")).join(""),
@@ -385,6 +449,22 @@
         e.stopImmediatePropagation();
         tas.requestStep(1);
         statusLine = "Step +1";
+        refresh();
+        return;
+      }
+      if (k === "," || k === "<") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const s = tas.nudgeTimeScale(-1);
+        statusLine = "Time scale " + formatScale(s);
+        refresh();
+        return;
+      }
+      if (k === "." || k === ">") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const s = tas.nudgeTimeScale(1);
+        statusLine = "Time scale " + formatScale(s);
         refresh();
         return;
       }
@@ -471,7 +551,7 @@
   if (!fixedDtWarn) {
     fixedDtWarn = true;
     console.info(
-      "[Islebound TAS] Active. Seeded Math.random + fixed 60Hz ticks. Use the Chrome extension (or ?tas=1 fallback)."
+      "[Islebound TAS] Active. Seeded Math.random + scaled 60Hz virtual clock (slow-mo via ,/. ). Extension or ?tas=1."
     );
   }
 })();
