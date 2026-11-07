@@ -657,9 +657,10 @@
     among_us_red: { id: "among_us_red", label: "CREW" },
     homer: { id: "homer", label: "HOMER" },
     indiana_jones: { id: "indiana_jones", label: "INDY" },
+    flash: { id: "flash", label: "FLASH" },
   };
   const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
-  const QUEST_SKIN_IDS = ["usain_bolt", "among_us_red", "homer", "indiana_jones"];
+  const QUEST_SKIN_IDS = ["usain_bolt", "among_us_red", "homer", "indiana_jones", "flash"];
   const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS);
   /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
   const SKIN_LOCKED_BACK = { jakob: "norway_flag", usain_bolt: "jamaica_flag" };
@@ -703,6 +704,14 @@
       rewardId: "indiana_jones",
       rewardLabel: "INDY SKIN",
       progress: () => Math.min(5, questMaskRuns | 0) + "/5",
+    },
+    {
+      id: "flash",
+      title: "SUB 7.2 BOAT",
+      desc: "FINISH BOAT% UNDER 7.2S",
+      rewardKind: "skin",
+      rewardId: "flash",
+      rewardLabel: "FLASH SKIN",
     },
     {
       id: "jobapp",
@@ -2964,6 +2973,7 @@
     if (cat === "death" && t > 0 && t < 9580) markQuestDone("bolt");
     if (cat === "blowfish" && t > 0 && t < 45000) markQuestDone("crew");
     if (cat === "megalodon" && t > 0 && t < 90000) markQuestDone("homer");
+    if (cat === "boat" && t > 0 && t < 7200) markQuestDone("flash");
     if (cat === "mask") {
       questMaskRuns = (questMaskRuns | 0) + 1;
       saveLockerProfile();
@@ -10679,6 +10689,7 @@
     drawPlayerBody(playerSkin, step, player.hurt > 0, !!player.aboard);
     drawCapeCollar(backWear);
     if (playerSkin === "beta_alien") drawAlienPortalWisps(0, -8);
+    if (playerSkin === "flash") drawFlashElectricity(0, -8);
     if (player.inWater && !player.aboard) {
       px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
     }
@@ -10884,6 +10895,38 @@
       }
       return;
     }
+    if (s === "flash") {
+      // Classic silhouette — all red suit + yellow trim (Speed Force)
+      const shirt = hurt ? "#8a2028" : "#e03840";
+      const vest = hurt ? "#6a1820" : "#c02028";
+      const trim = "#f0d040";
+      px(-3, -13, 6, 2, "#c43a28");
+      px(-2, -14, 4, 1, "#e04a32");
+      px(-2, -12, 5, 1, "#8a2018");
+      px(-2, -11, 5, 5, "#e8c39a");
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#d4a07a");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, vest);
+      px(-3, -6, 6, 2, shirt);
+      px(-2, -4, 4, 3, vest);
+      px(-1, -3, 2, 2, trim);
+      px(-2, -1, 4, 1, "#8a1018");
+      px(-5, -5, 2, 4, shirt);
+      px(3, -5, 2, 4, vest);
+      px(-5, -2, 2, 2, "#e8c39a");
+      px(3, -2, 2, 2, "#e8c39a");
+      if (seated) {
+        px(-3, 1, 2, 1, vest);
+        px(0, 1, 2, 1, vest);
+      } else {
+        px(-3, 1, 2, 3 + step, vest);
+        px(0, 1, 2, 3 - step, vest);
+        px(-3, 3 + step, 2, 1, trim);
+        px(0, 3 - step, 2, 1, trim);
+      }
+      return;
+    }
     // classic
     const shirt = hurt ? "#8a3a3a" : "#b8c4d4";
     const vest = hurt ? "#6a3038" : "#3a6a9a";
@@ -10918,6 +10961,37 @@
       const x = (ox + Math.cos(a) * r) | 0;
       const y = (oy + Math.sin(a) * r * 0.7) | 0;
       px(x, y, 1, 1, i & 1 ? "#c878ff" : "#6ad4ff");
+    }
+  }
+
+  /** Lightning forks zapping out from the Flash skin. */
+  function drawFlashElectricity(ox, oy) {
+    const cx = ox | 0;
+    const cy = (oy - 5) | 0;
+    for (let i = 0; i < 7; i++) {
+      const flicker = ((time * 18 + i * 3.1) | 0);
+      if ((flicker + i) % 5 === 0) continue;
+      const a = time * 5.5 + i * ((Math.PI * 2) / 7) + Math.sin(time * 9 + i) * 0.35;
+      let x = cx;
+      let y = cy;
+      const segs = 3 + (i % 2);
+      const reach = 7 + ((Math.sin(time * 14 + i * 2) * 3) | 0);
+      for (let s = 0; s < segs; s++) {
+        const u = (s + 1) / segs;
+        const jag = Math.sin(time * 22 + i * 4 + s * 5) * 2.2;
+        const nx = (cx + Math.cos(a) * reach * u + Math.cos(a + 1.2) * jag) | 0;
+        const ny = (cy + Math.sin(a) * reach * u * 0.9 + Math.sin(a + 0.8) * jag) | 0;
+        const col =
+          s === segs - 1 ? "#ffffff" : i & 1 ? "#7ec8ff" : "#ffe86a";
+        px(nx, ny, 1, 1, col);
+        if (s > 0) px(((x + nx) / 2) | 0, ((y + ny) / 2) | 0, 1, 1, "#a8e0ff");
+        // Small fork off mid-bolt
+        if (s === 1 && ((flicker + i) & 3) === 0) {
+          px(nx + ((i & 1) ? 1 : -1), ny - 1, 1, 1, "#ffe86a");
+        }
+        x = nx;
+        y = ny;
+      }
     }
   }
 
@@ -13259,6 +13333,7 @@
     drawPlayerBody(skin || "classic", 0, false, false);
     drawCapeCollar(back);
     if (skin === "beta_alien") drawAlienPortalWisps(0, -8);
+    if (skin === "flash") drawFlashElectricity(0, -8);
     ink.restore();
     ink = prevInk;
     cosmetics.face = prevFace;
@@ -14925,6 +15000,7 @@
     drawPlayerBody(skin, 0, false, false);
     drawCapeCollar(back);
     if (skin === "beta_alien") drawAlienPortalWisps(0, -8);
+    if (skin === "flash") drawFlashElectricity(0, -8);
     ink.restore();
     cosmetics.face = prevFace;
     cosmetics.back = prevBack;
