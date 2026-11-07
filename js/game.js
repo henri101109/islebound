@@ -16765,9 +16765,30 @@
 
   let last = performance.now();
   function loop(now) {
+    const tas = typeof window !== "undefined" ? window.__IsleboundTAS : null;
+    if (tas && tas.enabled && typeof tas.decideFrame === "function") {
+      const decision = tas.decideFrame(now);
+      if (!decision.run) {
+        // Paused: keep rendering so the overlay stays live; do not advance sim.
+        if (decision.drawOnly) {
+          time = (decision.now || now) / 1000;
+          draw(time);
+          if (typeof tas.markDrawn === "function") tas.markDrawn();
+        }
+        requestAnimationFrame(loop);
+        return;
+      }
+      now = decision.now;
+      if (decision.resyncLast) {
+        const adv =
+          decision.advanceMs > 0 ? decision.advanceMs : tas.FRAME_DT_MS || 1000 / 60;
+        last = now - adv;
+      }
+    }
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     time = now / 1000;
+    if (tas && tas.enabled && typeof tas.beforeTick === "function") tas.beforeTick();
     const zoomTarget = zoomGoal();
     const punch = Math.abs(zoomTarget - zoom) > 0.04 || isIndoor();
     zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * (punch ? 14 : 5.2)));
@@ -16778,6 +16799,7 @@
       updateReplay(dt);
       updateOcean();
       draw(time);
+      if (tas && tas.enabled && typeof tas.afterTick === "function") tas.afterTick();
       requestAnimationFrame(loop);
       return;
     }
@@ -16851,6 +16873,7 @@
       saveAcc = 0;
       saveGame();
     }
+    if (tas && tas.enabled && typeof tas.afterTick === "function") tas.afterTick();
     requestAnimationFrame(loop);
   }
 
@@ -17363,5 +17386,188 @@
       }
     }
   }
+  // TAS bind — only when ?tas=1 boot installed a live controller. No cheats; observe + control time/input/RNG.
+  if (typeof window !== "undefined" && window.__IsleboundTAS && window.__IsleboundTAS.enabled) {
+    function tasCloneSlots(list) {
+      const out = [];
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        out.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
+      }
+      return out;
+    }
+    function tasApplySlots(target, packed) {
+      if (!Array.isArray(packed)) return;
+      for (let i = 0; i < target.length; i++) {
+        const s = packed[i];
+        target[i] = s && s.id && ITEM_DEFS[s.id] ? { id: s.id, count: Math.max(1, s.count | 0) } : null;
+      }
+    }
+    window.__IsleboundTAS.bindGame({
+      keys,
+      getCatchContext() {
+        const pond = player.aboard && aboardKind === "dinghy";
+        const canCast =
+          scene === "island" &&
+          !!player.aboard &&
+          !boatThrow &&
+          rod.phase === "idle" &&
+          !pickupAnims.length &&
+          player.dead <= 0 &&
+          boatIsStill() &&
+          (pond ? !!(pondFishReady && pondBoat) : !!ownedBoat);
+        return {
+          canCast,
+          pond,
+          held: heldStackId(),
+          band: fishBand(),
+          dockTiles: dockDistTiles(),
+          scene,
+          rodPhase: rod.phase,
+          catchId: rod.catchId || null,
+          aboard: !!player.aboard,
+          coins: player.coins | 0,
+        };
+      },
+      snapshot() {
+        return {
+          scene,
+          heldSlot,
+          cloakOn: !!cloakOn,
+          inventory: tasCloneSlots(inventory),
+          satchel: tasCloneSlots(satchel),
+          player: {
+            x: player.x,
+            y: player.y,
+            facing: player.facing,
+            aboard: !!player.aboard,
+            coins: player.coins | 0,
+            xp: player.xp | 0,
+            level: player.level | 0,
+            hp: player.hp | 0,
+            dead: player.dead || 0,
+            submerged: player.submerged || 0,
+            vx: player.vx || 0,
+            vy: player.vy || 0,
+          },
+          aboardKind: aboardKind || null,
+          ownedBoat: ownedBoat
+            ? {
+                x: ownedBoat.x,
+                y: ownedBoat.y,
+                face: ownedBoat.face || 1,
+                landed: !!ownedBoat.landed,
+                vx: ownedBoat.vx || 0,
+                vy: ownedBoat.vy || 0,
+              }
+            : null,
+          pondBoat: pondBoat
+            ? {
+                x: pondBoat.x,
+                y: pondBoat.y,
+                face: pondBoat.face || 1,
+                vx: pondBoat.vx || 0,
+                vy: pondBoat.vy || 0,
+              }
+            : null,
+          rod: {
+            phase: rod.phase,
+            t: rod.t || 0,
+            bit: !!rod.bit,
+            wait: rod.wait || 0,
+            face: rod.face || 1,
+            catchId: rod.catchId || null,
+            tugLeft: rod.tugLeft || 0,
+            tugDx: rod.tugDx || 0,
+            tugDy: rod.tugDy || 0,
+            tugCool: rod.tugCool || 0,
+          },
+          rodBaitId: rodBaitId || null,
+          templeMaskTaken: !!templeMaskTaken,
+          sunkenTaken: !!sunkenTaken,
+        };
+      },
+      restore(snap) {
+        if (!snap) return;
+        if (typeof snap.scene === "string") scene = snap.scene;
+        heldSlot = Math.max(0, Math.min(inventory.length - 1, snap.heldSlot | 0));
+        cloakOn = !!snap.cloakOn && ownsCloak();
+        tasApplySlots(inventory, snap.inventory);
+        tasApplySlots(satchel, snap.satchel);
+        if (snap.player) {
+          const p = snap.player;
+          if (typeof p.x === "number") player.x = p.x;
+          if (typeof p.y === "number") player.y = p.y;
+          if (p.facing === -1 || p.facing === 1) player.facing = p.facing;
+          player.aboard = !!p.aboard;
+          player.coins = Math.max(0, p.coins | 0);
+          player.xp = Math.max(0, p.xp | 0);
+          player.level = Math.max(1, p.level | 0);
+          player.hp = Math.max(0, Math.min(MAX_HP, p.hp | 0));
+          player.dead = p.dead || 0;
+          player.submerged = p.submerged || 0;
+          player.moving = false;
+        }
+        aboardKind = snap.aboardKind || (player.aboard ? aboardKind : null);
+        if (snap.ownedBoat) {
+          if (!ownedBoat) {
+            ownedBoat = {
+              x: snap.ownedBoat.x,
+              y: snap.ownedBoat.y,
+              w: 22,
+              h: 10,
+              vx: snap.ownedBoat.vx || 0,
+              vy: snap.ownedBoat.vy || 0,
+              tilt: 0,
+              phase: 0,
+              face: snap.ownedBoat.face === -1 ? -1 : 1,
+              kind: "skiff",
+              landed: snap.ownedBoat.landed !== false,
+            };
+          } else {
+            ownedBoat.x = snap.ownedBoat.x;
+            ownedBoat.y = snap.ownedBoat.y;
+            ownedBoat.face = snap.ownedBoat.face === -1 ? -1 : 1;
+            ownedBoat.landed = snap.ownedBoat.landed !== false;
+            ownedBoat.vx = snap.ownedBoat.vx || 0;
+            ownedBoat.vy = snap.ownedBoat.vy || 0;
+          }
+        } else {
+          ownedBoat = null;
+        }
+        if (snap.pondBoat && pondBoat) {
+          pondBoat.x = snap.pondBoat.x;
+          pondBoat.y = snap.pondBoat.y;
+          pondBoat.face = snap.pondBoat.face === -1 ? -1 : 1;
+          pondBoat.vx = snap.pondBoat.vx || 0;
+          pondBoat.vy = snap.pondBoat.vy || 0;
+        }
+        if (snap.rod) {
+          rod.phase = snap.rod.phase || "idle";
+          rod.t = snap.rod.t || 0;
+          rod.bit = !!snap.rod.bit;
+          rod.wait = snap.rod.wait || 0;
+          rod.face = snap.rod.face === -1 ? -1 : 1;
+          rod.catchId = snap.rod.catchId || null;
+          rod.tugLeft = snap.rod.tugLeft || 0;
+          rod.tugDx = snap.rod.tugDx || 0;
+          rod.tugDy = snap.rod.tugDy || 0;
+          rod.tugCool = snap.rod.tugCool || 0;
+        }
+        rodBaitId = snap.rodBaitId || null;
+        templeMaskTaken = !!snap.templeMaskTaken;
+        sunkenTaken = !!snap.sunkenTaken;
+        if (player.aboard) {
+          try {
+            seatPlayerOnBoat();
+          } catch (e) {}
+        }
+        camera.x = player.x + player.w / 2 - viewW / 2;
+        camera.y = player.y + player.h / 2 - viewH * 0.36;
+        clampCamera();
+      },
+    });
+  }
+
   requestAnimationFrame(loop);
 })();
