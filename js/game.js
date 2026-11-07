@@ -707,8 +707,8 @@
     },
     {
       id: "flash",
-      title: "SUB 7.2 BOAT",
-      desc: "FINISH BOAT% UNDER 7.2S",
+      title: "SUB 8 BOAT",
+      desc: "FINISH BOAT% UNDER 8S",
       rewardKind: "skin",
       rewardId: "flash",
       rewardLabel: "FLASH SKIN",
@@ -2973,7 +2973,7 @@
     if (cat === "death" && t > 0 && t < 9580) markQuestDone("bolt");
     if (cat === "blowfish" && t > 0 && t < 45000) markQuestDone("crew");
     if (cat === "megalodon" && t > 0 && t < 90000) markQuestDone("homer");
-    if (cat === "boat" && t > 0 && t < 7200) markQuestDone("flash");
+    if (cat === "boat" && t > 0 && t < 8000) markQuestDone("flash");
     if (cat === "mask") {
       questMaskRuns = (questMaskRuns | 0) + 1;
       saveLockerProfile();
