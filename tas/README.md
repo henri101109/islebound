@@ -92,6 +92,21 @@ While TAS is active, the sim uses a **60 Hz virtual clock**. **Time scale** mult
 | `js/tas-boot.js` / `js/tas.js` | Source copies (keep in sync) |
 | `js/game.js` | Loop gate + `bindGame` (TAS hooks) |
 
+## death% / boat%
+
+The TAS tooling works for every speedrun category (including death% and boat%). Category end conditions live in `js/game.js`:
+
+- **death%** — finish when you die and the death timer completes (`srCat === "death"`)
+- **boat%** — finish when the boat is bought and you are aboard (`checkBoatSpeedEnd`)
+
+Use pause/step, slow-mo, and input tapes to practice routes. There is **no** pre-baked automatic death% / boat% route bot in this package yet.
+
+## Gaps
+
+- **Route cords** for death% / boat% are not in the repo. Until cords (or an exported input tape) land, the extension is manual TAS tooling + tape record/playback — not a hands-off category bot.
+- A separate Blowfish%/Mask% auto-runner exists on branch `cursor/auto-runner-grind-8340` (`js/auto-runner.js`); it is not bundled in this extension.
+- Live GitHub Pages only gets the `game.js` TAS hooks after this branch merges (or when you run a local checkout of this branch).
+
 ## Fair play note
 
 Do not submit TAS / reseeded runs to public leaderboards as raw play. This tooling is for practice, routing, and RNG study.
