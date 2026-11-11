@@ -61,6 +61,17 @@
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
     sunken_chest: { name: "Sunken chest", max: 1, xp: 50 },
+    potion_red: { name: "Red potion", max: 8, xp: 4 },
+    potion_blue: { name: "Blue potion", max: 8, xp: 4 },
+    potion_gold: { name: "Gold potion", max: 4, xp: 8 },
+    potion_fury: { name: "Fury potion", max: 4, xp: 10 },
+    potion_warp: { name: "Warp potion", max: 4, xp: 8 },
+    potion_smoke: { name: "Smoke potion", max: 4, xp: 6 },
+    vein_gem: { name: "Vein gem", max: 24, xp: 22 },
+    mountain_heart: { name: "Heart of the Mountain", max: 8, xp: 100 },
+    key_bronze: { name: "Bronze key", max: 1, xp: 5 },
+    key_silver: { name: "Silver key", max: 1, xp: 8 },
+    key_gold: { name: "Gold key", max: 1, xp: 12 },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
@@ -79,8 +90,8 @@
   const SERPENT_COOLDOWN = 45;
   const SERPENT_SEGMENTS = 9;
   const SERPENT_SEG_SPACING = 6.2;
-  const TRADE_VALUE = { gem: 5, crystal: 25, jelly: 15 };
-  const GEM_TRADE = { gem: 5, crystal: 25 };
+  const TRADE_VALUE = { gem: 5, crystal: 25, jelly: 15, vein_gem: 18 };
+  const GEM_TRADE = { gem: 5, crystal: 25, vein_gem: 18 };
   const FISH_TRADE = {
     jelly: 20,
     cod: 10,
@@ -252,6 +263,9 @@
   let templeDoor = null;
   let templeExit = null;
   let templeIslandExit = null;
+  let vein = null;
+  let veinDoor = null;
+  let veinIslandExit = null;
   let hubExit = null;
   let subDoor = null;
   let subHull = null;
@@ -440,8 +454,30 @@
   let replayMeta = null;
   /** Brief fade-from-black when starting / switching spectate replay. */
   let replayCutT = 0;
-  const REPLAY_SCENE = { island: 0, shop: 1, fish: 2, cabin: 3, temple: 4, hub: 5, sub: 6, floor: 7, wreck: 8 };
-  const REPLAY_SCENE_INV = ["island", "shop", "fish", "cabin", "temple", "hub", "sub", "floor", "wreck"];
+  const REPLAY_SCENE = {
+    island: 0,
+    shop: 1,
+    fish: 2,
+    cabin: 3,
+    temple: 4,
+    hub: 5,
+    sub: 6,
+    floor: 7,
+    wreck: 8,
+    vein: 9,
+  };
+  const REPLAY_SCENE_INV = [
+    "island",
+    "shop",
+    "fish",
+    "cabin",
+    "temple",
+    "hub",
+    "sub",
+    "floor",
+    "wreck",
+    "vein",
+  ];
   const REPLAY_ROD = { idle: 0, wait: 1, reel: 2 };
   const REPLAY_ROD_INV = ["idle", "wait", "reel"];
   let authUser = "";
@@ -844,6 +880,14 @@
   let whatsNewFade = 1;
   let whatsNewHover = false;
   let whatsNewPauseElapsed = -1;
+  /**
+   * Mode-select lobby line — other online players behind the local mannequin
+   * (Fortnite-style). Refreshed every LOBBY_PRESENCE_MS from players_online.
+   */
+  const LOBBY_PRESENCE_MS = 1000;
+  let lobbyPresenceAt = 0;
+  let lobbyPeers = [];
+  let lobbyPeerTotal = 0;
   /** STATS board mode: "survival" | "speedrun". */
   let statsMode = "survival";
   /** Profiles browser state. */
@@ -971,7 +1015,8 @@
       scene === "hub" ||
       scene === "sub" ||
       scene === "floor" ||
-      scene === "wreck"
+      scene === "wreck" ||
+      scene === "vein"
     );
   }
 
@@ -983,6 +1028,7 @@
     if (scene === "sub") return SUB_W;
     if (scene === "floor") return FLOOR_W;
     if (scene === "wreck") return WRECK_W;
+    if (scene === "vein" && vein) return vein.VEIN_W;
     return SHOP_W;
   }
 
@@ -994,6 +1040,7 @@
     if (scene === "sub") return SUB_H;
     if (scene === "floor") return FLOOR_H;
     if (scene === "wreck") return WRECK_H;
+    if (scene === "vein" && vein) return vein.VEIN_H;
     return SHOP_H;
   }
 
@@ -1369,6 +1416,7 @@
     if (scene === "fish") return !!hitPad(px, py, fishSolids);
     if (scene === "cabin") return !!hitPad(px, py, cabinSolids);
     if (scene === "temple") return !!hitPad(px, py, templeSolids);
+    if (scene === "vein" && vein) return vein.solidsHit(px, py);
     if (scene === "hub") return !!hitPad(px, py, hubSolids);
     if (scene === "sub") return !!hitPad(px, py, subSolids);
     if (scene === "floor") return !!hitPad(px, py, floorSolids);
@@ -1396,6 +1444,7 @@
     if (scene === "temple") {
       return px >= 8 && py >= 10 && px < TEMPLE_W - 8 && py < TEMPLE_H - 6;
     }
+    if (scene === "vein" && vein) return vein.canStand(px, py);
     if (scene === "hub") {
       return px >= 10 && py >= 12 && px < HUB_W - 10 && py < HUB_H - 6;
     }
@@ -2769,14 +2818,22 @@
       srWasDead = true;
       player.dead -= dt;
       if (player.dead <= 0) {
-        player.x = spawnX;
-        player.y = spawnY;
+        if (scene === "vein" && vein) {
+          const cp = vein.getCheckpoint();
+          player.x = cp.x;
+          player.y = cp.y;
+          if (vein.lockCam) vein.lockCam();
+        } else {
+          player.x = spawnX;
+          player.y = spawnY;
+        }
         player.hp = MAX_HP;
         player.submerged = 0;
         player.drownTick = 0;
         player.hurt = 0;
         player.aboard = false;
         aboardKind = null;
+        if (scene === "vein") cloakOn = false;
         if (playMode === "speedrun" && srCat === "death" && srTiming && srWasDead && uiScreen !== "finish") {
           srWasDead = false;
           finishSpeedrun();
@@ -3872,6 +3929,10 @@
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return "PORTAL DORMANT";
     }
+    if (vein) {
+      const vp = vein.prompt();
+      if (vp) return vp;
+    }
     if (!nearestLoot || nearestLoot.id === "coin") return "";
     const def = ITEM_DEFS[nearestLoot.id];
     if (!def || canTake(nearestLoot.id) || canTakeSatchel(nearestLoot.id)) return "";
@@ -4391,6 +4452,10 @@
 
   function fireWandBolt() {
     if (player.dead > 0) return;
+    if (scene === "vein" && vein) {
+      vein.fireSpell();
+      return;
+    }
     if (wandCool > 0) return;
     wandCool = 0.48;
     const face = player.facing;
@@ -4429,7 +4494,7 @@
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       let hit = false;
-      if (serpent && serpent.phase === "breach" && serpent.hurt <= 0.28) {
+      if (!p.vein && serpent && serpent.phase === "breach" && serpent.hurt <= 0.28) {
         for (let s = 0; s < Math.min(3, serpent.segs.length); s++) {
           const seg = serpent.segs[s];
           if (Math.hypot(p.x - seg.x, p.y - seg.y) < 10) {
@@ -4439,7 +4504,11 @@
           }
         }
       }
-      if (hit || p.life <= 0) wandBolts.splice(i, 1);
+      if (hit) wandBolts.splice(i, 1);
+    }
+    if (scene === "vein" && vein) vein.updateBolts(dt);
+    for (let i = wandBolts.length - 1; i >= 0; i--) {
+      if (wandBolts[i].life <= 0) wandBolts.splice(i, 1);
     }
   }
 
@@ -4486,6 +4555,14 @@
       const x = (p.x - cpos.x) | 0;
       const y = (p.y - cpos.y) | 0;
       const a = Math.max(0.2, p.life / p.max);
+      if (p.vein) {
+        const col =
+          p.spell === "bind" ? "#a080e0" : p.spell === "shatter" ? "#e8c44a" : "#5ee8d0";
+        px(x - 1, y - 1, 3, 3, col);
+        px(x, y, 1, 1, "#e8fff8");
+        px(x - ((p.vx > 0 ? 1 : -1) * 2), y, 2, 1, a > 0.4 ? col : "#1a2830");
+        continue;
+      }
       px(x - 1, y - 1, 3, 3, "#6a5088");
       px(x, y, 1, 1, "#f4e8ff");
       px(x - ((p.vx > 0 ? 1 : -1) * 2), y, 2, 1, a > 0.4 ? "#b890e0" : "#4a3428");
@@ -6003,13 +6080,28 @@
 
   function useHeld() {
     if (player.dead > 0) return;
+    if (scene === "vein" && vein && vein.tryInteract()) return;
     if (cosSelect === "back" && cosmetics.back === "cloak") {
+      if (vein && vein.blockCloak()) {
+        cosTip = "CLOAK WITHERS HERE";
+        cosTipT = 1.8;
+        cloakOn = false;
+        return;
+      }
       cloakOn = !cloakOn;
       return;
     }
     const stack = !cosSelect ? inventory[heldSlot] : null;
     if (!stack) {
-      if (cosmetics.back === "cloak") cloakOn = !cloakOn;
+      if (cosmetics.back === "cloak") {
+        if (vein && vein.blockCloak()) {
+          cosTip = "CLOAK WITHERS HERE";
+          cosTipT = 1.8;
+          cloakOn = false;
+          return;
+        }
+        cloakOn = !cloakOn;
+      }
       return;
     }
     if (stack.id === "chest") {
@@ -6027,8 +6119,27 @@
       return;
     }
     if (stack.id === "cloak") {
+      if (vein && vein.blockCloak()) {
+        cosTip = "CLOAK WITHERS HERE";
+        cosTipT = 1.8;
+        cloakOn = false;
+        return;
+      }
       cloakOn = !cloakOn;
       return;
+    }
+    if (String(stack.id).indexOf("potion_") === 0) {
+      if (scene === "vein" && vein && vein.drinkPotion(stack.id)) {
+        takeOneFrom(inventory, stack.id);
+        useFx = { t: 0, id: stack.id };
+        return;
+      }
+      if (stack.id === "potion_red") {
+        player.hp = Math.min(MAX_HP, player.hp + 3);
+        takeOneFrom(inventory, stack.id);
+        useFx = { t: 0, id: stack.id };
+        return;
+      }
     }
     useFx = { t: 0, id: stack.id };
   }
@@ -7389,6 +7500,129 @@
     pxi(g, x + dx + 1, y + dy + 1, dw - 2, 1, "#1a1814");
     pxi(g, x + dx + dw - 4, y + dy + ((dh / 2) | 0), 1, 1, "#c9a227");
   }
+
+  function ensureVein() {
+    if (vein) return vein;
+    if (typeof IsleVeinBuild !== "function") return null;
+    vein = IsleVeinBuild({
+      TILE,
+      MAX_HP,
+      player,
+      camera,
+      wandBolts,
+      hash,
+      irand,
+      pxi,
+      withInk,
+      drawPixText,
+      playerHits,
+      hitPad,
+      hurtPlayer,
+      addToInventory,
+      gainXp,
+      time: () => time,
+      viewW: () => viewW,
+      viewH: () => viewH,
+      uiW: () => (canvas.width / SCALE_UI) | 0,
+      ctx: () => ctx,
+      px,
+      getScene: () => scene,
+      setScene: (s) => {
+        scene = s;
+      },
+      getWandCool: () => wandCool,
+      setWandCool: (v) => {
+        wandCool = v;
+      },
+      setCloak: (v) => {
+        cloakOn = !!v;
+      },
+      shake: (n) => {
+        shake = Math.max(shake, n | 0);
+      },
+      flashTip: (msg, dur) => {
+        cosTip = String(msg || "");
+        cosTipT = dur != null ? dur : 2.2;
+      },
+      useFxWand: () => {
+        useFx = { t: 0, id: "wand" };
+      },
+      northCliffY,
+      restShoreY,
+      clearSceneLoot: (sc) => {
+        for (let i = loot.length - 1; i >= 0; i--) {
+          if ((loot[i].scene || "island") === sc) loot.splice(i, 1);
+        }
+      },
+      spawnLoot: (id, x, y, sc) => {
+        if (!ITEM_DEFS[id]) return;
+        loot.push({
+          id,
+          x: (x | 0) - 2,
+          y: (y | 0) - 2,
+          taken: false,
+          born: waveCycle,
+          life: Infinity,
+          ignoreUntil: time + 0.15,
+          scene: sc || "vein",
+        });
+      },
+    });
+    return vein;
+  }
+
+  function placeMountainsIntoWorld() {
+    const v = ensureVein();
+    if (!v) return;
+    const painted = v.placeMountains(
+      bldgCanvas,
+      bldgOX,
+      bldgOY,
+      islandSolids,
+      walkPads,
+      keepouts,
+      trees,
+      palms
+    );
+    if (painted && painted.canvas) {
+      bldgCanvas = painted.canvas;
+      bldgOX = painted.ox;
+      bldgOY = painted.oy;
+    }
+    veinDoor = v.getDoor();
+    veinIslandExit = v.getIslandExit();
+  }
+
+  // Debug helpers for local playtests (mountain / Hollow Vein).
+  window.__isleVein = {
+    door: () => veinDoor,
+    gotoDoor: () => {
+      if (!veinDoor) return null;
+      scene = "island";
+      player.aboard = false;
+      player.x = veinDoor.x + 2;
+      player.y = veinDoor.y + veinDoor.h + 2;
+      player.dead = 0;
+      player.hp = MAX_HP;
+      camera.x = player.x + player.w / 2 - viewW / 2;
+      camera.y = player.y + player.h / 2 - viewH * 0.36;
+      clampCamera();
+      return { x: player.x, y: player.y, door: veinDoor };
+    },
+    enter: () => {
+      ensureVein();
+      if (!vein) return false;
+      if (!ownsItem("wand") && canTake("wand")) addToInventory("wand");
+      beginFade("vein", { x: 28, y: (vein.ROOM_H || 152) - 42 });
+      return true;
+    },
+    giveKit: () => {
+      ["wand", "potion_red", "potion_blue", "potion_fury"].forEach((id) => {
+        if (canTake(id)) addToInventory(id);
+      });
+      return inventory.filter(Boolean).map((s) => s.id);
+    },
+  };
 
   function placeTemple(pier) {
     // Deep jungle — far east of the dock, high inland toward the north cliff
@@ -9501,6 +9735,7 @@
     bakeFloorInterior();
     bakeWreckInterior();
     placeTemple(pier);
+    placeMountainsIntoWorld();
     placeRiverRuins(pier);
     placeJunglePond(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
@@ -9596,7 +9831,8 @@
       next.scene === "hub" ||
       next.scene === "sub" ||
       next.scene === "floor" ||
-      next.scene === "wreck"
+      next.scene === "wreck" ||
+      next.scene === "vein"
         ? 1
         : -1;
     if (
@@ -9605,15 +9841,22 @@
       next.scene === "hub" ||
       next.scene === "sub" ||
       next.scene === "floor" ||
-      next.scene === "wreck"
+      next.scene === "wreck" ||
+      next.scene === "vein"
     ) {
       player.aboard = false;
     }
     if (next.scene === "floor") scatterFloorSharks();
+    if (next.scene === "vein") {
+      ensureVein();
+      if (vein) vein.onEnter();
+      cloakOn = false;
+    }
     doorCool = 0.85;
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
-    clampCamera();
+    if (next.scene === "vein" && vein) vein.lockCam();
+    else clampCamera();
   }
 
   function updateFade(dt) {
@@ -9670,6 +9913,14 @@
     }
     if (scene === "temple" && templeExit && playerHits(templeExit)) {
       beginFade("island", { x: templeIslandExit.x, y: templeIslandExit.y });
+    }
+    if (scene === "island" && veinDoor && playerHits(veinDoor)) {
+      ensureVein();
+      beginFade("vein", { x: 28, y: (vein ? vein.ROOM_H : 152) - 42 });
+    }
+    if (scene === "vein" && vein && vein.getExitPad() && playerHits(vein.getExitPad())) {
+      const ex = veinIslandExit || vein.getIslandExit();
+      if (ex) beginFade("island", { x: ex.x, y: ex.y });
     }
     if (scene === "hub" && hubExit && playerHits(hubExit) && playMode === "hub") {
       leaveHubMode();
@@ -11101,11 +11352,39 @@
       px(sx + 6, sy + 10, 12, 6, "#efe6d4");
       px(sx + 8, sy + 8, 8, 6, "#e8d5b8");
       px(sx + 10, sy + 10, 4, 4, "#c4a06c");
-    } else if (id === "gem") {
-      px(sx + 10, sy + 6, 4, 2, "#7ff0ea");
-      px(sx + 6, sy + 8, 12, 6, "#2ec9c0");
+    } else if (id === "gem" || id === "vein_gem") {
+      const c1 = id === "vein_gem" ? "#5ee8d0" : "#7ff0ea";
+      const c2 = id === "vein_gem" ? "#2a8a78" : "#2ec9c0";
+      px(sx + 10, sy + 6, 4, 2, c1);
+      px(sx + 6, sy + 8, 12, 6, c2);
       px(sx + 10, sy + 14, 4, 2, "#1a8a86");
       px(sx + 10, sy + 10, 4, 2, "#e8ffff");
+    } else if (String(id).indexOf("potion_") === 0) {
+      const fill =
+        id === "potion_red"
+          ? "#c81e1e"
+          : id === "potion_blue"
+            ? "#3a80e0"
+            : id === "potion_gold"
+              ? "#e8c44a"
+              : id === "potion_fury"
+                ? "#e05020"
+                : id === "potion_smoke"
+                  ? "#6a7080"
+                  : "#5ee8d0";
+      px(sx + 10, sy + 4, 4, 2, "#d0d8e0");
+      px(sx + 8, sy + 6, 8, 10, "#c8d0d8");
+      px(sx + 9, sy + 8, 6, 7, fill);
+      px(sx + 10, sy + 2, 4, 3, "#e8eef4");
+    } else if (id === "mountain_heart") {
+      px(sx + 8, sy + 8, 8, 6, "#5ee8d0");
+      px(sx + 10, sy + 6, 4, 10, "#e8fff8");
+      px(sx + 9, sy + 10, 6, 4, "#2a8a78");
+    } else if (id === "key_bronze" || id === "key_silver" || id === "key_gold") {
+      const col = id === "key_bronze" ? "#b87333" : id === "key_silver" ? "#c0c8d0" : "#c9a227";
+      px(sx + 8, sy + 8, 6, 6, col);
+      px(sx + 13, sy + 10, 6, 2, col);
+      px(sx + 17, sy + 8, 2, 6, col);
     } else if (!drawTinyCatch(id, sx + 4, sy + 6)) {
       px(sx + 10, sy + 4, 4, 2, "#f4fbff");
       px(sx + 8, sy + 6, 8, 12, "#9ae0ff");
@@ -12584,6 +12863,8 @@
       uiScreen === "profiles" ||
       uiScreen === "walkthrough" ||
       uiScreen === "quests" ||
+      uiScreen === "logo" ||
+      uiScreen === "spin" ||
       !playMode
     ) {
       mode = "menu";
@@ -12597,6 +12878,198 @@
       else cat = srCat;
     }
     api.setPresenceActivity(mode, cat);
+  }
+
+  function lobbyPeerFromPresence(p, api) {
+    if (!p) return null;
+    let skin = p.skin_id || null;
+    let face = p.face_id || null;
+    let back = p.back_id || null;
+    if ((!skin || !face || !back) && api && api.getCachedLoadout && p.username) {
+      const cached = api.getCachedLoadout(p.username);
+      if (cached) {
+        if (!skin && cached.skin) skin = cached.skin;
+        if (!face && cached.face) face = cached.face;
+        if (!back && cached.back) back = cached.back;
+      }
+    }
+    const modeLabel =
+      api && typeof api.presenceActivityLabel === "function"
+        ? api.presenceActivityLabel(p)
+        : "LOBBY";
+    return {
+      client_id: p.client_id || "",
+      name: p.username || "PLAYER",
+      isAccount: !!p.user_id,
+      skin: skin || "classic",
+      face: face || null,
+      back: back || null,
+      mode: String(p.mode || "menu").toLowerCase(),
+      category: p.category || null,
+      modeLabel: String(modeLabel || "LOBBY").toUpperCase(),
+    };
+  }
+
+  function refreshLobbyPeersFromCache() {
+    const api = lbApi();
+    if (!api || typeof api.getOnlinePresence !== "function") {
+      lobbyPeers = [];
+      lobbyPeerTotal = 0;
+      return;
+    }
+    const selfId = api.getClientId ? String(api.getClientId() || "") : "";
+    const rows = api.getOnlinePresence() || [];
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const p = rows[i];
+      if (!p) continue;
+      if (selfId && p.client_id && String(p.client_id) === selfId) continue;
+      const peer = lobbyPeerFromPresence(p, api);
+      if (peer) out.push(peer);
+    }
+    out.sort((a, b) => {
+      if (a.isAccount !== b.isAccount) return a.isAccount ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
+    lobbyPeers = out;
+    lobbyPeerTotal = out.length;
+  }
+
+  /** 1s presence upsert+fetch while on mode-select; keeps lobby line live. */
+  function tickLobbyPresence() {
+    if (uiScreen !== "mode") return;
+    syncPresenceActivity();
+    syncPresenceLoadout();
+    refreshLobbyPeersFromCache();
+    const now = Date.now();
+    if (now - lobbyPresenceAt < LOBBY_PRESENCE_MS) return;
+    lobbyPresenceAt = now;
+    const api = lbApi();
+    if (!api) return;
+    const done = () => {
+      if (uiScreen === "mode") refreshLobbyPeersFromCache();
+    };
+    // Full tick publishes our loadout/mode and pulls everyone else every second.
+    if (typeof api.tickPresence === "function") {
+      Promise.resolve(api.tickPresence()).then(done).catch(done);
+      return;
+    }
+    if (typeof api.fetchOnlinePresence === "function") {
+      Promise.resolve(api.fetchOnlinePresence()).then(done).catch(done);
+    }
+  }
+
+  function drawLobbyPeerFigure(fx, fy, peer, scale) {
+    if (!peer) return;
+    const s = scale == null ? 1.2 : scale;
+    const prevFace = cosmetics.face;
+    const prevBack = cosmetics.back;
+    cosmetics.face = peer.face || null;
+    cosmetics.back = peer.back || null;
+    const prevInk = ink;
+    ink = ctx;
+    ink.save();
+    ink.translate(fx, fy);
+    ink.scale(s, s);
+    // Soft shared bob — keep peers level so labels stay readable
+    const bob = ((Math.sin(time * 2.1) * 0.4) | 0);
+    ink.translate(0, bob);
+    drawCapeSheet(peer.back, 0.7, 1.8, time);
+    drawPlayerBody(peer.skin || "classic", 0, false, false);
+    drawCapeCollar(peer.back);
+    if (peer.skin === "beta_alien") drawAlienPortalWisps(0, -8);
+    if (peer.skin === "flash") drawFlashElectricity(0, -8);
+    ink.restore();
+    ink = prevInk;
+    cosmetics.face = prevFace;
+    cosmetics.back = prevBack;
+  }
+
+  /**
+   * Lobby line beside the local mannequin — even spacing, same depth, no stack.
+   * Skin + cosmetics on body; compact name + mode above each peer.
+   */
+  function drawLobbyPeerLine(stageCx, previewY, stageLeft, previewRight) {
+    tickLobbyPresence();
+    const bandW = Math.max(0, previewRight - stageLeft);
+    if (bandW < 60) return;
+
+    if (!lobbyPeers.length) {
+      drawPixTextSm("NO ONE ELSE ONLINE", stageCx, previewY + 30, "#5c3a21", "center");
+      return;
+    }
+
+    // Clear center for YOU; peers stand in left/right wings at nearly the same depth
+    const centerGap = 22;
+    const pad = 8;
+    const leftEdge = stageLeft + pad;
+    const rightEdge = previewRight - pad;
+    const leftWingW = Math.max(0, stageCx - centerGap - leftEdge);
+    const rightWingW = Math.max(0, rightEdge - (stageCx + centerGap));
+    const pitch = 30;
+    const leftSlots = Math.max(0, Math.min(4, (leftWingW / pitch) | 0));
+    const rightSlots = Math.max(0, Math.min(4, (rightWingW / pitch) | 0));
+    const maxShow = leftSlots + rightSlots;
+    const show = Math.min(lobbyPeers.length, maxShow);
+    if (show <= 0) {
+      drawPixTextSm(
+        lobbyPeerTotal + " ONLINE",
+        stageCx,
+        previewY + 30,
+        "#5c3a21",
+        "center"
+      );
+      return;
+    }
+
+    // Build stable slots: nearest-left, nearest-right, next-left, …
+    const slots = [];
+    let li = 0;
+    let ri = 0;
+    for (let i = 0; i < show; i++) {
+      const wantLeft = i % 2 === 0;
+      if (wantLeft && li < leftSlots) {
+        slots.push({ peer: lobbyPeers[i], side: -1, rank: li });
+        li++;
+      } else if (ri < rightSlots) {
+        slots.push({ peer: lobbyPeers[i], side: 1, rank: ri });
+        ri++;
+      } else if (li < leftSlots) {
+        slots.push({ peer: lobbyPeers[i], side: -1, rank: li });
+        li++;
+      }
+    }
+
+    // Draw outer → inner so nearer peers sit cleanly in front of farther ones
+    slots.sort((a, b) => b.rank - a.rank);
+
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const peer = s.peer;
+      const fx = (stageCx + s.side * (centerGap + 6 + s.rank * pitch)) | 0;
+      const fy = previewY - 1;
+      if (fx < leftEdge || fx > rightEdge) continue;
+
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      drawLobbyPeerFigure(fx, fy, peer, 1.2);
+      ctx.restore();
+
+      const name = String(peer.name || "?").slice(0, peer.isAccount ? 7 : 6);
+      const mode = String(peer.modeLabel || "LOBBY").slice(0, 8);
+      const nameY = fy - 40;
+      if (peer.isAccount) {
+        const tag = String(name).toUpperCase();
+        drawNameTag(tag, (fx - pixTextWidth(tag) / 2) | 0, nameY);
+      } else {
+        drawPixTextSm(String(name).toUpperCase(), fx, nameY, "#c4a574", "center");
+      }
+      drawPixTextSm(mode, fx, nameY + 10, "#8a6a42", "center");
+    }
+
+    if (lobbyPeerTotal > show) {
+      drawPixTextSm("+" + (lobbyPeerTotal - show), stageCx, previewY - 48, "#8a6a42", "center");
+    }
   }
 
   function clearChatHits() {
@@ -13582,36 +14055,42 @@
           ? "#071018"
           : scene === "temple"
             ? "#12100c"
-            : scene === "hub"
-              ? "#1a1810"
-              : scene === "sub"
-                ? "#101820"
-                : scene === "floor" || scene === "wreck"
-                  ? "#061018"
-                  : "#2a1c12"
+            : scene === "vein"
+              ? "#080a0e"
+              : scene === "hub"
+                ? "#1a1810"
+                : scene === "sub"
+                  ? "#101820"
+                  : scene === "floor" || scene === "wreck"
+                    ? "#061018"
+                    : "#2a1c12"
       );
       if (scene === "cabin") drawCabinSea(cpos, t);
-      const room =
-        scene === "fish"
-          ? fishCanvas
-          : scene === "cabin"
-            ? cabinCanvas
-            : scene === "temple"
-              ? templeCanvas
-              : scene === "hub"
-                ? hubCanvas
-                : scene === "sub"
-                  ? subCanvas
-                  : scene === "floor"
-                    ? floorCanvas
-                    : scene === "wreck"
-                      ? wreckCanvas
-                      : shopCanvas;
-      const rw = indoorW();
-      const rh = indoorH();
-      if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
+      if (scene === "vein" && vein) {
+        vein.draw(cpos, t);
+      } else {
+        const room =
+          scene === "fish"
+            ? fishCanvas
+            : scene === "cabin"
+              ? cabinCanvas
+              : scene === "temple"
+                ? templeCanvas
+                : scene === "hub"
+                  ? hubCanvas
+                  : scene === "sub"
+                    ? subCanvas
+                    : scene === "floor"
+                      ? floorCanvas
+                      : scene === "wreck"
+                        ? wreckCanvas
+                        : shopCanvas;
+        const rw = indoorW();
+        const rh = indoorH();
+        if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
+      }
       if (scene === "sub" || scene === "floor" || scene === "wreck") drawDiveWorld(cpos, t);
-      if (scene !== "sub" && scene !== "floor" && scene !== "wreck") drawIndoorLight(cpos);
+      if (scene !== "sub" && scene !== "floor" && scene !== "wreck" && scene !== "vein") drawIndoorLight(cpos);
       if (scene === "shop") drawShopGoldSpark(cpos, t);
       if (scene === "cabin") {
         drawCabinChest(cpos);
@@ -13627,6 +14106,7 @@
       else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
+      if (scene === "vein") drawWandBolts(cpos);
       if (scene === "floor" || scene === "wreck") drawAirBubble(cpos);
       if (scene === "cabin") drawCabinMotes(cpos);
       if (scene === "hub") {
@@ -13693,6 +14173,10 @@
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
     drawHud();
     drawSerpentBossBar();
+    if (scene === "vein" && vein) {
+      ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+      vein.drawHud();
+    }
     drawHubOverlay();
     drawDiveHud();
     drawGuide();
@@ -15594,14 +16078,25 @@
     const stageCx = ((stageLeft + previewRight) / 2) | 0;
 
     // Stage first (cape may spill) — locker panel + What's New drawn after
-    const previewY = panelY + ((panelH * 0.52) | 0);
-    const previewSkin = lockerPreviewSkin();
+    const previewY = panelY + ((panelH * 0.58) | 0);
     ctx.save();
     ctx.beginPath();
     ctx.rect(stageLeft, panelY, Math.max(0, previewRight - stageLeft), panelH);
     ctx.clip();
+    // Other online players behind you (Fortnite-style lobby line)
+    drawLobbyPeerLine(stageCx, previewY, stageLeft, previewRight);
     drawLockerPreview(stageCx, previewY);
-    drawPixText(skinLabel(previewSkin), stageCx, previewY + 14, "#f3e2c4", "center");
+    {
+      const localName = hubLocalName();
+      const isAcc = hubLocalIsAccount();
+      const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
+      const nameY = previewY - 40;
+      if (isAcc) {
+        drawNameTag(tag, (stageCx - pixTextWidth(tag) / 2) | 0, nameY);
+      } else {
+        drawPixText(tag, stageCx, nameY, "#f3e2c4", "center");
+      }
+    }
     ctx.restore();
 
     if (showWhats) {
@@ -17290,9 +17785,14 @@
       data.scene === "temple" ||
       data.scene === "sub" ||
       data.scene === "floor" ||
-      data.scene === "wreck"
+      data.scene === "wreck" ||
+      data.scene === "vein"
     ) {
       scene = data.scene;
+      if (scene === "vein") {
+        ensureVein();
+        cloakOn = false;
+      }
     } else if (data.scene === "hub") {
       // Hub is its own mode now — remount old island-gate saves to the dock
       scene = "island";
@@ -17317,7 +17817,14 @@
     if (scene === "floor") scatterFloorSharks();
     dailyClaimedUtc = data.dailyClaimedUtc ? String(data.dailyClaimedUtc) : "";
     cloakOn = !!data.cloak && ownsCloak();
-    if (scene === "cabin" || scene === "temple" || scene === "sub" || scene === "floor" || scene === "wreck") {
+    if (
+      scene === "cabin" ||
+      scene === "temple" ||
+      scene === "sub" ||
+      scene === "floor" ||
+      scene === "wreck" ||
+      scene === "vein"
+    ) {
       player.aboard = false;
     }
     if (data.boat && typeof data.boat.x === "number") {
@@ -17398,6 +17905,7 @@
     updateRod(dt);
     updateSerpent(dt);
     updateWandBolts(dt);
+    if (scene === "vein" && vein) vein.update(dt);
     updateDive(dt);
     updateMaskGoal();
     if (srTiming) captureReplayFrame(false);
@@ -17586,8 +18094,12 @@
       return;
     }
     if (k >= "1" && k <= "8") {
-      heldSlot = k.charCodeAt(0) - 49;
-      cosSelect = null;
+      if (scene === "vein" && vein && holdingWand() && k >= "1" && k <= "4") {
+        vein.setSpell(k.charCodeAt(0) - 49);
+      } else {
+        heldSlot = k.charCodeAt(0) - 49;
+        cosSelect = null;
+      }
     }
     if (k === "enter") onEnter();
     if (k === " ") {
@@ -17830,6 +18342,11 @@
   );
 
   function indoorZoom() {
+    if (scene === "vein" && vein) {
+      const zx = canvas.width / vein.ROOM_W;
+      const zy = canvas.height / vein.ROOM_H;
+      return Math.max(2.2, Math.min(zx, zy) * 0.92);
+    }
     const zx = canvas.width / indoorW();
     const zy = canvas.height / indoorH();
     return Math.max(2, Math.min(zx, zy) * 0.9);
@@ -17846,7 +18363,8 @@
         fadeNext.scene === "hub" ||
         fadeNext.scene === "sub" ||
         fadeNext.scene === "floor" ||
-        fadeNext.scene === "wreck");
+        fadeNext.scene === "wreck" ||
+        fadeNext.scene === "vein");
     const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
     if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
     return keys.z ? SCALE_FAR : SCALE_DEFAULT;
