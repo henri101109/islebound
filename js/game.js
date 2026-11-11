@@ -762,6 +762,88 @@
   let lockerScrollCosmetics = 0;
   /** Last locker grid clip rect + max scroll (for wheel). */
   let lockerGridBounds = null;
+  /**
+   * Mode-select "What's New" rail (Disney+-style featured cards).
+   * Local curated list for now — skins, quests, and speedrun categories.
+   */
+  const WHATS_NEW = [
+    {
+      kind: "skin",
+      id: "usain_bolt",
+      title: "BOLT SKIN",
+      blurb: "QUEST REWARD",
+      detail: "SUB 9.58 DEATH%",
+    },
+    {
+      kind: "skin",
+      id: "flash",
+      title: "FLASH SKIN",
+      blurb: "QUEST REWARD",
+      detail: "SUB 8S BOAT%",
+    },
+    {
+      kind: "skin",
+      id: "homer",
+      title: "HOMER SKIN",
+      blurb: "QUEST REWARD",
+      detail: "SUB 1:30 MEGA%",
+    },
+    {
+      kind: "skin",
+      id: "indiana_jones",
+      title: "INDY SKIN",
+      blurb: "QUEST REWARD",
+      detail: "5 MASK% RUNS",
+    },
+    {
+      kind: "quest",
+      id: "jelly",
+      title: "SUB 35S JELLY",
+      blurb: "NOV QUEST",
+      detail: "UNLOCK JELLY CAPE",
+    },
+    {
+      kind: "quest",
+      id: "jobapp",
+      title: "INVIS SHARK",
+      blurb: "NOV QUEST",
+      detail: "UNLOCK JOBAPP CAPE",
+    },
+    {
+      kind: "speed",
+      id: "serpent",
+      title: "SERPENT%",
+      blurb: "SPEED CATEGORY",
+      detail: "HUNT THE SERPENT",
+    },
+    {
+      kind: "speed",
+      id: "megalodon",
+      title: "MEGALODON%",
+      blurb: "SPEED CATEGORY",
+      detail: "LAND THE MEGA",
+    },
+    {
+      kind: "speed",
+      id: "waterfall_eel",
+      title: "EEL%",
+      blurb: "SPEED CATEGORY",
+      detail: "WATERFALL CATCH",
+    },
+    {
+      kind: "speed",
+      id: "portal_leech",
+      title: "LEECH%",
+      blurb: "SPEED CATEGORY",
+      detail: "PORTAL CATCH",
+    },
+  ];
+  const WHATS_NEW_ROT_MS = 4200;
+  let whatsNewIndex = 0;
+  let whatsNewRotAt = 0;
+  let whatsNewFade = 1;
+  let whatsNewHover = false;
+  let whatsNewPauseElapsed = -1;
   /** STATS board mode: "survival" | "speedrun". */
   let statsMode = "survival";
   /** Profiles browser state. */
@@ -15181,6 +15263,256 @@
     px(x, thumbY, trackW, thumbH, "#c9a227");
   }
 
+  function whatsNewItem(i) {
+    if (!WHATS_NEW.length) return null;
+    const n = WHATS_NEW.length;
+    let idx = ((i | 0) % n + n) % n;
+    return WHATS_NEW[idx];
+  }
+
+  function advanceWhatsNew(dir) {
+    if (!WHATS_NEW.length) return;
+    const n = WHATS_NEW.length;
+    const step = dir == null ? 1 : dir | 0;
+    whatsNewIndex = ((whatsNewIndex + step) % n + n) % n;
+    whatsNewRotAt = Date.now();
+    whatsNewFade = 0;
+  }
+
+  function tickWhatsNewCarousel() {
+    if (!WHATS_NEW.length) return;
+    const now = Date.now();
+    if (!whatsNewRotAt) whatsNewRotAt = now;
+    if (whatsNewFade < 1) {
+      whatsNewFade = Math.min(1, whatsNewFade + 0.08);
+    }
+    if (whatsNewHover) {
+      if (whatsNewPauseElapsed < 0) whatsNewPauseElapsed = now - whatsNewRotAt;
+      whatsNewRotAt = now - whatsNewPauseElapsed;
+      return;
+    }
+    whatsNewPauseElapsed = -1;
+    if (now - whatsNewRotAt >= WHATS_NEW_ROT_MS) advanceWhatsNew(1);
+  }
+
+  function openWhatsNewItem(item) {
+    if (!item) return;
+    if (item.kind === "skin") {
+      if (ownsSkin(item.id)) {
+        equipSkin(item.id);
+        lockerTab = "skins";
+      } else {
+        openQuestMenu();
+        for (let i = 0; i < NOV_QUESTS.length; i++) {
+          if (NOV_QUESTS[i].rewardKind === "skin" && NOV_QUESTS[i].rewardId === item.id) {
+            questCursor = i;
+            break;
+          }
+        }
+      }
+      return;
+    }
+    if (item.kind === "quest") {
+      openQuestMenu();
+      for (let i = 0; i < NOV_QUESTS.length; i++) {
+        if (NOV_QUESTS[i].id === item.id) {
+          questCursor = i;
+          break;
+        }
+      }
+      return;
+    }
+    if (item.kind === "speed") {
+      playMode = "speedrun";
+      uiScreen = "categories";
+      let idx = SPEED_ORDER.indexOf(item.id);
+      if (idx < 0) idx = 0;
+      srCursor = idx;
+      refreshSpeedBoard(SPEED_ORDER[idx] || SPEED_ORDER[0]);
+    }
+  }
+
+  function whatsNewKindLabel(kind) {
+    if (kind === "skin") return "SKIN";
+    if (kind === "quest") return "QUEST";
+    if (kind === "speed") return "SPEED";
+    return "NEW";
+  }
+
+  function drawWhatsNewArt(item, cx, cy, scale) {
+    if (!item) return;
+    const s = scale || 2;
+    ink.save();
+    ink.translate(cx, cy);
+    ink.scale(s, s);
+    if (item.kind === "skin") {
+      const locked = skinLockedBack(item.id);
+      if (locked) drawCapeSheet(locked, 0.7, 2.0, time);
+      drawPlayerBody(item.id, 0, false, false);
+      if (locked) drawCapeCollar(locked);
+      if (item.id === "beta_alien") drawAlienPortalWisps(0, -8);
+      if (item.id === "flash") drawFlashElectricity(0, -8);
+    } else if (item.kind === "quest") {
+      let q = null;
+      for (let i = 0; i < NOV_QUESTS.length; i++) {
+        if (NOV_QUESTS[i].id === item.id) {
+          q = NOV_QUESTS[i];
+          break;
+        }
+      }
+      if (q && q.rewardKind === "skin") {
+        drawPlayerBody(q.rewardId, 0, false, false);
+      } else if (q && q.rewardKind === "cosmetic") {
+        drawCapeSheet(q.rewardId, 0.9, 2.2, time);
+        drawPlayerBody("classic", 0, false, false);
+        drawCapeCollar(q.rewardId);
+      } else {
+        drawPlayerBody("classic", 0, false, false);
+      }
+    } else if (item.kind === "speed") {
+      ink.scale(1.4, 1.4);
+      drawSpeedCatIcon(item.id, -4, -6);
+    }
+    ink.restore();
+  }
+
+  /** Disney+-style featured rail on the right of the locker mannequin. */
+  function drawWhatsNewRail(x, y, w, h) {
+    tickWhatsNewCarousel();
+    if (!WHATS_NEW.length || w < 72 || h < 80) return;
+
+    const item = whatsNewItem(whatsNewIndex);
+    const hot = !!(menuHoverKey && String(menuHoverKey).indexOf("whatsnew:") === 0);
+    whatsNewHover = hot;
+
+    // Outer wood frame
+    px(x, y, w, h, "#1a120c");
+    px(x + 1, y + 1, w - 2, h - 2, hot ? "#c9a227" : "#3a2414");
+    px(x + 2, y + 2, w - 4, h - 4, "#2b1c12");
+
+    // Header band
+    px(x + 2, y + 2, w - 4, 13, "#3a2414");
+    px(x + 2, y + 14, w - 4, 1, "#c9a227");
+    drawPixTextSm("WHATS NEW", x + ((w / 2) | 0), y + 5, "#e8c44a", "center");
+
+    const artTop = y + 18;
+    const artH = Math.max(36, ((h - 18 - 42) * 0.62) | 0);
+    const artBot = artTop + artH;
+    const copyY = artBot + 4;
+    const dotsY = y + h - 10;
+
+    // Atmospheric art stage (kind tint — not flat fill)
+    const kind = item.kind;
+    const stageA = kind === "speed" ? "#0c2230" : kind === "quest" ? "#241810" : "#122018";
+    const stageB = kind === "speed" ? "#163848" : kind === "quest" ? "#3a2414" : "#1a3840";
+    const stageC = kind === "speed" ? "#1e5070" : kind === "quest" ? "#5c3a21" : "#2a5860";
+    px(x + 3, artTop, w - 6, artH, stageA);
+    px(x + 4, artTop + 2, w - 8, ((artH * 0.55) | 0), stageB);
+    px(x + 6, artTop + ((artH * 0.35) | 0), w - 12, ((artH * 0.28) | 0), stageC);
+    // Soft vignette bars
+    px(x + 3, artTop, w - 6, 2, "#0a1520");
+    px(x + 3, artBot - 2, w - 6, 2, "#0a1520");
+    px(x + 3, artTop, 2, artH, "#0a1520");
+    px(x + w - 5, artTop, 2, artH, "#0a1520");
+
+    // Featured graphic with fade-in + idle bob
+    const fade = whatsNewFade;
+    const bob = ((Math.sin(time * 2.4) * 1.2) | 0);
+    const artCx = x + ((w / 2) | 0);
+    const artCy = artTop + ((artH * 0.72) | 0) + bob;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 3, artTop, w - 6, artH);
+    ctx.clip();
+    ctx.globalAlpha = 0.35 + 0.65 * fade;
+    drawWhatsNewArt(item, artCx, artCy, kind === "speed" ? 2.6 : 2.1);
+    ctx.restore();
+
+    // NEW chip + kind label over art
+    drawNewTag(x + 6, artTop + 4);
+    const kindLab = whatsNewKindLabel(kind);
+    const kw = pixTextWidthSm(kindLab);
+    px(x + w - 8 - kw - 4, artTop + 3, kw + 5, 9, "#1a120c");
+    px(x + w - 7 - kw - 4, artTop + 4, kw + 3, 7, "#5c3a21");
+    drawPixTextSm(kindLab, x + w - 6 - ((kw / 2) | 0) - 2, artTop + 5, "#f3e2c4", "center");
+
+    // Copy block
+    ctx.globalAlpha = 0.4 + 0.6 * fade;
+    drawPixText(String(item.title || "").slice(0, 14), artCx, copyY, "#f3e2c4", "center");
+    drawPixTextSm(String(item.blurb || "").slice(0, 16), artCx, copyY + 10, "#c9a227", "center");
+    drawPixTextSm(String(item.detail || "").slice(0, 18), artCx, copyY + 19, "#8a6a42", "center");
+    ctx.globalAlpha = 1;
+
+    // Auto-advance progress strip (freezes while hovered)
+    const progW = w - 10;
+    const progX = x + 5;
+    const progY = dotsY - 5;
+    px(progX, progY, progW, 2, "#1a120c");
+    const prog = whatsNewRotAt
+      ? Math.min(1, (Date.now() - whatsNewRotAt) / WHATS_NEW_ROT_MS)
+      : 0;
+    if (prog > 0) px(progX, progY, Math.max(1, (progW * prog) | 0), 2, "#e8c44a");
+
+    // Card click first; side nudges + dots registered after so they win hit tests
+    addMenuHit(
+      "whatsnew:card",
+      x,
+      y,
+      w,
+      h - 14,
+      () => openWhatsNewItem(item),
+      { hover: true }
+    );
+    addMenuHit(
+      "whatsnew:prev",
+      x,
+      artTop,
+      14,
+      artH,
+      () => advanceWhatsNew(-1),
+      { hover: true }
+    );
+    addMenuHit(
+      "whatsnew:next",
+      x + w - 14,
+      artTop,
+      14,
+      artH,
+      () => advanceWhatsNew(1),
+      { hover: true }
+    );
+    if (menuHovering("whatsnew:prev") || hot) {
+      drawPixTextSm("<", x + 6, artTop + ((artH / 2) | 0) - 3, "#e8c44a", "left");
+    }
+    if (menuHovering("whatsnew:next") || hot) {
+      drawPixTextSm(">", x + w - 8, artTop + ((artH / 2) | 0) - 3, "#e8c44a", "left");
+    }
+
+    // Dot pagination
+    const n = WHATS_NEW.length;
+    const dotGap = 5;
+    const dotsW = n * 3 + (n - 1) * (dotGap - 3);
+    let dx = artCx - ((dotsW / 2) | 0);
+    for (let i = 0; i < n; i++) {
+      const on = i === whatsNewIndex;
+      px(dx, dotsY, on ? 4 : 3, 3, on ? "#e8c44a" : "#5c3a21");
+      addMenuHit(
+        "whatsnew:dot:" + i,
+        dx - 2,
+        dotsY - 2,
+        8,
+        7,
+        () => {
+          whatsNewIndex = i;
+          whatsNewRotAt = Date.now();
+          whatsNewFade = 0;
+        },
+        { hover: true }
+      );
+      dx += on ? 4 + (dotGap - 3) : dotGap;
+    }
+  }
+
   function drawModeSelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -15252,18 +15584,29 @@
     const panelH = modeY - panelY - 8;
     const stageLeft = panelX + panelW + 14;
     const stageRight = uiW - pad;
-    const stageCx = ((stageLeft + stageRight) / 2) | 0;
+    const stageW = Math.max(0, stageRight - stageLeft);
+    // Featured rail on the right of the mannequin (Disney+-style What's New)
+    const whatsGap = 10;
+    const whatsW = Math.min(128, Math.max(96, ((stageW * 0.4) | 0)));
+    const showWhats = stageW >= 180 && whatsW >= 96;
+    const whatsX = showWhats ? stageRight - whatsW : stageRight;
+    const previewRight = showWhats ? whatsX - whatsGap : stageRight;
+    const stageCx = ((stageLeft + previewRight) / 2) | 0;
 
-    // Center stage first (cape may spill left) — panel drawn after to cover overflow
+    // Stage first (cape may spill) — locker panel + What's New drawn after
     const previewY = panelY + ((panelH * 0.52) | 0);
     const previewSkin = lockerPreviewSkin();
     ctx.save();
     ctx.beginPath();
-    ctx.rect(stageLeft, panelY, Math.max(0, stageRight - stageLeft), panelH);
+    ctx.rect(stageLeft, panelY, Math.max(0, previewRight - stageLeft), panelH);
     ctx.clip();
     drawLockerPreview(stageCx, previewY);
     drawPixText(skinLabel(previewSkin), stageCx, previewY + 14, "#f3e2c4", "center");
     ctx.restore();
+
+    if (showWhats) {
+      drawWhatsNewRail(whatsX, panelY, whatsW, panelH);
+    }
 
     // Left locker panel (opaque, on top of stage spill)
     px(panelX, panelY, panelW, panelH, "#1a120c");
