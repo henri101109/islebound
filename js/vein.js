@@ -1471,6 +1471,41 @@
       mana = MAX_MANA;
     }
 
+    function clampToRoom() {
+      const rx = ox(room);
+      A.player.x = Math.max(rx + 12, Math.min(rx + ROOM_W - A.player.w - 12, A.player.x));
+      A.player.y = Math.max(20, Math.min(ROOM_H - A.player.h - 10, A.player.y));
+    }
+
+    function syncRoomFromPos() {
+      if (trans) return;
+      const want = Math.max(0, Math.min(ROOM_COUNT - 1, (A.player.x / ROOM_W) | 0));
+      if (want === room) {
+        if (sealed) clampToRoom();
+        return;
+      }
+      // Block leaving while sealed / uncleared combat
+      if (sealed || (!roomCleared[room] && aliveInRoom(room) > 0 && want > room)) {
+        clampToRoom();
+        if (want > room) flash("CLEAR THE ROOM");
+        return;
+      }
+      if (want === 12 && !(keysGot.bronze && keysGot.silver && keysGot.gold) && !roomCleared[11]) {
+        // Still allow entering room 11; gate to 12 is the tri-lock room itself
+        if (want > 11 && !roomCleared[11]) {
+          clampToRoom();
+          flash("THREE KEYS");
+          return;
+        }
+      }
+      // Already crossed the threshold — snap room (camera eases via lockCam)
+      const prev = room;
+      room = want;
+      checkpoint = { x: A.player.x, y: A.player.y };
+      lightMode = "idle";
+      if (want > prev || want < prev) maybeTriggerRoom();
+    }
+
     function update(dt) {
       if (A.getScene() !== "vein") return;
       if (tipT > 0) tipT = Math.max(0, tipT - dt);
@@ -1480,6 +1515,9 @@
 
       if (updateTrans(dt)) return;
 
+      syncRoomFromPos();
+      if (trans) return;
+
       updateScript(dt);
       updateHazards(dt);
       updateMovingHazards(dt);
@@ -1487,37 +1525,7 @@
       for (let i = 0; i < enemies.length; i++) updateEnemy(enemies[i], dt);
       checkRoomClear();
 
-      // door walk
-      if (!sealed && !trans) {
-        for (let i = 0; i < doors.length; i++) {
-          const d = doors[i];
-          if (d.sealed) continue;
-          if (d.from === room && playerHits(d)) {
-            beginTrans(d.to);
-            break;
-          }
-          // walk back west through previous door opening
-          if (d.to === room) {
-            const west = { x: ox(room), y: DOOR_Y, w: 10, h: DOOR_H };
-            if (playerHits(west) && roomCleared[d.from]) {
-              beginTrans(d.from);
-              break;
-            }
-          }
-        }
-      }
-
-      // sealed door solids — block east if sealed
-      // (handled by not transitioning; add soft push)
-      if (sealed) {
-        for (let i = 0; i < doors.length; i++) {
-          const d = doors[i];
-          if (d.from === room && d.sealed && playerHits(d)) {
-            A.player.x = Math.min(A.player.x, d.x - A.player.w - 1);
-          }
-        }
-      }
-
+      if (sealed) clampToRoom();
       lockCam();
     }
 

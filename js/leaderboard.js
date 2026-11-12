@@ -55,6 +55,8 @@
     mask: { id: "mask", label: "MASK%" },
     waterfall_eel: { id: "waterfall_eel", label: "EEL%" },
     portal_leech: { id: "portal_leech", label: "LEECH%" },
+    kings_race: { id: "kings_race", label: "KINGS RACE%" },
+    full_kings: { id: "full_kings", label: "FULL KINGS%" },
   };
 
   /** Replay validation removed — always accept. */

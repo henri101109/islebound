@@ -58,6 +58,7 @@
     job_app_cloak: { name: "Job App Cloak", label: "JOBAPP", max: 1, xp: 0, cosmetic: "back" },
     american_cloak: { name: "American Cloak", label: "USA", max: 1, xp: 0, cosmetic: "back" },
     jelly_cape: { name: "Jellyfish Cape", label: "JELLY", max: 1, xp: 0, cosmetic: "back" },
+    stop_pre_flag: { name: "STOP PRE Flag", label: "STOPPRE", max: 1, xp: 0, cosmetic: "back" },
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
     sunken_chest: { name: "Sunken chest", max: 1, xp: 50 },
@@ -72,6 +73,10 @@
     key_bronze: { name: "Bronze key", max: 1, xp: 5 },
     key_silver: { name: "Silver key", max: 1, xp: 8 },
     key_gold: { name: "Gold key", max: 1, xp: 12 },
+    olive: { name: "Olives", max: 16, xp: 2 },
+    roman_bread: { name: "Bread", max: 16, xp: 2 },
+    roman_wine: { name: "Wine", max: 8, xp: 4 },
+    king_crown: { name: "Crown of the Kingdom", label: "KING", max: 1, xp: 0, cosmetic: "face" },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
@@ -264,6 +269,7 @@
   let templeExit = null;
   let templeIslandExit = null;
   let vein = null;
+  let rome = null;
   let veinDoor = null;
   let veinIslandExit = null;
   let hubExit = null;
@@ -385,6 +391,8 @@
     "mask",
     "waterfall_eel",
     "portal_leech",
+    "kings_race",
+    "full_kings",
   ];
   let playMode = null;
   /** Cold boot shows logo card; Esc from play returns straight to "mode". */
@@ -412,9 +420,13 @@
   let srCat = "shark";
   let srRunning = false;
   let srTiming = false;
+  /** performance.now() when the speed clock was paused; 0 = running. */
+  let srPauseAt = 0;
   let srStartPerf = 0;
   let srElapsed = 0;
   let srFinalMs = 0;
+  let pendingRaceSeg = null;
+  let srSegmentSurvival = false;
   let srBoughtBoat = false;
   let srWasDead = false;
   let srName = "";
@@ -491,7 +503,7 @@
   let nmBoardRows = [];
   let nmBoardNote = "";
   let nmCursor = 0;
-  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS", "WEEKLY REWARDS"];
+  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS", "ISLEPASS"];
   const WEEKLY_SPIN = {
     firstEndMs: Date.UTC(2026, 10, 11, 23, 59, 59),
     weekMs: 7 * 24 * 60 * 60 * 1000,
@@ -548,7 +560,7 @@
       },
       {
         title: "GOALS",
-        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "JADE MASK IN TEMPLE", "RIVER RUINS HALF WAY"],
+        lines: ["CATCH RARE FISH", "OPEN MASTER CHEST", "JADE MASK IN TEMPLE", "PORTAL LEADS TO ROME"],
       },
     ],
     speedrun: [
@@ -575,6 +587,10 @@
       {
         title: "MASK%",
         lines: ["MASK% JADE MASK", "TEMPLE MAZE, FAR END", "TOUCH THE PEDESTAL", "BAG SPACE NOT NEEDED"],
+      },
+      {
+        title: "KINGS RACE",
+        lines: ["PORTAL OPENS ON ROME", "KINGS RACE% IS THE LINE", "ANY FINISH COUNTS", "FULL KINGS% WALKS THE CITY"],
       },
       {
         title: "SHIP",
@@ -694,12 +710,43 @@
     homer: { id: "homer", label: "HOMER" },
     indiana_jones: { id: "indiana_jones", label: "INDY" },
     flash: { id: "flash", label: "FLASH" },
+    eric_cartman: { id: "eric_cartman", label: "CARTMAN" },
+    shrek: { id: "shrek", label: "SHREK" },
+    batman: { id: "batman", label: "BATMAN" },
+    peter_griffin: { id: "peter_griffin", label: "PETER" },
+    sonic: { id: "sonic", label: "SONIC" },
+    deadpool: { id: "deadpool", label: "POOL" },
+    cole_hocker: { id: "cole_hocker", label: "HOCKER" },
+    steve_prefontaine: { id: "steve_prefontaine", label: "PRE" },
+    lex_young: { id: "lex_young", label: "LEX" },
   };
   const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
-  const QUEST_SKIN_IDS = ["usain_bolt", "among_us_red", "homer", "indiana_jones", "flash"];
-  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS);
+  const QUEST_SKIN_IDS = [
+    "usain_bolt",
+    "among_us_red",
+    "homer",
+    "indiana_jones",
+    "flash",
+    "lex_young",
+  ];
+  /** Isle Pass / free-track skins (not quest unlocks). */
+  const PASS_SKIN_IDS = [
+    "shrek",
+    "batman",
+    "sonic",
+    "peter_griffin",
+    "deadpool",
+    "cole_hocker",
+    "steve_prefontaine",
+    "eric_cartman",
+  ];
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS).concat(PASS_SKIN_IDS);
   /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
-  const SKIN_LOCKED_BACK = { jakob: "norway_flag", usain_bolt: "jamaica_flag" };
+  const SKIN_LOCKED_BACK = {
+    jakob: "norway_flag",
+    usain_bolt: "jamaica_flag",
+    cole_hocker: "us_flag",
+  };
   /** Nov monthly quest progress (persisted in locker profile). */
   let questMaskRuns = 0;
   let questDone = {};
@@ -707,6 +754,97 @@
   let questTip = "";
   let questTipT = 0;
   let questCursor = 0;
+  /** Rewards hub tab: "quests" | "weekly" | "levels". */
+  let questTab = "quests";
+  /** Levels sub-page: "overview" | "tiers" | "pass". */
+  let levelsPage = "overview";
+  let passScroll = 0;
+  const CAREER_BACKFILL_VER = 2;
+  let careerBackfillVer = 0;
+  /**
+   * FREE battle pass track — design only (not granted yet).
+   * Cosmetics / particles / capes / skins ONLY — no in-game loot.
+   * Swap `label`, `blurb`, `kind`, and `rewardId` per node.
+   * kind: "skin" | "cape" | "face" | "particle"
+   * rewardId: real skin/cosmetic id when you wire grants later (null = TBD).
+   */
+  const FREE_PASS = {
+    id: "season_design_1",
+    label: "ISLE PASS",
+    season: "S1",
+    track: "free",
+    /** Cumulative pass XP to unlock. Tuned for ~1–3h of active play. */
+    nodes: [
+      { n: 1, xp: 40, kind: "skin", rewardId: "shrek", label: "SHREK", blurb: "ISLE PASS SKIN" },
+      { n: 2, xp: 95, kind: "skin", rewardId: "batman", label: "BATMAN", blurb: "ISLE PASS SKIN" },
+      { n: 3, xp: 165, kind: "skin", rewardId: "sonic", label: "SONIC", blurb: "ISLE PASS SKIN" },
+      { n: 4, xp: 255, kind: "skin", rewardId: "peter_griffin", label: "PETER", blurb: "ISLE PASS SKIN" },
+      { n: 5, xp: 365, kind: "skin", rewardId: "deadpool", label: "POOL", blurb: "ISLE PASS SKIN" },
+      { n: 6, xp: 500, kind: "skin", rewardId: "cole_hocker", label: "HOCKER", blurb: "COLE HOCKER + US FLAG" },
+      { n: 7, xp: 660, kind: "skin", rewardId: "steve_prefontaine", label: "PRE", blurb: "STEVE PREFONTAINE" },
+      { n: 8, xp: 840, kind: "cape", rewardId: "stop_pre_flag", label: "STOP PRE", blurb: "ICONIC STOP PRE TEE FLAG" },
+      { n: 9, xp: 1050, kind: "skin", rewardId: "eric_cartman", label: "CARTMAN", blurb: "ISLE PASS FINALE SKIN" },
+      { n: 10, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
+      { n: 11, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
+      { n: 12, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
+      { n: 13, xp: 0, kind: "cape", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
+      { n: 14, xp: 0, kind: "face", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
+    ],
+  };
+  /**
+   * Career rank XP (speedrun-driven). Survival loot XP is retired.
+   * Tiers: 1-20 bronze, 21-35 silver, 36-55 gold, 56-75 diamond, 76+ champion.
+   * Curve is intentionally brutal — current players should stay bronze / low silver.
+   */
+  const CAREER_KEY = "islebound-career";
+  const CAT_WEIGHT = {
+    death: 1.0,
+    boat: 1.1,
+    shark: 1.2,
+    jelly_white: 1.25,
+    chest: 1.35,
+    coins_10: 1.2,
+    full_inv: 1.7,
+    shark_cloak: 1.9,
+    coins_25: 1.55,
+    blowfish: 2.1,
+    serpent: 2.7,
+    mask: 2.9,
+    megalodon: 3.1,
+    coins_100: 2.5,
+    waterfall_eel: 3.6,
+    portal_leech: 4.0,
+  };
+  /** Soft target times (ms) used when no board WR is cached. */
+  const CAT_SOFT_WR = {
+    death: 12000,
+    boat: 15000,
+    shark: 48000,
+    jelly_white: 52000,
+    chest: 65000,
+    coins_10: 42000,
+    full_inv: 95000,
+    shark_cloak: 75000,
+    coins_25: 85000,
+    blowfish: 72000,
+    serpent: 130000,
+    mask: 160000,
+    megalodon: 160000,
+    coins_100: 190000,
+    waterfall_eel: 210000,
+    portal_leech: 230000,
+  };
+  let careerXp = 0;
+  let careerLevel = 1;
+  let careerBackfilled = false;
+  let careerLastGain = 0;
+  let careerLastGainT = 0;
+  /** Isle Pass XP (gains with career XP + light playtime). */
+  let passXp = 0;
+  let passClaimed = {};
+  let passPlayAcc = 0;
+  /** name → estimated career level cache for boards / lobby. */
+  let careerLevelCache = {};
   const NOV_QUESTS = [
     {
       id: "bolt",
@@ -830,6 +968,27 @@
       title: "INDY SKIN",
       blurb: "QUEST REWARD",
       detail: "5 MASK% RUNS",
+    },
+    {
+      kind: "skin",
+      id: "cole_hocker",
+      title: "HOCKER",
+      blurb: "ISLE PASS",
+      detail: "FREE PASS + US FLAG",
+    },
+    {
+      kind: "skin",
+      id: "steve_prefontaine",
+      title: "PRE",
+      blurb: "ISLE PASS",
+      detail: "STEVE PREFONTAINE",
+    },
+    {
+      kind: "skin",
+      id: "eric_cartman",
+      title: "CARTMAN",
+      blurb: "ISLE PASS",
+      detail: "FREE PASS NODE 15",
     },
     {
       kind: "quest",
@@ -1016,7 +1175,8 @@
       scene === "sub" ||
       scene === "floor" ||
       scene === "wreck" ||
-      scene === "vein"
+      scene === "vein" ||
+      (rome && rome.isScene())
     );
   }
 
@@ -1029,6 +1189,7 @@
     if (scene === "floor") return FLOOR_W;
     if (scene === "wreck") return WRECK_W;
     if (scene === "vein" && vein) return vein.VEIN_W;
+    if (rome && rome.isScene()) return rome.worldW();
     return SHOP_W;
   }
 
@@ -1041,6 +1202,7 @@
     if (scene === "floor") return FLOOR_H;
     if (scene === "wreck") return WRECK_H;
     if (scene === "vein" && vein) return vein.VEIN_H;
+    if (rome && rome.isScene()) return rome.worldH();
     return SHOP_H;
   }
 
@@ -1412,6 +1574,7 @@
   }
 
   function isSolidPoint(px, py) {
+    if (rome && rome.isScene()) return rome.solid(px, py);
     if (scene === "shop") return !!hitPad(px, py, shopSolids);
     if (scene === "fish") return !!hitPad(px, py, fishSolids);
     if (scene === "cabin") return !!hitPad(px, py, cabinSolids);
@@ -1431,6 +1594,7 @@
   }
 
   function canStand(px, py) {
+    if (rome && rome.isScene()) return !rome.solid(px, py);
     if (isSolidPoint(px, py)) return false;
     if (scene === "shop") {
       return px >= 8 && py >= 10 && px < SHOP_W - 8 && py < SHOP_H - 6;
@@ -2697,7 +2861,7 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || diveTransit()) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || diveTransit() || (rome && rome.blocksMove())) {
       dx = 0;
       dy = 0;
       player.moving = false;
@@ -2709,14 +2873,16 @@
       !guideOpen &&
       !cabinCut.kind &&
       !uiBlocksPlay() &&
-      !chatCapturesInput()
+      !chatCapturesInput() &&
+      !(rome && rome.blocksMove())
     ) {
       if (player.aboard && aboardKind === "dinghy" && pondBoat && scene === "island") {
         steerDinghy(dt, dx, dy);
       } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
         steerOwnedBoat(dt, dx, dy);
       } else {
-        const speed = (player.inWater || wadingPond ? 70 : 165) * dt;
+        const moveMul = rome && rome.isScene() ? rome.moveMul() : 1;
+        const speed = (player.inWater || wadingPond ? 70 : 165) * moveMul * dt;
         if (player.moving) {
           const len = Math.hypot(dx, dy) || 1;
           const nx = player.x + (dx / len) * speed;
@@ -2730,8 +2896,14 @@
     }
 
     if (isIndoor()) {
-      player.x = Math.max(8, Math.min(indoorW() - player.w - 8, player.x));
-      player.y = Math.max(10, Math.min(indoorH() - player.h - 4, player.y));
+      if (scene === "vein" && vein) {
+        // Vein clamps per-room inside vein.update (sealed gates / room sync).
+        player.x = Math.max(8, Math.min(vein.VEIN_W - player.w - 8, player.x));
+        player.y = Math.max(10, Math.min(vein.VEIN_H - player.h - 4, player.y));
+      } else {
+        player.x = Math.max(8, Math.min(indoorW() - player.w - 8, player.x));
+        player.y = Math.max(10, Math.min(indoorH() - player.h - 4, player.y));
+      }
     } else {
       player.x = Math.max(0, Math.min(COLS * TILE - player.w, player.x));
       player.y = Math.max(0, Math.min(ROWS * TILE - player.h, player.y));
@@ -3128,39 +3300,359 @@
     markQuestDone("usa");
   }
 
-  function openQuestMenu() {
+  function prepareWeeklySpinState() {
+    const period = weeklySpinPeriod();
+    spinCursor = 0;
+    spinNote = "";
+    spinReel = null;
+    spinPeriodKey = period.key;
+    spinUsed = 0;
+    spinNextWeekTold = false;
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) {
+      spinNote = "SIGN IN";
+      return;
+    }
+    if (api.getWeeklySpinsLocal) spinUsed = api.getWeeklySpinsLocal(period.key) | 0;
+    if (spinUsed >= WEEKLY_SPIN.spins) spinNextWeekTold = false;
+    if (!api.getWeeklySpins) return;
+    api.getWeeklySpins(period.key).then((res) => {
+      if (uiScreen !== "quests" || questTab !== "weekly" || spinPeriodKey !== period.key) return;
+      spinUsed = res && typeof res.used === "number" ? Math.max(0, Math.min(WEEKLY_SPIN.spins, res.used | 0)) : 0;
+    });
+  }
+
+  /** Unified Rewards hub: quests + weekly + islepass. */
+  function openRewardsMenu(tab) {
     uiScreen = "quests";
+    const t =
+      tab === "weekly" || tab === "levels" || tab === "islepass" || tab === "pass" || tab === "quests"
+        ? tab
+        : "quests";
+    questTab = t === "islepass" || t === "pass" ? "levels" : t;
+    levelsPage = t === "islepass" || t === "pass" || t === "levels" ? "pass" : "overview";
+    if (t === "levels" && tab === "levels") levelsPage = "overview";
     questCursor = 0;
     syncQuestOwnershipFlags();
-    // Prefer first claimable quest
-    for (let i = 0; i < NOV_QUESTS.length; i++) {
-      if (questStatus(NOV_QUESTS[i]) === "claimable") {
-        questCursor = i;
-        break;
+    syncCareerFromAccountHistory();
+    refreshCareerLevelCache();
+    syncIslePassUnlocks();
+    if (questTab === "weekly") prepareWeeklySpinState();
+    if (questTab === "quests") {
+      for (let i = 0; i < NOV_QUESTS.length; i++) {
+        if (questStatus(NOV_QUESTS[i]) === "claimable") {
+          questCursor = i;
+          break;
+        }
       }
     }
   }
 
-  function drawQuestScreen() {
-    const uiW = canvas.width / SCALE_UI;
-    const uiH = canvas.height / SCALE_UI;
-    ctx.globalAlpha = 0.55;
-    px(0, 0, uiW, uiH, "#0b1a22");
-    ctx.globalAlpha = 1;
-    const w = 240;
-    const rowH = 14;
-    const h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * rowH + 36);
-    const x = ((uiW - w) / 2) | 0;
-    const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, w, h, "NOV QUESTS");
-    drawPixText("CLAIM REWARDS HERE", (x + w / 2) | 0, y + 16, "#5c3a21", "center");
+  function openQuestMenu() {
+    openRewardsMenu("quests");
+  }
 
+  function openIslePassMenu() {
+    openRewardsMenu("islepass");
+  }
+
+  function drawQuestTabSwitchers(x, y, w) {
+    const tabs = [
+      { id: "quests", label: "QUESTS" },
+      { id: "weekly", label: "WEEKLY" },
+      { id: "levels", label: "ISLEPASS" },
+    ];
+    const gap = 3;
+    const tw = ((w - 12 - gap * 2) / 3) | 0;
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      const tx = x + 6 + i * (tw + gap);
+      const on = questTab === t.id;
+      const hot = !on && menuHovering("qtab:" + t.id);
+      px(tx, y, tw, 12, on ? "#c9a227" : "#3a2414");
+      px(tx + 1, y + 1, tw - 2, 10, on ? "#e8c44a" : hot ? "#5c3a21" : "#8a5a32");
+      drawPixTextSm(t.label, tx + ((tw / 2) | 0), y + 3, on ? "#2b1c12" : "#f3e2c4", "center");
+      addMenuHit(
+        "qtab:" + t.id,
+        tx,
+        y,
+        tw,
+        12,
+        () => {
+          questTab = t.id;
+          if (t.id === "weekly") prepareWeeklySpinState();
+          if (t.id === "levels") {
+            levelsPage = "pass";
+            syncCareerFromAccountHistory();
+            syncIslePassUnlocks();
+          }
+        },
+        { hover: true }
+      );
+    }
+  }
+
+  function drawLevelsPageSwitchers(x, y, w) {
+    const pages = [
+      { id: "overview", label: "RANK" },
+      { id: "tiers", label: "TIERS" },
+      { id: "pass", label: "PASS" },
+    ];
+    const gap = 3;
+    const tw = ((w - 12 - gap * 2) / 3) | 0;
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      const tx = x + 6 + i * (tw + gap);
+      const on = levelsPage === p.id;
+      const hot = !on && menuHovering("lpage:" + p.id);
+      px(tx, y, tw, 11, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
+      drawPixTextSm(p.label, tx + ((tw / 2) | 0), y + 3, on ? "#2b1c12" : "#c4a574", "center");
+      addMenuHit(
+        "lpage:" + p.id,
+        tx,
+        y,
+        tw,
+        11,
+        () => {
+          levelsPage = p.id;
+        },
+        { hover: true }
+      );
+    }
+  }
+
+  function drawLevelsOverview(x, y, w, h) {
+    const prog = careerXpIntoLevel(careerXp);
+    const tier = careerTierOf(careerLevel);
+    const top = y + 48;
+    drawPixText("YOUR RANK", (x + w / 2) | 0, top, "#5c3a21", "center");
+    drawLevelBadge(careerLevel, (x + w / 2 - 10) | 0, top + 12);
+    drawPixText(tier.label, (x + w / 2) | 0, top + 24, "#3a2414", "center");
+    const barW = w - 24;
+    const barX = x + 12;
+    const barY = top + 38;
+    const fill = Math.floor(barW * Math.min(1, prog.into / Math.max(1, prog.need)));
+    px(barX, barY, barW, 6, "#3a2414");
+    px(barX + 1, barY + 1, barW - 2, 4, "#5c3a21");
+    if (fill > 0) px(barX + 1, barY + 1, Math.max(1, fill - 2), 4, tier.color);
+    drawPixTextSm(
+      prog.into + " / " + prog.need + " XP",
+      (x + w / 2) | 0,
+      barY + 10,
+      "#5c3a21",
+      "center"
+    );
+    const lines = [
+      "XP FROM SPEEDRUNS ONLY",
+      "FASTER + HARDER = MORE",
+      "SUBMIT + PB + WR BONUS",
+      "SILVER+ IS A LONG GRIND",
+    ];
+    for (let i = 0; i < lines.length; i++) {
+      drawPixTextSm(lines[i], (x + w / 2) | 0, barY + 24 + i * 10, "#3a2414", "center");
+    }
+    if (careerLastGainT > 0 && careerLastGain > 0) {
+      drawPixText("+" + careerLastGain + " XP", (x + w / 2) | 0, y + h - 28, "#5c3a21", "center");
+    }
+  }
+
+  function drawLevelsTiers(x, y, w) {
+    const tiers = [
+      { lo: 1, hi: 20, id: "bronze" },
+      { lo: 21, hi: 35, id: "silver" },
+      { lo: 36, hi: 55, id: "gold" },
+      { lo: 56, hi: 75, id: "diamond" },
+      { lo: 76, hi: 99, id: "champion" },
+    ];
+    const top = y + 48;
+    drawPixText("RANK TIERS", (x + w / 2) | 0, top, "#5c3a21", "center");
+    for (let i = 0; i < tiers.length; i++) {
+      const t = tiers[i];
+      const def = careerTierOf(t.lo);
+      const oy = top + 14 + i * 14;
+      const on = careerLevel >= t.lo && careerLevel <= (t.hi === 99 ? 999 : t.hi);
+      if (on) px(x + 8, oy - 2, w - 16, 12, "#e8c44a");
+      px(x + 12, oy, 10, 7, def.edge);
+      px(x + 13, oy + 1, 8, 5, def.color);
+      const range = t.hi >= 99 ? t.lo + "+" : t.lo + "-" + t.hi;
+      drawPixText(def.label + "  " + range, x + 28, oy, on ? "#2b1c12" : "#3a2414");
+    }
+    drawPixTextSm("ALMOST NO ONE REACHES GOLD", (x + w / 2) | 0, top + 90, "#5c3a21", "center");
+  }
+
+  function passNodeKindColor(kind) {
+    if (kind === "skin") return "#e8c44a";
+    if (kind === "cape") return "#7ec8e8";
+    if (kind === "face") return "#c4a574";
+    if (kind === "particle") return "#9ad87a";
+    return "#8a6a42";
+  }
+
+  function passNodeKey(node) {
+    return String((node && node.n) || "");
+  }
+
+  function passNodeStatus(node) {
+    if (!node || !node.rewardId) return "empty";
+    const key = passNodeKey(node);
+    if (passClaimed[key]) return "claimed";
+    if ((passXp | 0) >= (node.xp | 0) && (node.xp | 0) > 0) return "claimable";
+    return "locked";
+  }
+
+  function grantPassReward(node) {
+    if (!node || !node.rewardId) return false;
+    if (node.kind === "skin") return grantSkin(node.rewardId) || ownsSkin(node.rewardId);
+    if (node.kind === "cape" || node.kind === "face") {
+      return grantCosmetic(node.rewardId) || ownsCosmetic(node.rewardId);
+    }
+    return false;
+  }
+
+  function claimPassNode(node) {
+    if (passNodeStatus(node) !== "claimable") return false;
+    const ok = grantPassReward(node);
+    if (!ok) return false;
+    passClaimed[passNodeKey(node)] = true;
+    saveCareer();
+    saveLockerProfile();
+    questTip = "PASS: " + String(node.label || "REWARD");
+    questTipT = 2.4;
+    cosTip = questTip;
+    cosTipT = 2.4;
+    playXpChime();
+    return true;
+  }
+
+  /** Auto-claim any unlocked pass nodes. */
+  function syncIslePassUnlocks() {
+    const nodes = FREE_PASS.nodes || [];
+    let any = false;
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      if (passNodeStatus(node) !== "claimable") continue;
+      if (claimPassNode(node)) any = true;
+    }
+    return any;
+  }
+
+  function passFinaleXp() {
+    const nodes = FREE_PASS.nodes || [];
+    let best = 1;
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n && n.rewardId && (n.xp | 0) > best) best = n.xp | 0;
+    }
+    return best;
+  }
+
+  function drawLevelsPass(x, y, w, h) {
+    const nodes = FREE_PASS.nodes || [];
+    const top = y + 48;
+    const finale = passFinaleXp();
+    const prog = Math.min(1, (passXp | 0) / Math.max(1, finale));
+    drawPixText(FREE_PASS.label || "ISLE PASS", (x + w / 2) | 0, top, "#5c3a21", "center");
+    drawPixTextSm(
+      (passXp | 0) + " / " + finale + " PASS XP",
+      (x + w / 2) | 0,
+      top + 10,
+      "#8a5a32",
+      "center"
+    );
+    const barW = w - 24;
+    const barX = x + 12;
+    const barY = top + 20;
+    px(barX, barY, barW, 5, "#3a2414");
+    px(barX + 1, barY + 1, barW - 2, 3, "#5c3a21");
+    const fill = Math.floor((barW - 2) * prog);
+    if (fill > 0) px(barX + 1, barY + 1, fill, 3, "#e8c44a");
+
+    const listTop = top + 30;
+    const listBot = y + h - 18;
+    const rowH = 14;
+    const viewH = Math.max(14, listBot - listTop);
+    const maxScroll = Math.max(0, nodes.length * rowH - viewH);
+    if (passScroll < 0) passScroll = 0;
+    if (passScroll > maxScroll) passScroll = maxScroll;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 6, listTop, w - 12, viewH);
+    ctx.clip();
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i];
+      const oy = listTop - passScroll + i * rowH;
+      if (oy + rowH < listTop || oy > listBot) continue;
+      const st = passNodeStatus(node);
+      const col =
+        st === "claimed" ? "#5c3a21" : st === "claimable" ? "#e8c44a" : passNodeKindColor(node.kind);
+      if (st === "claimable") px(x + 8, oy - 1, w - 16, rowH - 1, "#e8c44a");
+      px(x + 8, oy, 14, 11, "#3a2414");
+      px(x + 9, oy + 1, 12, 9, col);
+      drawPixTextSm(String(node.n | (i + 1)).padStart(2, "0"), x + 15, oy + 2, "#2b1c12", "center");
+      const lab = String(node.label || "TBD").slice(0, 12);
+      drawPixTextSm(lab, x + 26, oy + 2, st === "claimable" ? "#2b1c12" : "#3a2414");
+      const right =
+        st === "claimed" ? "OWN" : st === "claimable" ? "CLAIM" : st === "empty" ? "TBD" : String(node.xp | 0);
+      drawPixTextSm(right, x + w - 14, oy + 2, st === "claimable" ? "#2b1c12" : "#8a5a32", "right");
+      addMenuHit(
+        "passnode:" + i,
+        x + 8,
+        oy,
+        w - 16,
+        rowH - 2,
+        () => {
+          if (st === "claimable") claimPassNode(node);
+          else {
+            questTip = String(node.blurb || node.label || "NODE").toUpperCase().slice(0, 28);
+            questTipT = 2.2;
+            cosTip = questTip;
+            cosTipT = 2.2;
+          }
+        },
+        { hover: true }
+      );
+    }
+    ctx.restore();
+
+    if (maxScroll > 0) {
+      drawPixTextSm("^ V SCROLL", (x + w / 2) | 0, y + h - 14, "#8a5a32", "center");
+      addMenuHit(
+        "pass:up",
+        x + 8,
+        listTop,
+        w - 16,
+        10,
+        () => {
+          passScroll = Math.max(0, passScroll - rowH * 2);
+        },
+        { hover: true }
+      );
+      addMenuHit(
+        "pass:down",
+        x + 8,
+        listBot - 10,
+        w - 16,
+        10,
+        () => {
+          passScroll = Math.min(maxScroll, passScroll + rowH * 2);
+        },
+        { hover: true }
+      );
+    }
+  }
+
+  function drawQuestListPanel(x, y, w, h) {
+    drawPixText("CLAIM REWARDS HERE", (x + w / 2) | 0, y + 32, "#5c3a21", "center");
+    const rowH = 14;
+    const listTop = y + 44;
     for (let i = 0; i < NOV_QUESTS.length; i++) {
       const q = NOV_QUESTS[i];
       const st = questStatus(q);
       const key = "quest:" + i;
       const sel = questCursor === i || menuHovering(key);
-      const oy = y + 28 + i * rowH;
+      const oy = listTop + i * rowH;
+      if (oy > y + h - 40) break;
       if (sel) px(x + 6, oy - 2, w - 12, 12, "#e8c44a");
       const stLabel = st === "claimed" ? "DONE" : st === "claimable" ? "CLAIM" : "----";
       const stCol = st === "claimed" ? "#5c3a21" : st === "claimable" ? "#2b1c12" : "#8a5a32";
@@ -3179,7 +3671,6 @@
         { hover: true }
       );
     }
-
     const cur = NOV_QUESTS[questCursor] || NOV_QUESTS[0];
     const st = questStatus(cur);
     let detail = cur.desc;
@@ -3193,10 +3684,99 @@
       drawPixText("CLAIM", (x + w / 2) | 0, by, "#2b1c12", "center");
       addMenuHit("quest:claim", bx, by - 2, 72, 11, () => claimQuest(cur.id), { hover: true });
     } else {
-      drawPixText(st === "claimed" ? "ALREADY CLAIMED" : "NOT COMPLETE", (x + w / 2) | 0, y + h - 12, "#8a5a32", "center");
+      drawPixText(
+        st === "claimed" ? "ALREADY CLAIMED" : "NOT COMPLETE",
+        (x + w / 2) | 0,
+        y + h - 12,
+        "#8a5a32",
+        "center"
+      );
     }
-    drawPixText("ESC", x + 10, y + h - 12, "#5c3a21");
-    addMenuHit("quest:esc", x + 8, y + h - 14, 28, 10, () => backToModeMenu(), { hover: true });
+  }
+
+  function drawWeeklyRewardsPanel(x, y, w, h) {
+    const period = weeklySpinPeriod();
+    const api = lbApi();
+    const signed = !!(api && api.isSignedIn && api.isSignedIn());
+    const left = Math.max(0, WEEKLY_SPIN.spins - spinUsed);
+    const busy = spinReelBusy();
+    drawPixText(period.label, (x + w / 2) | 0, y + 34, "#5c3a21", "center");
+    drawPixText("LEFT " + left + "  FREE", (x + w / 2) | 0, y + 46, "#3a2414", "center");
+    drawSpinReelStrip(x + 14, y + 58, w - 28, 30);
+    let action = "SPIN";
+    if (!signed) action = "SIGN IN";
+    else if (busy) action = "...";
+    else if (left <= 0) action = "NEXT WEEK";
+    const spinSel = !busy && menuHovering("spin:go");
+    if (spinSel) px(x + 18, y + 96, w - 36, 11, "#e8c44a");
+    drawPixText(action, (x + w / 2) | 0, y + 98, spinSel ? "#2b1c12" : "#3a2414", "center");
+    addMenuHit(
+      "spin:go",
+      x + 18,
+      y + 96,
+      w - 36,
+      11,
+      () => {
+        if (busy) return;
+        if (!signed) {
+          uiScreen = "account";
+          authMode = "menu";
+          authStatus = "";
+          srCursor = 0;
+          return;
+        }
+        tryWeeklySpin();
+      },
+      { hover: !busy }
+    );
+    if (!busy && spinNote) {
+      drawPixText(String(spinNote).slice(0, 18), (x + w / 2) | 0, y + 114, "#2b1c12", "center");
+    }
+    drawPixTextSm("ACCOUNT REQUIRED TO SPIN", (x + w / 2) | 0, y + h - 28, "#5c3a21", "center");
+  }
+
+  function drawQuestScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 252;
+    let h = 156;
+    if (questTab === "quests") h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * 14 + 56);
+    else if (questTab === "weekly") h = 148;
+    else if (questTab === "levels" && levelsPage === "pass") h = Math.min(uiH - 10, 188);
+    else h = 156;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, questTab === "levels" ? "ISLEPASS" : "REWARDS");
+    drawQuestTabSwitchers(x, y + 16, w);
+
+    if (questTab === "levels") {
+      drawLevelsPageSwitchers(x, y + 32, w);
+      if (levelsPage === "tiers") drawLevelsTiers(x, y, w);
+      else if (levelsPage === "pass") drawLevelsPass(x, y, w, h);
+      else drawLevelsOverview(x, y, w, h);
+    } else if (questTab === "weekly") {
+      drawWeeklyRewardsPanel(x, y, w, h);
+    } else {
+      drawQuestListPanel(x, y, w, h);
+    }
+
+    const canEsc = !(questTab === "weekly" && spinReelBusy());
+    drawPixText("ESC", x + 10, y + h - 12, canEsc ? "#5c3a21" : "#8a5a32");
+    addMenuHit(
+      "quest:esc",
+      x + 8,
+      y + h - 14,
+      28,
+      10,
+      () => {
+        if (!canEsc) return;
+        backToModeMenu();
+      },
+      { hover: canEsc }
+    );
   }
 
   function lockerPreviewSkin() {
@@ -3280,6 +3860,10 @@
     if (cosmetics.back && !ownsCosmetic(cosmetics.back)) grantCosmetic(cosmetics.back);
     syncQuestOwnershipFlags();
     tryGrantAmericanCloak();
+    loadCareer();
+    backfillCareerFromHistory();
+    refreshCareerLevelCache();
+    syncIslePassUnlocks();
   }
 
   function addToInventory(id) {
@@ -3320,38 +3904,339 @@
     return true;
   }
 
+  /** Legacy survival XP curve — unused (loot XP removed). Kept for old saves. */
   function xpNeeded(level) {
     return 24 + (level - 1) * 16;
   }
 
-  function gainXp(amount) {
-    if (amount <= 0) return;
-    const fromXp = player.xp;
-    const fromLevel = player.level;
-    player.xp += amount;
-    let leveled = 0;
-    while (player.xp >= xpNeeded(player.level)) {
-      player.xp -= xpNeeded(player.level);
-      player.level += 1;
-      leveled += 1;
-    }
-    if (leveled > 0 && playMode === "normal") {
-      const api = lbApi();
-      if (api && api.noteNmEvent) api.noteNmEvent("level", player.level);
-    }
-    xpFx = {
-      t: 0,
-      amount,
-      leveled,
-      fromXp,
-      fromLevel,
-    };
+  /** Survival loot no longer grants XP. Vein/bridge may still call this — ignore. */
+  function gainXp(_amount) {
+    return;
   }
 
   function updateXpFx(dt) {
+    if (careerLastGainT > 0) {
+      careerLastGainT = Math.max(0, careerLastGainT - dt);
+    }
     if (!xpFx) return;
     xpFx.t += dt;
     if (xpFx.t > (xpFx.leveled ? 1.55 : 0.95)) xpFx = null;
+  }
+
+  function careerXpCost(level) {
+    // XP to go from `level` → level+1. Brutal exponential.
+    const L = Math.max(1, level | 0);
+    return Math.floor(110 * Math.pow(1.195, L - 1));
+  }
+
+  function careerXpToReach(level) {
+    const target = Math.max(1, level | 0);
+    let sum = 0;
+    for (let L = 1; L < target; L++) sum += careerXpCost(L);
+    return sum;
+  }
+
+  function careerLevelFromXp(xp) {
+    let lv = 1;
+    let rem = Math.max(0, xp | 0);
+    // Soft cap display at 200; grind beyond is allowed
+    while (lv < 200) {
+      const need = careerXpCost(lv);
+      if (rem < need) break;
+      rem -= need;
+      lv += 1;
+    }
+    return lv;
+  }
+
+  function careerXpIntoLevel(xp) {
+    let rem = Math.max(0, xp | 0);
+    let lv = 1;
+    while (lv < 200) {
+      const need = careerXpCost(lv);
+      if (rem < need) return { level: lv, into: rem, need };
+      rem -= need;
+      lv += 1;
+    }
+    return { level: 200, into: rem, need: careerXpCost(200) };
+  }
+
+  function careerTierOf(level) {
+    const lv = Math.max(1, level | 0);
+    if (lv >= 76)
+      return { id: "champion", label: "CHAMPION", short: "CHMP", color: "#ffe27a", edge: "#5c3a21", ink: "#2b1c12" };
+    if (lv >= 56)
+      return { id: "diamond", label: "DIAMOND", short: "DIA", color: "#9ad8f0", edge: "#1a4060", ink: "#0a2030" };
+    if (lv >= 36)
+      return { id: "gold", label: "GOLD", short: "GOLD", color: "#e8c44a", edge: "#5c3a21", ink: "#2b1c12" };
+    if (lv >= 21)
+      return { id: "silver", label: "SILVER", short: "SILV", color: "#d0d8e0", edge: "#3a4450", ink: "#1a2030" };
+    return { id: "bronze", label: "BRONZE", short: "BRNZ", color: "#c4a574", edge: "#5c3a21", ink: "#2b1c12" };
+  }
+
+  function catWeight(cat) {
+    return CAT_WEIGHT[cat] || 1.4;
+  }
+
+  function catBoardWrMs(cat) {
+    const api = lbApi();
+    if (api && api.getCachedBoard) {
+      const rows = api.getCachedBoard(cat) || [];
+      if (rows[0] && (rows[0].time_ms | 0) > 0) return rows[0].time_ms | 0;
+    }
+    return CAT_SOFT_WR[cat] || 90000;
+  }
+
+  /**
+   * XP for one run event. opts: { submitted, pb, wr, wrMs }
+   * Intentionally small — ranks take a long grind.
+   */
+  function careerXpForRun(cat, timeMs, opts) {
+    const o = opts || {};
+    const w = catWeight(cat);
+    const wr = (o.wrMs | 0) > 0 ? o.wrMs | 0 : catBoardWrMs(cat);
+    const ms = Math.max(1, timeMs | 0);
+    const ratio = Math.min(1.85, Math.max(0.35, wr / ms));
+    let xp = Math.floor(8 * w * ratio); // finish
+    if (o.submitted) xp += Math.floor(xp * 0.75);
+    if (o.pb) xp += Math.floor(12 * w * ratio);
+    if (o.wr) xp += Math.floor(32 * w);
+    return Math.max(1, xp | 0);
+  }
+
+  function saveCareer() {
+    try {
+      localStorage.setItem(
+        CAREER_KEY,
+        JSON.stringify({
+          xp: careerXp | 0,
+          level: careerLevel | 0,
+          backfilled: !!careerBackfilled,
+          backfillVer: careerBackfillVer | 0,
+          passXp: passXp | 0,
+          passClaimed: passClaimed || {},
+        })
+      );
+    } catch (e) {}
+  }
+
+  function loadCareer() {
+    let data = null;
+    try {
+      data = JSON.parse(localStorage.getItem(CAREER_KEY) || "");
+    } catch (e) {
+      data = null;
+    }
+    if (data && typeof data === "object") {
+      careerXp = Math.max(0, data.xp | 0);
+      careerLevel = Math.max(1, data.level | 0);
+      careerBackfilled = !!data.backfilled;
+      careerBackfillVer = data.backfillVer | 0;
+      passXp = Math.max(0, data.passXp | 0);
+      passClaimed = data.passClaimed && typeof data.passClaimed === "object" ? data.passClaimed : {};
+    } else {
+      careerXp = 0;
+      careerLevel = 1;
+      careerBackfilled = false;
+      careerBackfillVer = 0;
+      passXp = 0;
+      passClaimed = {};
+    }
+    // Recompute level from xp (source of truth)
+    careerLevel = careerLevelFromXp(careerXp);
+  }
+
+  /**
+   * Rebuild career XP from what this account/device has already done:
+   * local+cloud PRs, run/submit counters, category breadth.
+   * Soft-capped so even stacked accounts stay at/under bronze edge (lv20).
+   */
+  function computeCareerXpFromHistory() {
+    const api = lbApi();
+    let xp = 0;
+    let cats = 0;
+    const prs = api && api.listLocalPrs ? api.listLocalPrs() : [];
+    for (let i = 0; i < prs.length; i++) {
+      const p = prs[i];
+      if (!p || !(p.time_ms > 0)) continue;
+      cats += 1;
+      const wrMs = catBoardWrMs(p.category);
+      const isWr = (p.time_ms | 0) <= wrMs && wrMs > 0;
+      xp += careerXpForRun(p.category, p.time_ms, {
+        submitted: true,
+        pb: true,
+        wr: isWr,
+        wrMs,
+      });
+    }
+    // Breadth bonus — more categories cleared = higher rank floor
+    xp += cats * 10;
+
+    const sr = api && api.loadLocalSrStats ? api.loadLocalSrStats() : null;
+    let runs = (sr && sr.runs) || 0;
+    let submits = (sr && sr.submits) || 0;
+    const prof = api && api.currentProfile ? api.currentProfile() : null;
+    if (prof) {
+      runs = Math.max(runs | 0, prof.total_runs | 0);
+      submits = Math.max(submits | 0, prof.total_submits | 0);
+    }
+    // Diminishing returns on raw volume so grinders don't skip silver
+    const runXp =
+      Math.min(runs, 80) * 4 +
+      Math.max(0, Math.min(runs - 80, 200)) * 2 +
+      Math.max(0, Math.min(runs - 280, 400)) * 1;
+    const submitXp =
+      Math.min(submits, 60) * 6 + Math.max(0, Math.min(submits - 60, 200)) * 2;
+    xp += runXp + submitXp;
+
+    // Soft cap: max bronze (lv 20). Silver+ must be earned live.
+    const bronzeCap = careerXpToReach(21) - 1;
+    return Math.min(Math.max(0, xp | 0), bronzeCap);
+  }
+
+  function applyCareerXp(amount, reason) {
+    const add = Math.max(0, amount | 0);
+    if (add <= 0) return 0;
+    const prev = careerLevel;
+    careerXp += add;
+    careerLevel = careerLevelFromXp(careerXp);
+    careerLastGain = add;
+    careerLastGainT = 2.4;
+    // Isle Pass shares speedrun XP (primary grind).
+    passXp = (passXp | 0) + add;
+    saveCareer();
+    syncIslePassUnlocks();
+    // Remember self in display cache
+    const me = hubLocalName();
+    if (me) careerLevelCache[String(me).toUpperCase()] = careerLevel;
+    if (careerLevel > prev) {
+      questTip = "RANK UP LV " + careerLevel;
+      questTipT = 2.8;
+      cosTip = questTip;
+      cosTipT = 2.8;
+      playXpChime();
+    }
+    return add;
+  }
+
+  /** Slow pass XP while actively in-world (normal or speedrun). ~120 XP / hour. */
+  function tickIslePassPlaytime(dt) {
+    if (!(playMode === "normal" || playMode === "speedrun")) return;
+    if (uiBlocksPlay() || guideOpen) return;
+    if (playMode === "speedrun" && !srRunning) return;
+    passPlayAcc += dt;
+    // 1 XP every 30s of live play (~120/hr) — softens pure speedrun gate for 1–3h clears
+    while (passPlayAcc >= 30) {
+      passPlayAcc -= 30;
+      passXp = (passXp | 0) + 1;
+      saveCareer();
+      syncIslePassUnlocks();
+    }
+  }
+
+  /**
+   * Sync rank upward from account/device history (PRs, runs, submits).
+   * Never lowers live XP; never grants silver+ from history alone.
+   */
+  function syncCareerFromAccountHistory() {
+    const hist = computeCareerXpFromHistory();
+    if (hist > careerXp) careerXp = hist;
+    careerLevel = careerLevelFromXp(careerXp);
+    careerBackfilled = true;
+    careerBackfillVer = CAREER_BACKFILL_VER;
+    saveCareer();
+  }
+
+  function backfillCareerFromHistory() {
+    // Re-run when formula version bumps so existing accounts get adjusted ranks.
+    if (careerBackfilled && careerBackfillVer >= CAREER_BACKFILL_VER) {
+      careerLevel = careerLevelFromXp(careerXp);
+      return;
+    }
+    syncCareerFromAccountHistory();
+  }
+
+  /** Estimate another player's level from known category PRs (board caches). */
+  function estimateCareerLevelFromPrs(prsMap, extra) {
+    if (!prsMap) return 1;
+    let xp = 0;
+    let cats = 0;
+    const keys = Object.keys(prsMap);
+    for (let i = 0; i < keys.length; i++) {
+      const cat = keys[i];
+      const ms = prsMap[cat] | 0;
+      if (ms <= 0) continue;
+      cats += 1;
+      const wrMs = catBoardWrMs(cat);
+      xp += careerXpForRun(cat, ms, {
+        submitted: true,
+        pb: true,
+        wr: ms <= wrMs,
+        wrMs,
+      });
+    }
+    xp += cats * 10;
+    const o = extra || {};
+    const runs = Math.min(300, o.runs | 0);
+    const submits = Math.min(200, o.submits | 0);
+    xp +=
+      Math.min(runs, 80) * 4 +
+      Math.max(0, Math.min(runs - 80, 200)) * 2 +
+      Math.min(submits, 60) * 6;
+    const bronzeCap = careerXpToReach(21) - 1;
+    return careerLevelFromXp(Math.min(xp, bronzeCap));
+  }
+
+  function refreshCareerLevelCache() {
+    const api = lbApi();
+    careerLevelCache = {};
+    const me = hubLocalName();
+    if (me) careerLevelCache[String(me).toUpperCase()] = careerLevel;
+    if (!api || !api.buildLocalProfileIndex && !api.searchLocalProfiles) {
+      // searchLocalProfiles uses the index; get cards via empty search
+    }
+    if (api && api.searchLocalProfiles) {
+      const cards = api.searchLocalProfiles("");
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        if (!c || !c.name) continue;
+        const key = String(c.name).toUpperCase();
+        if (me && key === String(me).toUpperCase()) {
+          careerLevelCache[key] = careerLevel;
+          continue;
+        }
+        const runsGuess = Math.min(200, ((c.sr_playtime_ms | 0) / 60000) | 0);
+        careerLevelCache[key] = estimateCareerLevelFromPrs(c.prs || {}, {
+          runs: runsGuess,
+          submits: Object.keys(c.prs || {}).length,
+        });
+      }
+    }
+  }
+
+  function careerLevelForName(name) {
+    const key = String(name || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, "")
+      .trim();
+    if (!key) return 1;
+    const me = String(hubLocalName() || "")
+      .toUpperCase()
+      .trim();
+    if (me && key === me) return careerLevel;
+    if (careerLevelCache[key] != null) return careerLevelCache[key] | 0;
+    return 1;
+  }
+
+  function drawLevelBadge(level, x, y) {
+    const lv = Math.max(1, level | 0);
+    const tier = careerTierOf(lv);
+    const s = String(lv);
+    const tw = pixTextWidth(s);
+    px(x - 1, y - 1, tw + 5, 9, tier.edge);
+    px(x, y, tw + 3, 7, tier.color);
+    drawPixText(s, x + 2, y, tier.ink);
+    return tw + 6;
   }
 
   function inflightCount(id) {
@@ -3630,26 +4515,7 @@
   }
 
   function openSpinMenu() {
-    const period = weeklySpinPeriod();
-    uiScreen = "spin";
-    spinCursor = 0;
-    spinNote = "";
-    spinReel = null;
-    spinPeriodKey = period.key;
-    spinUsed = 0;
-    spinNextWeekTold = false;
-    const api = lbApi();
-    if (!api || !api.isSignedIn || !api.isSignedIn()) {
-      spinNote = "SIGN IN";
-      return;
-    }
-    if (api.getWeeklySpinsLocal) spinUsed = api.getWeeklySpinsLocal(period.key) | 0;
-    if (spinUsed >= WEEKLY_SPIN.spins) spinNextWeekTold = false;
-    if (!api.getWeeklySpins) return;
-    api.getWeeklySpins(period.key).then((res) => {
-      if (uiScreen !== "spin" || spinPeriodKey !== period.key) return;
-      spinUsed = res && typeof res.used === "number" ? Math.max(0, Math.min(WEEKLY_SPIN.spins, res.used | 0)) : 0;
-    });
+    openIslePassMenu();
   }
 
   function rollWeeklyPrize() {
@@ -3843,8 +4709,8 @@
 
   function updatePickup(dt) {
     let coinBatch = 0;
-    let xpBatch = 0;
     let slotBatch = -1;
+    let gotItem = false;
     for (let i = pickupAnims.length - 1; i >= 0; i--) {
       const a = pickupAnims[i];
       a.t += dt;
@@ -3859,15 +4725,15 @@
           cosTip = "COSMETIC UNLOCKED";
           cosTipT = 1.6;
         }
-        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
+        gotItem = true;
       } else if (a.dest === "satchel") {
         if (addToSatchel(a.id)) onItemCollected(a.id);
-        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
+        gotItem = true;
       } else if (a.dest !== "miss") {
         addToInventory(a.id);
         onItemCollected(a.id);
-        xpBatch += ITEM_DEFS[a.id] ? ITEM_DEFS[a.id].xp | 0 : 0;
         slotBatch = a.slot;
+        gotItem = true;
       }
       pickupAnims.splice(i, 1);
     }
@@ -3883,9 +4749,7 @@
       }
       checkCoinSpeedEnd();
     }
-    if (xpBatch > 0) {
-      gainXp(xpBatch);
-      playXpChime();
+    if (gotItem) {
       if (slotBatch >= 0) {
         heldSlot = slotBatch;
         cosSelect = null;
@@ -3927,7 +4791,11 @@
       return "SPACE CATCH";
     }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
-      return "PORTAL DORMANT";
+      return rome && carriesPortalLeech() ? "ENTER THE PORTAL" : "PORTAL DORMANT";
+    }
+    if (rome && rome.isScene()) {
+      const rp = rome.prompt();
+      if (rp) return rp;
     }
     if (vein) {
       const vp = vein.prompt();
@@ -4843,6 +5711,14 @@
   function ownsItem(id) {
     for (let i = 0; i < inventory.length; i++) {
       if (inventory[i] && inventory[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function carriesPortalLeech() {
+    if (ownsItem("portal_leech")) return true;
+    for (let i = 0; i < satchel.length; i++) {
+      if (satchel[i] && satchel[i].id === "portal_leech") return true;
     }
     return false;
   }
@@ -6295,8 +7171,10 @@
     const isAcc = !!o.isAccount;
     const isOnline = !!o.isOnline;
     const maxLen = o.maxLen == null ? (isAcc ? 7 : 10) : o.maxLen;
+    const showLv = o.level != null ? o.level | 0 : careerLevelForName(name);
     let cx = x;
     if (isOnline) cx += drawOnlineDot(cx, y);
+    if (showLv > 0) cx += drawLevelBadge(showLv, cx, y) + 2;
     if (isAcc) cx += drawNameTag(name, cx, y, maxLen);
     else cx += drawClassicBoardName(name, cx, y, maxLen);
     return cx - x;
@@ -7596,6 +8474,27 @@
   // Debug helpers for local playtests (mountain / Hollow Vein).
   window.__isleVein = {
     door: () => veinDoor,
+    state: () =>
+      vein
+        ? {
+            scene,
+            room: vein.getRoom(),
+            player: { x: player.x, y: player.y },
+            playMode,
+            uiScreen,
+            fadeMode,
+          }
+        : { scene, vein: false },
+    forceRoom: (r) => {
+      if (!vein) return false;
+      scene = "vein";
+      player.x = r * vein.ROOM_W + 28;
+      player.y = vein.ROOM_H - 42;
+      // poke internal room via enter-like path
+      vein.onEnter();
+      // after onEnter resets to 0 — use transition by walking
+      return true;
+    },
     gotoDoor: () => {
       if (!veinDoor) return null;
       scene = "island";
@@ -7612,11 +8511,16 @@
     enter: () => {
       ensureVein();
       if (!vein) return false;
+      playMode = "normal";
+      uiScreen = null;
+      guideOpen = false;
       if (!ownsItem("wand") && canTake("wand")) addToInventory("wand");
       beginFade("vein", { x: 28, y: (vein.ROOM_H || 152) - 42 });
       return true;
     },
     giveKit: () => {
+      playMode = "normal";
+      uiScreen = null;
       ["wand", "potion_red", "potion_blue", "potion_fury"].forEach((id) => {
         if (canTake(id)) addToInventory(id);
       });
@@ -9832,7 +10736,8 @@
       next.scene === "sub" ||
       next.scene === "floor" ||
       next.scene === "wreck" ||
-      next.scene === "vein"
+      next.scene === "vein" ||
+      (rome && rome.isScene(next.scene))
         ? 1
         : -1;
     if (
@@ -9842,10 +10747,12 @@
       next.scene === "sub" ||
       next.scene === "floor" ||
       next.scene === "wreck" ||
-      next.scene === "vein"
+      next.scene === "vein" ||
+      (rome && rome.isScene(next.scene))
     ) {
       player.aboard = false;
     }
+    if (rome && rome.isScene(next.scene)) rome.onEnter(next.scene);
     if (next.scene === "floor") scatterFloorSharks();
     if (next.scene === "vein") {
       ensureVein();
@@ -9913,6 +10820,10 @@
     }
     if (scene === "temple" && templeExit && playerHits(templeExit)) {
       beginFade("island", { x: templeIslandExit.x, y: templeIslandExit.y });
+    }
+    if (scene === "island" && ruinsPortal && rome && carriesPortalLeech() && playerHits(ruinsPortal)) {
+      ensureRome();
+      if (rome) rome.enterFromPortal();
     }
     if (scene === "island" && veinDoor && playerHits(veinDoor)) {
       ensureVein();
@@ -10385,6 +11296,14 @@
       px(x + 5, y + 4, 1, 3, "#78c0e8");
       return true;
     }
+    if (id === "stop_pre_flag") {
+      px(x, y + 1, 7, 6, "#1a1a1a");
+      px(x + 1, y + 2, 5, 1, "#f4f4f8");
+      px(x + 1, y + 4, 5, 1, "#f4f4f8");
+      px(x + 2, y + 3, 1, 1, "#e8c44a");
+      px(x + 4, y + 3, 1, 1, "#e8c44a");
+      return true;
+    }
     if (id === "cloak") {
       px(x + 1, y + 1, 4, 6, "#2a4470");
       px(x, y + 2, 2, 6, "#1a2848");
@@ -10807,19 +11726,22 @@
       id !== "cloak" &&
       id !== "norway_flag" &&
       id !== "jamaica_flag" &&
+      id !== "us_flag" &&
       id !== "job_app_cloak" &&
       id !== "american_cloak" &&
-      id !== "jelly_cape"
+      id !== "jelly_cape" &&
+      id !== "stop_pre_flag"
     ) {
       return;
     }
     const ember = id === "cape";
     const norway = id === "norway_flag";
     const jamaica = id === "jamaica_flag";
-    const usa = id === "american_cloak";
+    const usa = id === "american_cloak" || id === "us_flag";
     const jelly = id === "jelly_cape";
     const job = id === "job_app_cloak";
-    const flag = norway || jamaica || usa;
+    const stopPre = id === "stop_pre_flag";
+    const flag = norway || jamaica || usa || stopPre;
     const body = ember
       ? ["#f06040", "#e04a32", "#c43a28", "#a82820", "#8a2020", "#6a1410"]
       : norway
@@ -10828,11 +11750,13 @@
           ? ["#2a8a34", "#1e7028", "#186020", "#e8c44a", "#1a1a1a", "#0c0c0c"]
           : usa
             ? ["#c43a48", "#ba2030", "#f4f4f8", "#3a5aaa", "#2a4a88", "#1a3868"]
-            : jelly
-              ? ["#d8f0ff", "#a8d8f0", "#78c0e8", "#58a8d8", "#3a88c0", "#2868a0"]
-              : job
-                ? ["#f3e2c4", "#e8d5b0", "#d4c098", "#c4a574", "#8a6a42", "#5c3a21"]
-                : ["#3a5080", "#2a4470", "#243860", "#1e3058", "#1a2848", "#101828"];
+            : stopPre
+              ? ["#2a2a2a", "#1a1a1a", "#101010", "#0c0c0c", "#080808", "#040404"]
+              : jelly
+                ? ["#d8f0ff", "#a8d8f0", "#78c0e8", "#58a8d8", "#3a88c0", "#2868a0"]
+                : job
+                  ? ["#f3e2c4", "#e8d5b0", "#d4c098", "#c4a574", "#8a6a42", "#5c3a21"]
+                  : ["#3a5080", "#2a4470", "#243860", "#1e3058", "#1a2848", "#101828"];
     const edge = ember
       ? "#4a100c"
       : norway
@@ -10841,22 +11765,26 @@
           ? "#0a280c"
           : usa
             ? "#2a1020"
-            : jelly
-              ? "#1a4868"
-              : job
-                ? "#3a2414"
-                : "#0c1420";
+            : stopPre
+              ? "#040404"
+              : jelly
+                ? "#1a4868"
+                : job
+                  ? "#3a2414"
+                  : "#0c1420";
     const fold = ember
       ? "#f0a060"
       : norway || usa
         ? "#f4f4f8"
         : jamaica
           ? "#e8c44a"
-          : jelly
-            ? "#e8ffff"
-            : job
-              ? "#fff8e8"
-              : "#6a88b0";
+          : stopPre
+            ? "#f4f4f8"
+            : jelly
+              ? "#e8ffff"
+              : job
+                ? "#fff8e8"
+                : "#6a88b0";
     const rows = flag || jelly ? 14 : ember ? 11 : 12;
     const useAmp = flag || jelly ? amp * 1.35 : amp;
     for (let i = 0; i < rows; i++) {
@@ -10894,6 +11822,12 @@
         } else {
           px(x, y, w, 1, i & 1 ? "#f4f4f8" : "#c43a48");
         }
+      } else if (stopPre) {
+        px(x, y, w, 1, "#1a1a1a");
+        if (i === 3 || i === 4) px(x + 1, y, Math.max(2, w - 2), 1, "#f4f4f8");
+        if (i === 7 || i === 8) px(x + 1, y, Math.max(2, w - 2), 1, "#f4f4f8");
+        if (i === 5 || i === 6) px(x + ((w / 2) | 0), y, 1, 1, "#e8c44a");
+        if ((i & 1) === 0) px(x + w - 1, y, 1, 1, fold);
       } else if (jelly) {
         if ((i & 1) === 0) px(x + 1, y, Math.max(1, w - 2), 1, "#e8ffff");
         if (i > 8 && (i & 1)) px(x + ((w / 2) | 0), y, 1, 1, "#78c0e8");
@@ -10937,12 +11871,18 @@
       px(2, -7, 2, 1, "#1a1a1a");
       px(-4, -8, 2, 1, "#e8c44a");
       px(-1, -7, 1, 1, "#1a1a1a");
-    } else if (id === "american_cloak") {
+    } else if (id === "american_cloak" || id === "us_flag") {
       px(-5, -7, 2, 2, "#3a5aaa");
       px(-3, -7, 5, 1, "#f4f4f8");
       px(2, -7, 2, 1, "#c43a48");
       px(-4, -8, 2, 1, "#c43a48");
       px(-1, -7, 1, 1, "#3a5aaa");
+    } else if (id === "stop_pre_flag") {
+      px(-5, -7, 2, 2, "#1a1a1a");
+      px(-3, -7, 5, 1, "#f4f4f8");
+      px(2, -7, 2, 1, "#1a1a1a");
+      px(-4, -8, 2, 1, "#e8c44a");
+      px(-1, -7, 1, 1, "#e8c44a");
     } else if (id === "jelly_cape") {
       px(-5, -7, 2, 2, "#58a8d8");
       px(-3, -7, 5, 1, "#d8f0ff");
@@ -10971,6 +11911,13 @@
       px(-1, -17, 1, 2, "#e8c44a");
       px(1, -16, 1, 3, "#c9a227");
       px(-3, -14, 6, 1, "#e8c44a");
+    } else if (id === "king_crown") {
+      px(-4, -16, 8, 1, "#2f6a30");
+      px(-3, -17, 1, 2, "#c9a227");
+      px(-1, -18, 1, 2, "#e8c44a");
+      px(1, -17, 1, 2, "#c9a227");
+      px(3, -16, 1, 1, "#2f6a30");
+      px(-3, -15, 6, 1, "#e8c44a");
     } else if (id === "beta_crown") {
       px(-3, -16, 1, 3, "#c9a227");
       px(-1, -17, 1, 2, "#e8c44a");
@@ -11257,6 +12204,242 @@
         px(0, 1, 2, 3 - step, vest);
         px(-3, 3 + step, 2, 1, trim);
         px(0, 3 - step, 2, 1, trim);
+      }
+      return;
+    }
+    if (s === "eric_cartman") {
+      // Cyan beanie + yellow pom, fat face, red jacket, brown pants
+      const skinC = hurt ? "#8a3a3a" : "#f0c8a0";
+      const hat = hurt ? "#2a6a78" : "#3ab0c8";
+      const jacket = hurt ? "#8a2028" : "#c43a40";
+      px(-1, -16, 2, 1, "#e8c44a");
+      px(-3, -15, 6, 2, hat);
+      px(-4, -13, 8, 2, hat);
+      px(-3, -12, 6, 5, skinC);
+      px(-4, -11, 8, 4, skinC);
+      px(-2, -10, 1, 1, "#2a1810");
+      px(1, -10, 1, 1, "#2a1810");
+      px(-1, -8, 3, 1, "#c09070");
+      drawFaceCosmetic();
+      px(-4, -6, 8, 6, jacket);
+      px(-3, -5, 1, 1, "#e8c44a");
+      px(1, -5, 1, 1, "#e8c44a");
+      px(-6, -5, 2, 4, jacket);
+      px(4, -5, 2, 4, jacket);
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-4, 0, 8, 2, "#6a4028");
+      if (seated) {
+        px(-4, 2, 3, 1, "#3a2414");
+        px(0, 2, 3, 1, "#3a2414");
+      } else {
+        px(-4, 2, 3, 2 + step, "#3a2414");
+        px(0, 2, 3, 2 - step, "#3a2414");
+      }
+      return;
+    }
+    if (s === "shrek") {
+      const green = hurt ? "#3a6a28" : "#5a9a38";
+      px(-2, -15, 1, 2, green);
+      px(2, -15, 1, 2, green);
+      px(-3, -13, 7, 6, green);
+      px(-1, -11, 1, 1, "#1a2810");
+      px(1, -11, 1, 1, "#1a2810");
+      px(-1, -9, 3, 1, "#3a5a28");
+      drawFaceCosmetic();
+      px(-3, -6, 7, 5, "#c4a574");
+      px(-4, -5, 2, 3, green);
+      px(3, -5, 2, 3, green);
+      px(-3, -1, 7, 2, "#5c3a21");
+      if (seated) {
+        px(-3, 1, 2, 1, "#3a2414");
+        px(1, 1, 2, 1, "#3a2414");
+      } else {
+        px(-3, 1, 2, 3 + step, "#3a2414");
+        px(1, 1, 2, 3 - step, "#3a2414");
+      }
+      return;
+    }
+    if (s === "batman") {
+      const suit = hurt ? "#1a2030" : "#1a1a28";
+      px(-3, -14, 7, 2, suit);
+      px(-4, -13, 2, 3, suit);
+      px(3, -13, 2, 3, suit);
+      px(-2, -12, 5, 5, "#e8c39a");
+      px(-2, -11, 5, 2, suit);
+      px(-1, -10, 1, 1, "#f0d040");
+      px(1, -10, 1, 1, "#f0d040");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, suit);
+      px(-2, -4, 4, 2, "#f0d040");
+      px(-5, -5, 2, 4, suit);
+      px(3, -5, 2, 4, suit);
+      if (seated) {
+        px(-3, 1, 2, 1, suit);
+        px(0, 1, 2, 1, suit);
+      } else {
+        px(-3, 1, 2, 3 + step, suit);
+        px(0, 1, 2, 3 - step, suit);
+      }
+      return;
+    }
+    if (s === "peter_griffin") {
+      const skinC = hurt ? "#8a3a3a" : "#e8c39a";
+      px(-2, -14, 5, 1, "#5c3a21");
+      px(-3, -13, 7, 6, skinC);
+      px(-1, -11, 1, 1, "#2a1810");
+      px(1, -11, 1, 1, "#2a1810");
+      px(-1, -9, 3, 1, "#c09070");
+      drawFaceCosmetic();
+      px(-4, -6, 9, 5, "#f4f4f8");
+      px(-3, -4, 7, 2, "#3a6aaa");
+      px(-5, -5, 2, 3, skinC);
+      px(4, -5, 2, 3, skinC);
+      px(-4, -1, 9, 2, "#3a6aaa");
+      if (seated) {
+        px(-3, 1, 3, 1, "#3a6aaa");
+        px(1, 1, 3, 1, "#3a6aaa");
+      } else {
+        px(-3, 1, 3, 3 + step, "#3a6aaa");
+        px(1, 1, 3, 3 - step, "#3a6aaa");
+      }
+      return;
+    }
+    if (s === "sonic") {
+      const blue = hurt ? "#2a4a8a" : "#3a6ad0";
+      px(-2, -15, 5, 2, blue);
+      px(-3, -13, 7, 5, blue);
+      px(-4, -12, 2, 3, blue);
+      px(-1, -11, 1, 1, "#1a1810");
+      px(1, -11, 1, 1, "#1a1810");
+      px(-1, -9, 3, 1, "#e8c39a");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, blue);
+      px(-2, -4, 4, 2, "#e03840");
+      px(-5, -5, 2, 3, "#e8c39a");
+      px(3, -5, 2, 3, "#e8c39a");
+      px(-2, -1, 4, 1, "#e03840");
+      if (seated) {
+        px(-3, 1, 2, 1, "#e03840");
+        px(0, 1, 2, 1, "#e03840");
+      } else {
+        px(-3, 1, 2, 3 + step, "#e03840");
+        px(0, 1, 2, 3 - step, "#e03840");
+        px(-3, 3 + step, 2, 1, "#f4f4f8");
+        px(0, 3 - step, 2, 1, "#f4f4f8");
+      }
+      return;
+    }
+    if (s === "deadpool") {
+      const red = hurt ? "#6a2028" : "#c43a40";
+      px(-3, -13, 6, 2, red);
+      px(-2, -14, 4, 1, red);
+      px(-2, -12, 5, 5, red);
+      px(-1, -10, 1, 1, "#f4f4f8");
+      px(1, -10, 1, 1, "#f4f4f8");
+      px(-1, -10, 1, 1, "#1a1a1a");
+      px(1, -10, 1, 1, "#1a1a1a");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, red);
+      px(-2, -4, 4, 2, "#1a1a1a");
+      px(-5, -5, 2, 4, red);
+      px(3, -5, 2, 4, red);
+      if (seated) {
+        px(-3, 1, 2, 1, red);
+        px(0, 1, 2, 1, red);
+      } else {
+        px(-3, 1, 2, 3 + step, red);
+        px(0, 1, 2, 3 - step, red);
+      }
+      return;
+    }
+    if (s === "cole_hocker") {
+      const skinC = hurt ? "#8a3a3a" : "#d4a07a";
+      px(-2, -14, 4, 1, "#1a1a1a");
+      px(-2, -13, 5, 1, "#2a2a2a");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#1a1010");
+      px(1, -8, 1, 1, "#b08060");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 6, "#f4f4f8");
+      px(-3, -6, 6, 1, "#c43a48");
+      px(-3, -4, 6, 1, "#3a5aaa");
+      px(-2, -3, 4, 2, "#f4f4f8");
+      px(-5, -5, 2, 3, "#c43a48");
+      px(3, -5, 2, 3, "#3a5aaa");
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 4, 1, "#1a1a1a");
+      if (seated) {
+        px(-3, 1, 2, 1, "#c43a48");
+        px(0, 1, 2, 1, "#3a5aaa");
+      } else {
+        px(-3, 1, 2, 3 + step, "#c43a48");
+        px(0, 1, 2, 3 - step, "#3a5aaa");
+        px(-3, 3 + step, 2, 1, "#f4f4f8");
+        px(0, 3 - step, 2, 1, "#f4f4f8");
+      }
+      return;
+    }
+    if (s === "steve_prefontaine") {
+      const skinC = hurt ? "#8a3a3a" : "#e8c39a";
+      px(-2, -14, 4, 1, "#3a2414");
+      px(-2, -13, 5, 1, "#5c3a21");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#d4a07a");
+      px(-1, -7, 3, 1, "#5c3a21");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, "#1e6a34");
+      px(-3, -6, 6, 1, "#e8c44a");
+      px(-2, -4, 4, 2, "#1e6a34");
+      px(-5, -5, 2, 3, "#1e6a34");
+      px(3, -5, 2, 3, "#1e6a34");
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 4, 1, "#e8c44a");
+      if (seated) {
+        px(-3, 1, 2, 1, "#f4f4f8");
+        px(0, 1, 2, 1, "#f4f4f8");
+      } else {
+        px(-3, 1, 2, 2 + step, "#f4f4f8");
+        px(0, 1, 2, 2 - step, "#f4f4f8");
+        px(-3, 2 + step, 2, 1, "#1a1a1a");
+        px(0, 2 - step, 2, 1, "#1a1a1a");
+      }
+      return;
+    }
+    if (s === "lex_young") {
+      const skinC = hurt ? "#8a3a3a" : "#e0b090";
+      const orange = hurt ? "#a84810" : "#f07818";
+      const mint = "#c8f0b0";
+      px(-3, -16, 2, 2, "#4a3018");
+      px(-1, -17, 3, 2, "#5c3a21");
+      px(1, -16, 2, 2, "#3a2414");
+      px(-3, -14, 6, 2, "#5c3a21");
+      px(-2, -12, 5, 5, skinC);
+      px(-1, -9, 1, 1, "#2a1810");
+      px(1, -8, 1, 1, "#c49070");
+      drawFaceCosmetic();
+      px(-3, -6, 6, 5, orange);
+      px(-3, -6, 6, 1, "#ffb040");
+      px(-1, -5, 2, 2, "#1a120c");
+      px(0, -5, 1, 2, "#ffb040");
+      px(-5, -5, 2, 3, orange);
+      px(3, -5, 2, 3, orange);
+      px(-5, -2, 2, 2, skinC);
+      px(3, -2, 2, 2, skinC);
+      px(-2, -1, 5, 2, "#1a1a1a");
+      if (seated) {
+        px(-3, 1, 2, 1, "#1a1a1a");
+        px(0, 1, 2, 1, "#1a1a1a");
+      } else {
+        px(-3, 1, 2, 2 + step, skinC);
+        px(0, 1, 2, 2 - step, skinC);
+        px(-3, 2 + step, 2, 1, "#1a1a1a");
+        px(0, 2 - step, 2, 1, "#1a1a1a");
+        px(-3, 3 + step, 2, 1, mint);
+        px(0, 3 - step, 2, 1, "#e8ffd8");
       }
       return;
     }
@@ -11651,51 +12834,19 @@
       }
     }
 
-    const inner = barW - 4;
-    let fillLevel = player.level;
-    let fillXp = player.xp;
-    let flash = 0;
-    if (xpFx) {
-      const u = smoothstep(Math.min(1, xpFx.t / 0.55));
-      if (xpFx.leveled) {
-        const need0 = xpNeeded(xpFx.fromLevel);
-        if (u < 0.58) {
-          fillLevel = xpFx.fromLevel;
-          fillXp = xpFx.fromXp + (need0 - xpFx.fromXp) * (u / 0.58);
-        } else {
-          fillLevel = player.level;
-          fillXp = player.xp * ((u - 0.58) / 0.42);
-        }
-        flash = Math.max(0, 1 - xpFx.t * 1.4);
-      } else {
-        fillXp = xpFx.fromXp + (player.xp - xpFx.fromXp) * u;
-      }
-    }
-    const need = xpNeeded(fillLevel);
-    const fill = Math.floor(inner * Math.max(0, Math.min(1, fillXp / need)));
-    px(x0, barY, barW, 6, "#2b1c12");
-    px(x0 + 2, barY + 2, inner, 2, "#3a2414");
-    if (fill > 0) px(x0 + 2, barY + 2, fill, 2, flash > 0.15 ? "#ffe08a" : "#c9a227");
-    if (flash > 0.2) {
-      ctx.globalAlpha = flash * 0.55;
-      px(x0, barY - 1, barW, 8, "#fff3c0");
-      ctx.globalAlpha = 1;
-    }
-    if (xpFx) {
-      const rise = Math.floor(xpFx.t * 18);
-      const popA = Math.max(0, 1 - xpFx.t / 0.9);
-      if (popA > 0.04) {
-        ctx.globalAlpha = popA;
-        drawPixText("+" + xpFx.amount + " XP", x0 + barW, y0 - 10 - rise, "#e8c44a", "right");
+    // Career rank chip (replaces survival XP bar)
+    {
+      const tier = careerTierOf(careerLevel);
+      const lvStr = "LV " + careerLevel;
+      const tw = pixTextWidth(lvStr);
+      px(x0, barY, tw + 8, 8, tier.edge);
+      px(x0 + 1, barY + 1, tw + 6, 6, tier.color);
+      drawPixText(lvStr, x0 + 4, barY + 1, tier.ink);
+      if (careerLastGainT > 0 && careerLastGain > 0) {
+        const a = Math.min(1, careerLastGainT / 2.4);
+        ctx.globalAlpha = a;
+        drawPixText("+" + careerLastGain + " XP", x0 + tw + 12, barY + 1, "#e8c44a");
         ctx.globalAlpha = 1;
-      }
-      if (xpFx.leveled) {
-        const luA = Math.max(0, 1 - Math.abs(xpFx.t - 0.35) / 0.45);
-        if (luA > 0.05) {
-          ctx.globalAlpha = luA;
-          drawPixText("LEVEL UP", x0 + Math.floor(barW / 2), y0 - 18, "#fff1a8", "center");
-          ctx.globalAlpha = 1;
-        }
       }
     }
     drawHearts(x0, h.heartsY);
@@ -12897,9 +14048,10 @@
       api && typeof api.presenceActivityLabel === "function"
         ? api.presenceActivityLabel(p)
         : "LOBBY";
+    const name = p.username || "PLAYER";
     return {
       client_id: p.client_id || "",
-      name: p.username || "PLAYER",
+      name,
       isAccount: !!p.user_id,
       skin: skin || "classic",
       face: face || null,
@@ -12907,6 +14059,7 @@
       mode: String(p.mode || "menu").toLowerCase(),
       category: p.category || null,
       modeLabel: String(modeLabel || "LOBBY").toUpperCase(),
+      level: careerLevelForName(name),
     };
   }
 
@@ -13058,6 +14211,9 @@
       const name = String(peer.name || "?").slice(0, peer.isAccount ? 7 : 6);
       const mode = String(peer.modeLabel || "LOBBY").slice(0, 8);
       const nameY = fy - 40;
+      const lv = peer.level || careerLevelForName(peer.name);
+      const lvStr = String(lv);
+      drawLevelBadge(lv, (fx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
       if (peer.isAccount) {
         const tag = String(name).toUpperCase();
         drawNameTag(tag, (fx - pixTextWidth(tag) / 2) | 0, nameY);
@@ -13994,7 +15150,7 @@
       "RIVER POOL MIDWAY TO RUINS",
       "CAVES AND TIDE ON THE POOL",
       "DINGHY STEERS ON THE POOL",
-      "BLUE PORTAL IS DORMANT",
+      "BLUE PORTAL OPENS ON ROME",
       "GOLD EXIT LEAVES THE TEMPLE",
       "DAILY SUN IDOL NEAR TEMPLE",
       "HUB IS A TITLE-SCREEN MODE",
@@ -14068,6 +15224,8 @@
       if (scene === "cabin") drawCabinSea(cpos, t);
       if (scene === "vein" && vein) {
         vein.draw(cpos, t);
+      } else if (rome && rome.isScene()) {
+        rome.draw(cpos);
       } else {
         const room =
           scene === "fish"
@@ -14090,7 +15248,7 @@
         if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
       }
       if (scene === "sub" || scene === "floor" || scene === "wreck") drawDiveWorld(cpos, t);
-      if (scene !== "sub" && scene !== "floor" && scene !== "wreck" && scene !== "vein") drawIndoorLight(cpos);
+      if (scene !== "sub" && scene !== "floor" && scene !== "wreck" && scene !== "vein" && !(rome && rome.isScene())) drawIndoorLight(cpos);
       if (scene === "shop") drawShopGoldSpark(cpos, t);
       if (scene === "cabin") {
         drawCabinChest(cpos);
@@ -14101,11 +15259,14 @@
       if (scene === "hub") {
         drawHubPeers(cpos, t);
       }
-      for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
+      if (!(rome && rome.isScene())) {
+        for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
+      }
       if (scene === "cabin") drawWardenMagic(cpos, t);
       else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPlayerLit(cpos, false);
+      if (rome && rome.isScene()) rome.drawFront(cpos);
       if (scene === "vein") drawWandBolts(cpos);
       if (scene === "floor" || scene === "wreck") drawAirBubble(cpos);
       if (scene === "cabin") drawCabinMotes(cpos);
@@ -14176,6 +15337,10 @@
     if (scene === "vein" && vein) {
       ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
       vein.drawHud();
+    }
+    if (rome && rome.isScene()) {
+      ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+      rome.drawHud();
     }
     drawHubOverlay();
     drawDiveHud();
@@ -14931,10 +16096,38 @@
     return api && api.uuid ? api.uuid() : "run-" + Date.now() + "-" + ((Math.random() * 1e9) | 0);
   }
 
+  function speedNowMs() {
+    if (!srTiming) return srFinalMs || srElapsed || 0;
+    const now = srPauseAt || performance.now();
+    return Math.max(0, now - srStartPerf);
+  }
+
+  function setSpeedPaused(on) {
+    if (!srTiming) {
+      if (!on) srPauseAt = 0;
+      return;
+    }
+    if (on) {
+      if (!srPauseAt) srPauseAt = performance.now();
+    } else if (srPauseAt) {
+      srStartPerf += performance.now() - srPauseAt;
+      srPauseAt = 0;
+    }
+  }
+
+  function freezeSpeedClock() {
+    if (!srTiming) return;
+    srElapsed = speedNowMs();
+    srTiming = false;
+    srPauseAt = 0;
+    srFinalMs = Math.max(0, srElapsed | 0);
+  }
+
   function lockSpeedFinalMs() {
     if (srTiming) {
-      srElapsed = Math.max(srElapsed, performance.now() - srStartPerf);
+      srElapsed = speedNowMs();
       srTiming = false;
+      srPauseAt = 0;
     }
     srFinalMs = Math.max(0, srElapsed | 0);
   }
@@ -14946,6 +16139,7 @@
     guideOpen = false;
     srRunning = true;
     srTiming = true;
+    srPauseAt = 0;
     srStartPerf = performance.now();
     srElapsed = 0;
     srFinalMs = 0;
@@ -14981,6 +16175,69 @@
     else if (srCat === "coins_100" && player.coins >= 100) finishSpeedrun();
   }
 
+  function tryGrantLexYoung(ms) {
+    if (!(ms > 0) || ms >= 215000) return;
+    if (!grantSkin("lex_young")) return;
+    equipSkin("lex_young");
+    flashQuestUnlock("LEX YOUNG");
+  }
+
+  function commitRaceSegment(ms) {
+    const time = Math.max(0, Math.round(ms) | 0);
+    if (!time) return;
+    tryGrantLexYoung(time);
+    if (playMode === "speedrun" && srCat === "kings_race") return;
+    const api = lbApi();
+    const pb = api && api.pbInfo ? api.pbInfo("kings_race", time) : null;
+    pendingRaceSeg = { ms: time, pb: pb };
+    if (api && api.upsertPr) api.upsertPr("kings_race", time);
+  }
+
+  function openRaceSegmentFinish() {
+    if (!pendingRaceSeg || playMode === "speedrun") return;
+    const seg = pendingRaceSeg;
+    srCat = "kings_race";
+    srFinalMs = seg.ms;
+    srTiming = false;
+    srPauseAt = 0;
+    srRunning = false;
+    srSegmentSurvival = true;
+    uiScreen = "finish";
+    srFinishSel = 1;
+    srStatus = "";
+    srSubmitted = false;
+    srRunId = newSpeedRunId();
+    if (seg.pb) {
+      srPbPrev = seg.pb.prev | 0;
+      srPbLabel = seg.pb.isFirst ? "FIRST PB" : seg.pb.label;
+    } else {
+      srPbPrev = 0;
+      srPbLabel = "";
+    }
+    const api = lbApi();
+    if (api && api.isSignedIn && api.isSignedIn()) {
+      srName = api.displayName() || srName;
+      guestNameLocked = true;
+    } else {
+      guestNameLocked = false;
+      if (!srName && api && api.getLastName) srName = api.getLastName() || "";
+    }
+    refreshSpeedBoard("kings_race");
+  }
+
+  function retryFinishRun() {
+    if (srSegmentSurvival) {
+      srSegmentSurvival = false;
+      pendingRaceSeg = null;
+      uiScreen = null;
+      srFinalMs = 0;
+      playMode = "normal";
+      if (rome && rome.retryLine) rome.retryLine();
+      return;
+    }
+    beginSpeedCategory(srCat);
+  }
+
   function finishSpeedrun() {
     if (playMode !== "speedrun" || uiScreen === "finish") return;
     // Freeze timer this frame — all end hooks must land here.
@@ -14988,6 +16245,7 @@
     blowfishHearts = null;
     captureReplayFrame(true);
     lockSpeedFinalMs();
+    if (srCat === "kings_race") tryGrantLexYoung(srFinalMs);
     srRunning = false;
     uiScreen = "finish";
     srFinishSel = 1;
@@ -15012,6 +16270,12 @@
       }
       if (api.recordSpeedrunFinish) api.recordSpeedrunFinish();
       if (api.noteSrEvent) api.noteSrEvent("runs", 1);
+      // Career XP — finish only (submit/PB/WR bonuses land on successful post)
+      const wrMs = catBoardWrMs(srCat);
+      applyCareerXp(
+        careerXpForRun(srCat, srFinalMs, { submitted: false, pb: false, wr: false, wrMs }),
+        "finish"
+      );
     }
     checkNovQuestRewards(srCat, srFinalMs);
     refreshSpeedBoard(srCat);
@@ -15087,6 +16351,7 @@
     srBoughtBoat = false;
     srWasDead = false;
     srTiming = false;
+    srPauseAt = 0;
     srRunning = false;
     srElapsed = 0;
     srFinalMs = 0;
@@ -15180,14 +16445,18 @@
     if (boardGen !== srBoardGen) return;
     srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
     srBoardNote = res.ok ? "" : res.offline ? "OFFLINE" : res.error || "ERROR";
+    refreshCareerLevelCache();
     // One lightweight meta probe for all top-10 rows (no frames) — VID only when matched.
     await refreshReplayAvailability(id, boardGen);
   }
 
   function beginSpeedCategory(cat) {
+    pendingRaceSeg = null;
+    srSegmentSurvival = false;
     srCat = cat;
     playMode = "speedrun";
     resetSpeedrunWorld();
+    if (rome && rome.isSpeedCat(cat)) rome.prepareSpeed(cat);
     uiScreen = "ready";
     srCursor = 0;
     srStatus = "";
@@ -15222,7 +16491,7 @@
     const api = lbApi();
     if (api && api.loadLocalNmStats) {
       const st = api.loadLocalNmStats();
-      if (st && player.level > (st.level_high | 0) && api.noteNmEvent) api.noteNmEvent("level", player.level);
+      // Survival loot XP retired — career rank is speedrun-driven only.
       if (st && player.coins > (st.coins_high | 0) && api.noteNmEvent) api.noteNmEvent("coins_high", player.coins);
     }
     camera.x = player.x + player.w / 2 - viewW / 2;
@@ -15331,19 +16600,20 @@
 
   function drawSpeedTimer() {
     if (playMode !== "speedrun") return;
-    if (!(srTiming || uiScreen === "ready" || uiScreen === "finish")) return;
+    const romeFrozen = !!(srFinalMs && !srTiming && rome && rome.isScene());
+    if (!(srTiming || uiScreen === "ready" || uiScreen === "finish" || romeFrozen)) return;
     const uiW = canvas.width / SCALE_UI;
     let ms = srFinalMs;
     // Finish screen always shows locked final — never live clock.
-    if (uiScreen === "finish") ms = srFinalMs;
-    else if (srTiming) ms = performance.now() - srStartPerf;
+    if (uiScreen === "finish" || romeFrozen) ms = srFinalMs;
+    else if (srTiming) ms = speedNowMs();
     else if (uiScreen === "ready") ms = 0;
     const label = formatSpeedTime(ms);
     const tw = pixTextWidth(label);
     const x = uiW - tw - 10;
     const y = 6;
     px(x - 4, y - 3, tw + 8, 13, "#3a2414");
-    px(x - 3, y - 2, tw + 6, 11, "#5c3a21");
+    px(x - 3, y - 2, tw + 6, 11, srPauseAt ? "#e8c44a" : "#5c3a21");
     drawPixText(label, x, y, "#f3e2c4");
   }
 
@@ -15586,6 +16856,16 @@
       px(x, y, 8, 2, "#1e8a34");
       px(x, y + 2, 8, 2, "#e8c44a");
       px(x, y + 4, 8, 2, "#1a1a1a");
+    } else if (id === "us_flag") {
+      px(x, y, 8, 2, "#c43a48");
+      px(x, y + 2, 8, 1, "#f4f4f8");
+      px(x, y + 3, 8, 2, "#c43a48");
+      px(x, y, 3, 3, "#3a5aaa");
+    } else if (id === "stop_pre_flag") {
+      px(x, y, 8, 6, "#1a1a1a");
+      px(x + 1, y + 1, 6, 1, "#f4f4f8");
+      px(x + 1, y + 3, 6, 1, "#f4f4f8");
+      px(x + 3, y + 2, 2, 1, "#e8c44a");
     } else if (!drawTinyCatch(id, x, y)) {
       drawHudIcon(id, x - 4, y - 4);
     }
@@ -15608,7 +16888,12 @@
         ink.translate(x + 13, y + 22);
         drawPlayerBody(showId, 0, false, true);
         ink.restore();
-      } else if (showId === "norway_flag" || showId === "jamaica_flag") {
+      } else if (
+        showId === "norway_flag" ||
+        showId === "jamaica_flag" ||
+        showId === "us_flag" ||
+        showId === "stop_pre_flag"
+      ) {
         drawLockedBackIcon(showId, x + 9, y + 10);
       } else if (!drawTinyCatch(showId, x + 9, y + 9)) {
         drawHudIcon(showId, x + 1, y + 1);
@@ -16029,9 +17314,7 @@
     const accX = uiW - pad - accW;
     const profX = accX - rightGap - profW;
     const statsX = profX - rightGap - statsW;
-    const weeklyW = pixTextWidth("WEEKLY") + 10;
-    drawHubChip("WEEKLY", pad, topY, "hub:weekly", () => openSpinMenu());
-    drawHubChip("QUESTS", pad + weeklyW + 6, topY, "hub:quests", () => openQuestMenu());
+    drawHubChip("REWARDS", pad, topY, "hub:rewards", () => openRewardsMenu("quests"));
     drawHubChip("STATS", statsX, topY, "hub:stats", () => {
       uiScreen = "nm_boards";
       statsMode = "survival";
@@ -16091,6 +17374,8 @@
       const isAcc = hubLocalIsAccount();
       const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
       const nameY = previewY - 40;
+      const lvStr = String(careerLevel);
+      drawLevelBadge(careerLevel, (stageCx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
       if (isAcc) {
         drawNameTag(tag, (stageCx - pixTextWidth(tag) / 2) | 0, nameY);
       } else {
@@ -16482,7 +17767,7 @@
         srFinishSel = i + 1;
         if (i === 0) {
           if (!srSubmitted) submitSpeedScore();
-        } else if (i === 1) beginSpeedCategory(srCat);
+        } else if (i === 1) retryFinishRun();
         else if (i === 2) backToCategories();
         else if (i === 3) backToModeMenu();
       }, { hover: true });
@@ -16989,7 +18274,7 @@
       px(x + 5, y + 2, 1, 3, "#e8c44a");
       return;
     }
-    if (k === "WEEKLY REWARDS" || k === "WEEKLY") {
+    if (k === "WEEKLY REWARDS" || k === "WEEKLY" || k === "ISLEPASS" || k === "ISLE PASS") {
       drawWeeklyRewardsIcon(x, y);
       return;
     }
@@ -17059,6 +18344,14 @@
       drawCoinIcon(x, y);
       return;
     }
+    if (id === "kings_race" || id === "full_kings") {
+      px(x + 1, y + 1, 1, 2, "#c9a227");
+      px(x + 3, y, 1, 2, "#e8c44a");
+      px(x + 5, y + 1, 1, 2, "#c9a227");
+      px(x + 1, y + 3, 5, 1, "#e8c44a");
+      if (id === "full_kings") px(x + 2, y + 5, 4, 2, "#8a3038");
+      return;
+    }
     px(x + 2, y + 2, 4, 4, "#8a5a32");
   }
 
@@ -17115,47 +18408,10 @@
   }
 
   function drawSpinScreen() {
-    const uiW = canvas.width / SCALE_UI;
-    const uiH = canvas.height / SCALE_UI;
-    ctx.globalAlpha = 0.55;
-    px(0, 0, uiW, uiH, "#0b1a22");
-    ctx.globalAlpha = 1;
-    const period = weeklySpinPeriod();
-    const api = lbApi();
-    const signed = !!(api && api.isSignedIn && api.isSignedIn());
-    const left = Math.max(0, WEEKLY_SPIN.spins - spinUsed);
-    const busy = spinReelBusy();
-    const w = 196;
-    const h = 148;
-    const x = ((uiW - w) / 2) | 0;
-    const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, w, h, "WEEKLY REWARDS");
-    drawWeeklyRewardsIcon(x + 6, y + 4);
-    drawPixText(period.label, (x + w / 2) | 0, y + 18, "#5c3a21", "center");
-    drawPixText("LEFT " + left + "  FREE", (x + w / 2) | 0, y + 28, "#3a2414", "center");
-    drawSpinReelStrip(x + 10, y + 38, w - 20, 30);
-    let action = "SPIN";
-    if (!signed) action = "SIGN IN";
-    else if (busy) action = "...";
-    else if (left <= 0) action = "NEXT WEEK";
-    const spinSel = !busy && (spinCursor === 0 || menuHovering("spin:go"));
-    if (spinSel) px(x + 18, y + 76, w - 36, 11, "#e8c44a");
-    drawPixText(action, (x + w / 2) | 0, y + 78, spinSel ? "#2b1c12" : "#3a2414", "center");
-    addMenuHit("spin:go", x + 18, y + 76, w - 36, 11, () => {
-      spinCursor = 0;
-      if (busy) return;
-      tryWeeklySpin();
-    }, { hover: !busy });
-    const status = busy ? "" : spinNote;
-    if (status) drawPixText(status, (x + w / 2) | 0, y + 94, "#2b1c12", "center");
-    const canBack = !busy;
-    const backSel = canBack && (spinCursor === 1 || menuHovering("spin:back"));
-    if (backSel) px(x + 18, y + 114, w - 36, 11, "#e8c44a");
-    drawPixText("BACK", (x + w / 2) | 0, y + 116, backSel ? "#2b1c12" : "#5c3a21", "center");
-    addMenuHit("spin:back", x + 18, y + 114, w - 36, 11, () => {
-      if (spinReelBusy()) return;
-      backToModeMenu();
-    }, { hover: canBack });
+    // Folded into Rewards hub (WEEKLY tab)
+    if (questTab !== "weekly") questTab = "weekly";
+    uiScreen = "quests";
+    drawQuestScreen();
   }
 
   function drawSpeedUI() {
@@ -17193,7 +18449,7 @@
     srName = name;
     srSubmitting = true;
     srStatus = "SUBMITTING...";
-    const replay = buildReplayPayload();
+    const replay = srSegmentSurvival ? null : buildReplayPayload();
     if (replay) replay.player_name = name;
     const res = await api.submitScore(srCat, srFinalMs, name, {
       runId: srRunId || newSpeedRunId(),
@@ -17206,8 +18462,40 @@
       srBoardRows = applyBoardIdentityMerge(res.rows || [], 10);
       srStatus = "POSTED";
       srSubmitted = true;
+      if (srCat === "full_kings" && pendingRaceSeg && pendingRaceSeg.ms > 0) {
+        const segMs = pendingRaceSeg.ms;
+        pendingRaceSeg = null;
+        api.submitScore("kings_race", segMs, name, {
+          runId: newSpeedRunId(),
+          isAccount: !!(api.isSignedIn && api.isSignedIn()),
+        }).catch(function () {});
+      }
       srBoardNote = "";
       if (api.noteSrEvent) api.noteSrEvent("submits", 1);
+      // Career XP — submit bonus + WR if we own #1 after post
+      {
+        const wrMs = catBoardWrMs(srCat);
+        const top = srBoardRows && srBoardRows[0];
+        const topMs = top ? top.time_ms | 0 : 0;
+        const mine = srFinalMs | 0;
+        const isWr =
+          top &&
+          topMs > 0 &&
+          mine <= topMs &&
+          String(top.player_name || "")
+            .toUpperCase()
+            .indexOf(String(srName || "").toUpperCase().slice(0, 3)) >= 0;
+        const gain = careerXpForRun(srCat, srFinalMs, {
+          submitted: true,
+          pb: !!(res.pb && res.pb.improved),
+          wr: !!isWr,
+          wrMs: topMs || wrMs,
+        });
+        // Finish already awarded base; grant only the delta of submit/pb/wr extras
+        const baseOnly = careerXpForRun(srCat, srFinalMs, { wrMs: topMs || wrMs });
+        applyCareerXp(Math.max(0, gain - baseOnly), "submit");
+        refreshCareerLevelCache();
+      }
       if (replay && api.saveLocalReplay) {
         api.saveLocalReplay(srCat, replay);
         srBestReplay = replay;
@@ -17342,17 +18630,67 @@
       return true;
     }
     if (uiScreen === "spin") {
-      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") {
-        if (!spinReelBusy()) spinCursor = spinCursor === 0 ? 1 : 0;
-      }
+      // Legacy spin screen → unified Rewards hub
+      openRewardsMenu("weekly");
+      return true;
+    }
+    if (uiScreen === "quests") {
+      const tabs = ["quests", "weekly", "levels"];
       if (k === "escape" || k === "backspace") {
-        if (!spinReelBusy()) backToModeMenu();
+        if (!(questTab === "weekly" && spinReelBusy())) backToModeMenu();
         return true;
       }
-      if (k === "enter" || k === " ") {
-        if (spinReelBusy()) return true;
-        if (spinCursor === 1) backToModeMenu();
-        else {
+      if (k === "arrowleft" || k === "a") {
+        if (questTab === "levels") {
+          const pages = ["overview", "tiers", "pass"];
+          const i = pages.indexOf(levelsPage);
+          if (i > 0) levelsPage = pages[i - 1];
+          else {
+            questTab = "weekly";
+            prepareWeeklySpinState();
+          }
+        } else {
+          const i = tabs.indexOf(questTab);
+          questTab = tabs[(i + tabs.length - 1) % tabs.length];
+          if (questTab === "weekly") prepareWeeklySpinState();
+          if (questTab === "levels") {
+            levelsPage = "pass";
+            syncCareerFromAccountHistory();
+          }
+        }
+        return true;
+      }
+      if (k === "arrowright" || k === "d") {
+        if (questTab === "levels") {
+          const pages = ["overview", "tiers", "pass"];
+          const i = pages.indexOf(levelsPage);
+          if (i < pages.length - 1) levelsPage = pages[i + 1];
+          else questTab = "quests";
+        } else {
+          const i = tabs.indexOf(questTab);
+          questTab = tabs[(i + 1) % tabs.length];
+          if (questTab === "weekly") prepareWeeklySpinState();
+          if (questTab === "levels") {
+            levelsPage = "overview";
+            syncCareerFromAccountHistory();
+          }
+        }
+        return true;
+      }
+      if (questTab === "quests") {
+        if (k === "arrowup" || k === "w") {
+          questCursor = (questCursor + NOV_QUESTS.length - 1) % NOV_QUESTS.length;
+        }
+        if (k === "arrowdown" || k === "s") {
+          questCursor = (questCursor + 1) % NOV_QUESTS.length;
+        }
+        if (k === "enter" || k === " ") {
+          const q = NOV_QUESTS[questCursor];
+          if (q && questStatus(q) === "claimable") claimQuest(q.id);
+        }
+      } else if (questTab === "weekly") {
+        if (k === "enter" || k === " ") {
+          if (spinReelBusy()) return true;
           const api = lbApi();
           const signed = !!(api && api.isSignedIn && api.isSignedIn());
           if (!signed) {
@@ -17362,23 +18700,18 @@
             srCursor = 0;
           } else tryWeeklySpin();
         }
-      }
-      return true;
-    }
-    if (uiScreen === "quests") {
-      if (k === "escape" || k === "backspace") {
-        backToModeMenu();
-        return true;
-      }
-      if (k === "arrowup" || k === "w") {
-        questCursor = (questCursor + NOV_QUESTS.length - 1) % NOV_QUESTS.length;
-      }
-      if (k === "arrowdown" || k === "s") {
-        questCursor = (questCursor + 1) % NOV_QUESTS.length;
-      }
-      if (k === "enter" || k === " ") {
-        const q = NOV_QUESTS[questCursor];
-        if (q && questStatus(q) === "claimable") claimQuest(q.id);
+      } else if (questTab === "levels" && levelsPage === "pass") {
+        if (k === "arrowup" || k === "w") passScroll = Math.max(0, passScroll - 32);
+        if (k === "arrowdown" || k === "s") passScroll += 32;
+        if (k === "enter" || k === " ") {
+          const nodes = FREE_PASS.nodes || [];
+          for (let i = 0; i < nodes.length; i++) {
+            if (passNodeStatus(nodes[i]) === "claimable") {
+              claimPassNode(nodes[i]);
+              break;
+            }
+          }
+        }
       }
       return true;
     }
@@ -17643,7 +18976,7 @@
       if (k === "enter" || k === " ") {
         if (srFinishSel === 1) {
           if (!srSubmitted) submitSpeedScore();
-        } else if (srFinishSel === 2) beginSpeedCategory(srCat);
+        } else if (srFinishSel === 2) retryFinishRun();
         else if (srFinishSel === 3) backToCategories();
         else if (srFinishSel === 4) backToModeMenu();
       }
@@ -17745,6 +19078,7 @@
         sunkenTaken: !!sunkenTaken,
         divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
         dailyClaimedUtc: dailyClaimedUtc || "",
+        rome: rome ? rome.persist() : null,
         boat: ownedBoat
           ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
           : null,
@@ -17786,13 +19120,15 @@
       data.scene === "sub" ||
       data.scene === "floor" ||
       data.scene === "wreck" ||
-      data.scene === "vein"
+      data.scene === "vein" ||
+      (rome && data.scene && rome.isScene(data.scene))
     ) {
       scene = data.scene;
       if (scene === "vein") {
         ensureVein();
         cloakOn = false;
       }
+      if (rome && rome.isScene(scene)) rome.restore(data.rome);
     } else if (data.scene === "hub") {
       // Hub is its own mode now — remount old island-gate saves to the dock
       scene = "island";
@@ -17906,6 +19242,7 @@
     updateSerpent(dt);
     updateWandBolts(dt);
     if (scene === "vein" && vein) vein.update(dt);
+    if (rome) rome.update(dt);
     updateDive(dt);
     updateMaskGoal();
     if (srTiming) captureReplayFrame(false);
@@ -17919,6 +19256,7 @@
     // Session playtime — survival → NM stats; speedrun → SR stats
     if ((playMode === "normal" || playMode === "speedrun") && !uiBlocksPlay() && !guideOpen) {
       playtimeAcc += dt * 1000;
+      tickIslePassPlaytime(dt);
     }
     playtimeFlush += dt;
     if (playtimeFlush >= 5 && playtimeAcc >= 1) {
@@ -18101,6 +19439,7 @@
         cosSelect = null;
       }
     }
+    if (rome && rome.isScene() && rome.onKey(k)) return;
     if (k === "enter") onEnter();
     if (k === " ") {
       if (!tryCatchLandCrab()) useHeld();
@@ -18353,6 +19692,10 @@
   }
 
   function zoomGoal() {
+    const goingRome = fadeMode && fadeNext && rome && rome.isScene(fadeNext.scene);
+    const onRome = rome && rome.isScene(scene);
+    const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
+    if ((onRome && !goingOut) || goingRome) return keys.z ? SCALE_FAR : SCALE_DEFAULT;
     const goingShop =
       fadeMode &&
       fadeNext &&
@@ -18365,7 +19708,6 @@
         fadeNext.scene === "floor" ||
         fadeNext.scene === "wreck" ||
         fadeNext.scene === "vein");
-    const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
     if (goingShop || (isIndoor() && !goingOut)) return indoorZoom();
     return keys.z ? SCALE_FAR : SCALE_DEFAULT;
   }
@@ -18405,6 +19747,67 @@
     }
   });
 
+  function ensureRome() {
+    if (rome) return rome;
+    if (typeof IsleRomeBuild !== "function") return null;
+    rome = IsleRomeBuild({
+      player,
+      hash,
+      pxi,
+      px,
+      drawPixText,
+      ctx: () => ctx,
+      time: () => time,
+      viewW: () => viewW,
+      viewH: () => viewH,
+      uiW: () => (canvas.width / SCALE_UI) | 0,
+      uiH: () => (canvas.height / SCALE_UI) | 0,
+      getScene: () => scene,
+      setScene: (s) => {
+        scene = s;
+      },
+      fade: (sc, spawn) => beginFade(sc, spawn),
+      fading: () => !!fadeMode,
+      playBlocked: () => uiBlocksPlay() || !!guideOpen,
+      islandReturn: () =>
+        ruinsPortal
+          ? { x: ruinsPortal.x, y: ruinsPortal.y + ruinsPortal.h + 6 }
+          : { x: spawnX, y: spawnY },
+      shake: (n) => {
+        shake = Math.max(shake, n | 0);
+      },
+      coins: () => player.coins,
+      spend: (n) => {
+        if (player.coins < n) return false;
+        player.coins -= n;
+        return true;
+      },
+      refund: (n) => {
+        player.coins += n;
+      },
+      giveItem: (id) => addToInventory(id),
+      grantCrown: () => {
+        grantCosmetic("king_crown");
+        equipCosmetic("king_crown");
+      },
+      speedLive: () => playMode === "speedrun" && !!srTiming,
+      speedMode: () => playMode === "speedrun",
+      speedCat: () => srCat,
+      setSpeedPaused: (on) => setSpeedPaused(on),
+      freezeSpeed: () => freezeSpeedClock(),
+      finishSpeed: () => finishSpeedrun(),
+      commitSegment: (ms) => commitRaceSegment(ms),
+      openSegmentFinish: () => openRaceSegmentFinish(),
+      snapCam: () => {
+        camera.x = player.x + player.w / 2 - viewW / 2;
+        camera.y = player.y + player.h / 2 - viewH * 0.36;
+        clampCamera();
+      },
+    });
+    return rome;
+  }
+
+  ensureRome();
   buildWorld();
   resizeCanvas();
   camera.x = player.x + player.w / 2 - viewW / 2;
