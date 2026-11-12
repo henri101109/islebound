@@ -518,7 +518,12 @@
       if (A.openSegmentFinish) A.openSegmentFinish();
     }
 
+    function inCityShop() {
+      return A.getScene() === "rome" && (phase === "city" || phase === "crowned");
+    }
+
     function buy(stall) {
+      if (!stall || !stall.item) return;
       if (stall.kind === "pet") {
         if (A.speedMode && A.speedMode()) {
           flash("NOT FOR RACES");
@@ -533,10 +538,13 @@
           return;
         }
         if (A.grantPet) A.grantPet(stall.item);
-        flash(stall.label);
+        flash("BOUGHT " + stall.label);
         return;
       }
-      if (!A.spend || !A.giveItem) return;
+      if (!A.spend || !A.giveItem) {
+        flash("CAN'T TRADE");
+        return;
+      }
       if (!A.spend(stall.price)) {
         flash("NEED " + stall.price + " COINS");
         return;
@@ -546,14 +554,14 @@
         flash("CAN'T HOLD MORE");
         return;
       }
-      flash(stall.label);
+      flash("BOUGHT " + stall.label);
     }
 
     function nearStall() {
       if (A.getScene() !== "rome") return null;
       const f = feet();
       let best = null;
-      let bestD = 28;
+      let bestD = 40;
       for (let i = 0; i < city.stalls.length; i++) {
         const s = city.stalls[i];
         const dx = f.x - (s.x + 10);
@@ -571,7 +579,7 @@
       if (A.getScene() !== "rome") return null;
       const f = feet();
       let best = null;
-      let bestD = 30;
+      let bestD = 42;
       for (let i = 0; i < city.dealers.length; i++) {
         const d = city.dealers[i];
         const dist = Math.hypot(f.x - (d.x + 4), f.y - (d.y + 12));
@@ -591,7 +599,7 @@
           return true;
         }
       }
-      if (k === "t" && phase === "city") {
+      if (k === "t" && inCityShop()) {
         const stall = nearStall();
         if (stall) {
           buy(stall);
@@ -615,7 +623,7 @@
         return box.x < r.x + r.w && box.x + box.w > r.x && box.y < r.y + r.h && box.y + box.h > r.y;
       }
       const sc = A.getScene();
-      if (sc === "rome" && phase === "city") {
+      if (sc === "rome" && inCityShop()) {
         if (hits(city.portal)) {
           if (A.speedMode && A.speedMode() && A.speedCat && A.speedCat() === "full_kings") {
             flash("THE KING IS WAITING");
@@ -933,7 +941,7 @@
       if (!isScene()) return "";
       if (tipT > 0 && tip) return tip;
       const sc = A.getScene();
-      if (sc === "rome" && phase === "city") {
+      if (inCityShop()) {
         const stall = nearStall();
         if (stall) return "T  " + stall.label + "  " + stall.price;
         const dealer = nearDealer();
@@ -1233,16 +1241,6 @@
           : d.fill;
       A.pxi(g, x - 3, y - 4 + bob, 16, 2, "#120c10");
       drawPerson(g, x, y + bob, d.robe, d.face, (t * 3) | 0, false);
-      if (d.kind === "pet") {
-        const cx = d.face < 0 ? x - 8 : x + 14;
-        const cy = y + 12 + bob;
-        A.pxi(g, cx, cy - 7, 2, 3, "#1a1816");
-        A.pxi(g, cx + 3, cy - 7, 2, 3, "#1a1816");
-        A.pxi(g, cx - 1, cy - 4, 7, 5, "#1a1816");
-        A.pxi(g, cx, cy - 8, 1, 1, "#e8c44a");
-        A.pxi(g, cx + 4, cy - 8, 1, 1, "#e8c44a");
-        A.pxi(g, cx, cy - 1, 5, 1, "#e8c44a");
-      }
       A.pxi(g, x + 1, y - 2 + bob, 6, 3, "#120c10");
       A.pxi(g, x + 2, y + bob, 4, 2, "#120c10");
       const bx = d.face < 0 ? x - 4 : x + 8;
@@ -2013,12 +2011,22 @@
       { side: 0, gap: 0, brew: 0 },
       { side: 1, gap: 1, brew: 1 },
       { side: 0, gap: 2, brew: 2 },
+      { side: 0, gap: 3, pet: true },
       { side: 1, gap: 4, brew: 3 },
     ];
+    const catGoods = {
+      item: "egypt_cat",
+      kind: "pet",
+      label: "CAT",
+      price: 950,
+      fill: "#e8c44a",
+      robe: "#c45a48",
+      line: "CAT OF THE TEMPLE",
+    };
     const dealers = [];
     for (let i = 0; i < spots.length; i++) {
       const s = spots[i];
-      const g = brews[s.brew];
+      const g = s.pet ? catGoods : brews[s.brew];
       const gy = gaps[s.gap];
       const left = s.side === 0;
       dealers.push({
@@ -2028,6 +2036,7 @@
         mouth: left ? leftX + leftW + 2 : rightX - 4,
         mouthY: gy + ((gap / 2) | 0),
         item: g.item,
+        kind: g.kind || null,
         label: g.label,
         price: g.price,
         fill: g.fill,
@@ -2035,20 +2044,6 @@
         line: g.line,
       });
     }
-    dealers.push({
-      x: STREET_X + STREET_W / 2 - 10,
-      y: 488,
-      face: 1,
-      mouth: STREET_X + STREET_W / 2 + 14,
-      mouthY: 500,
-      item: "egypt_cat",
-      kind: "pet",
-      label: "CAT",
-      price: 950,
-      fill: "#e8c44a",
-      robe: "#2a1810",
-      line: "CAT OF THE TEMPLE",
-    });
     const stalls = [];
     const goods = [
       { item: "olive", label: "OLIVES", price: 4, awning: "#c45a48", goods: "#6a8a38", robe: "#f4efe4" },

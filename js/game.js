@@ -932,10 +932,24 @@
   /** Last locker grid clip rect + max scroll (for wheel). */
   let lockerGridBounds = null;
   /**
-   * Mode-select "What's New" rail (Disney+-style featured cards).
-   * Local curated list for now — skins, quests, and speedrun categories.
+   * Mode-select featured rail — WHATS NEW + BLACK MARKET tabs.
+   * Local curated lists for now.
    */
   const WHATS_NEW = [
+    {
+      kind: "pet",
+      id: "egypt_cat",
+      title: "EGYPT CAT",
+      blurb: "NEW PET",
+      detail: "KINGDOM 950",
+    },
+    {
+      kind: "pet",
+      id: "blue_crab",
+      title: "BLUE CRAB",
+      blurb: "NEW PET",
+      detail: "1% BEACH CRAB",
+    },
     {
       kind: "skin",
       id: "lex_young",
@@ -972,8 +986,35 @@
       detail: "PORTAL CATCH",
     },
   ];
+  /** Underground / rare buys shown on the BLACK MARKET rail tab. */
+  const BLACK_MARKET = [
+    {
+      kind: "pet",
+      id: "egypt_cat",
+      title: "EGYPT CAT",
+      blurb: "950 COINS",
+      detail: "ALLEY DEALER",
+    },
+    {
+      kind: "pet",
+      id: "blue_crab",
+      title: "BLUE CRAB",
+      blurb: "NO VENDOR",
+      detail: "1% CATCH ONLY",
+    },
+    {
+      kind: "face",
+      id: "king_crown",
+      title: "KING CROWN",
+      blurb: "RACE PRIZE",
+      detail: "NOT FOR SALE",
+    },
+  ];
   const WHATS_NEW_ROT_MS = 4200;
+  /** Featured rail tab: "whatsnew" | "blackmarket". */
+  let featuredRailTab = "whatsnew";
   let whatsNewIndex = 0;
+  let blackMarketIndex = 0;
   let whatsNewRotAt = 0;
   let whatsNewFade = 1;
   let whatsNewHover = false;
@@ -2784,50 +2825,124 @@
       const body = "#2a68b8";
       const hi = "#7ab8e8";
       const sh = "#1a4068";
+      const claw = "#1a5088";
+      // Animated side-scuttle legs
+      const tick = (anim | 0) & 3;
+      const a0 = sitting ? 0 : tick === 0 || tick === 1 ? 1 : 0;
+      const a1 = sitting ? 0 : tick === 1 || tick === 2 ? 1 : 0;
+      const a2 = sitting ? 0 : tick === 2 || tick === 3 ? 1 : 0;
+      // Front claws
+      p(-5, dy - 1 - a0, 2, 1, claw);
+      p(-5, dy - a0, 1, 1, hi);
+      p(3, dy - 1 - a2, 2, 1, claw);
+      p(4, dy - a2, 1, 1, hi);
+      // Shell
       p(-3, dy - 1, 6, 2, body);
       p(-2, dy - 2, 4, 1, hi);
       p(-2, dy + 1, 4, 1, sh);
-      p(-4, dy, 1, 1, hi);
-      p(3, dy, 1, 1, hi);
-      p(-3, dy + 1, 1, 1, sh);
-      p(2, dy + 1, 1, 1, sh);
+      // Eyes
       p(-1, dy - 1, 1, 1, "#0e1820");
       p(1, dy - 1, 1, 1, "#0e1820");
+      // Little walking legs (3 per side)
+      p(-4, dy + 1 + a0, 1, 1 + (a0 ? 0 : 1), sh);
+      p(-2, dy + 2 + a1, 1, 1, claw);
+      p(0, dy + 1 + a2, 1, 1 + (a2 ? 0 : 1), sh);
+      p(2, dy + 2 + a0, 1, 1, claw);
+      p(3, dy + 1 + a1, 1, 1 + (a1 ? 0 : 1), sh);
+      p(-3, dy + 2, 1, 1, "#0e2848");
+      p(1, dy + 2, 1, 1, "#0e2848");
     } else {
+      // Egyptian Bastet cat — triangle ears, amber eyes, ruddy body
       const sit = !!sitting;
-      const body = "#1a1816";
+      const fur = "#c47848";
+      const furHi = "#e8a068";
+      const furDk = "#8a4828";
+      const back = "#5a3020";
       const gold = "#e8c44a";
-      const eye = "#f3e2c4";
+      const goldHi = "#ffe08a";
+      const lapis = "#3a68b8";
+      const pearl = "#f4f0e8";
+      const cream = "#f4e0c8";
+      const eye = "#ffe08a";
+      const socket = "#3a1810";
+      const nose = "#8a3020";
+      const drawCatFace = (hy) => {
+        // Triangle ears (wide base → tip) — classic cat silhouette
+        p(-3, hy - 2, 2, 2, fur);
+        p(2, hy - 2, 2, 2, fur);
+        p(-2, hy - 4, 1, 2, fur);
+        p(2, hy - 4, 1, 2, fur);
+        p(-2, hy - 5, 1, 1, furHi);
+        p(2, hy - 5, 1, 1, furHi);
+        // Inner ear pink
+        p(-2, hy - 3, 1, 1, "#e8a090");
+        p(2, hy - 3, 1, 1, "#e8a090");
+        // Round head
+        p(-3, hy - 1, 7, 4, fur);
+        p(-2, hy - 2, 5, 1, fur);
+        // Cream cheeks / muzzle
+        p(-2, hy, 5, 2, cream);
+        p(-1, hy + 1, 3, 1, cream);
+        // Eyes: dark sockets + bright amber (high contrast)
+        p(-2, hy - 1, 2, 2, socket);
+        p(1, hy - 1, 2, 2, socket);
+        p(-2, hy - 1, 1, 1, eye);
+        p(1, hy - 1, 1, 1, eye);
+        p(-1, hy, 1, 1, eye);
+        p(2, hy, 1, 1, eye);
+        // Nose + mouth
+        p(0, hy + 1, 1, 1, nose);
+        p(-1, hy + 2, 1, 1, furDk);
+        p(1, hy + 2, 1, 1, furDk);
+        // Whisker dots
+        p(-3, hy + 1, 1, 1, furDk);
+        p(3, hy + 1, 1, 1, furDk);
+        // Crescent crown between ears
+        p(-1, hy - 5, 3, 1, gold);
+        p(0, hy - 6, 1, 1, lapis);
+        p(0, hy - 7, 1, 1, pearl);
+        // Gold ear hoops
+        p(-4, hy - 3, 1, 1, gold);
+        p(-4, hy - 2, 1, 1, goldHi);
+        p(4, hy - 3, 1, 1, gold);
+        p(4, hy - 2, 1, 1, goldHi);
+      };
       if (sit) {
-        p(-2, -6, 2, 3, body);
-        p(1, -6, 2, 3, body);
-        p(-3, -4, 7, 5, body);
-        p(-2, -3, 5, 3, "#2a2420");
-        p(-1, 1, 4, 2, body);
-        p(3, 0, 2, 3, body);
-        p(-2, -7, 1, 2, body);
-        p(2, -7, 1, 2, body);
-        p(-2, -8, 1, 1, gold);
-        p(2, -8, 1, 1, gold);
-        p(-1, -2, 1, 1, eye);
-        p(1, -2, 1, 1, eye);
-        p(-2, -1, 5, 1, gold);
+        // Curled tail
+        p(3, 0, 1, 2, back);
+        p(4, -2, 1, 3, back);
+        p(3, -3, 1, 1, furDk);
+        // Body + haunches
+        p(-3, -2, 6, 4, fur);
+        p(-2, -1, 4, 2, furHi);
+        p(-2, -2, 4, 1, back);
+        p(-3, 2, 3, 2, fur);
+        p(1, 2, 2, 2, furDk);
+        p(-2, 3, 1, 1, gold);
+        // Collar
+        p(-2, -2, 5, 1, lapis);
+        p(0, -2, 1, 1, gold);
+        p(-1, -1, 1, 1, lapis);
+        p(0, -1, 1, 1, pearl);
+        p(1, -1, 1, 1, lapis);
+        drawCatFace(-4);
       } else {
         const step = ((anim | 0) & 1) ? 1 : 0;
-        p(-2, -7, 2, 3, body);
-        p(1, -7, 2, 3, body);
-        p(-3, -5, 7, 5, body);
-        p(-2, -4, 5, 3, "#2a2420");
-        p(-2, -8, 1, 2, body);
-        p(2, -8, 1, 2, body);
-        p(-2, -9, 1, 1, gold);
-        p(2, -9, 1, 1, gold);
-        p(-1, -3, 1, 1, eye);
-        p(1, -3, 1, 1, eye);
-        p(-2, -2, 5, 1, gold);
-        p(-3, 0, 2, 2 + step, body);
-        p(1, 0, 2, 2 - step, body);
-        p(3, -2, 2, 2, body);
+        p(3, -2, 1, 3, back);
+        p(4, -4, 1, 3, back);
+        p(3, -5, 1, 1, furDk);
+        p(-3, -3, 6, 4, fur);
+        p(-2, -2, 4, 2, furHi);
+        p(-2, -3, 4, 1, back);
+        p(-2, -3, 5, 1, lapis);
+        p(0, -3, 1, 1, gold);
+        p(-1, -2, 1, 1, lapis);
+        p(0, -2, 1, 1, pearl);
+        p(1, -2, 1, 1, lapis);
+        p(-3, 1, 2, 2 + step, fur);
+        p(1, 1, 2, 2 - step, furDk);
+        p(-3, 2 + step, 1, 1, gold);
+        drawCatFace(-5);
       }
     }
     ink.restore();
@@ -4129,6 +4244,7 @@
       return true;
     }
     const def = ITEM_DEFS[id];
+    if (!def) return false;
     const existing = inventory.findIndex((s) => s && s.id === id);
     if (existing >= 0) {
       if (inventory[existing].count >= def.max) return false;
@@ -4158,6 +4274,36 @@
     if (playMode === "speedrun" && srCat === "serpent" && id === "serpent_heart") {
       finishSpeedrun();
     }
+    return true;
+  }
+
+  /** Rome stall / dealer purchase — put the good in the bag (or satchel) and fly it to the HUD. */
+  function giveBoughtItem(id) {
+    if (isCosmeticId(id)) {
+      grantCosmetic(id);
+      return true;
+    }
+    if (!ITEM_DEFS[id]) return false;
+    let dest = "slot";
+    if (canTake(id)) {
+      if (!addToInventory(id)) return false;
+    } else if (canTakeSatchel(id)) {
+      if (!addToSatchel(id)) return false;
+      dest = "satchel";
+    } else {
+      return false;
+    }
+    const from = worldToUi(player.x + player.w / 2, player.y);
+    pickupAnims.push({
+      id,
+      t: 0,
+      fromX: from.x,
+      fromY: from.y - 6,
+      slot: dest === "satchel" ? satchelSlotFor(id) : slotIndexFor(id),
+      dest: "miss",
+      value: 0,
+    });
+    onItemCollected(id);
     return true;
   }
 
@@ -11556,6 +11702,25 @@
       px(x + 2, y + 2, 2, 4, "#3a5080");
       return true;
     }
+    if (id === "olive") {
+      px(x + 1, y + 2, 2, 2, "#6a8a38");
+      px(x + 4, y + 1, 2, 2, "#8aaa48");
+      px(x + 3, y + 4, 2, 2, "#5c7a30");
+      px(x + 2, y + 3, 1, 1, "#c9a227");
+      return true;
+    }
+    if (id === "roman_bread") {
+      px(x + 1, y + 2, 6, 3, "#e8c49a");
+      px(x + 2, y + 1, 4, 1, "#f4e0c0");
+      px(x + 2, y + 5, 4, 1, "#c4a574");
+      return true;
+    }
+    if (id === "roman_wine") {
+      px(x + 3, y, 2, 2, "#d0d8e0");
+      px(x + 2, y + 2, 4, 5, "#7a2430");
+      px(x + 3, y + 3, 2, 3, "#c45a48");
+      return true;
+    }
     if (id === "sun_idol") {
       px(x + 2, y, 3, 1, "#ffe08a");
       px(x + 1, y + 1, 5, 4, "#e8c44a");
@@ -18389,24 +18554,50 @@
     px(x, thumbY, trackW, thumbH, "#c9a227");
   }
 
+  function featuredRailList() {
+    return featuredRailTab === "blackmarket" ? BLACK_MARKET : WHATS_NEW;
+  }
+
+  function featuredRailIndex() {
+    return featuredRailTab === "blackmarket" ? blackMarketIndex : whatsNewIndex;
+  }
+
+  function setFeaturedRailIndex(i) {
+    if (featuredRailTab === "blackmarket") blackMarketIndex = i;
+    else whatsNewIndex = i;
+  }
+
   function whatsNewItem(i) {
-    if (!WHATS_NEW.length) return null;
-    const n = WHATS_NEW.length;
+    const list = featuredRailList();
+    if (!list.length) return null;
+    const n = list.length;
     let idx = ((i | 0) % n + n) % n;
-    return WHATS_NEW[idx];
+    return list[idx];
   }
 
   function advanceWhatsNew(dir) {
-    if (!WHATS_NEW.length) return;
-    const n = WHATS_NEW.length;
+    const list = featuredRailList();
+    if (!list.length) return;
+    const n = list.length;
     const step = dir == null ? 1 : dir | 0;
-    whatsNewIndex = ((whatsNewIndex + step) % n + n) % n;
+    const next = ((featuredRailIndex() + step) % n + n) % n;
+    setFeaturedRailIndex(next);
     whatsNewRotAt = Date.now();
     whatsNewFade = 0;
   }
 
+  function setFeaturedRailTab(tab) {
+    const next = tab === "blackmarket" ? "blackmarket" : "whatsnew";
+    if (featuredRailTab === next) return;
+    featuredRailTab = next;
+    whatsNewRotAt = Date.now();
+    whatsNewFade = 0;
+    whatsNewPauseElapsed = -1;
+  }
+
   function tickWhatsNewCarousel() {
-    if (!WHATS_NEW.length) return;
+    const list = featuredRailList();
+    if (!list.length) return;
     const now = Date.now();
     if (!whatsNewRotAt) whatsNewRotAt = now;
     if (whatsNewFade < 1) {
@@ -18455,6 +18646,16 @@
       if (idx < 0) idx = 0;
       srCursor = idx;
       refreshSpeedBoard(SPEED_ORDER[idx] || SPEED_ORDER[0]);
+      return;
+    }
+    if (item.kind === "pet") {
+      lockerTab = "pets";
+      if (ownsPet(item.id)) equipPet(item.id);
+      return;
+    }
+    if (item.kind === "face") {
+      lockerTab = "cosmetics";
+      if (ownsCosmetic(item.id)) equipCosmetic(item.id);
     }
   }
 
@@ -18462,6 +18663,8 @@
     if (kind === "skin") return "SKIN";
     if (kind === "quest") return "QUEST";
     if (kind === "speed") return "SPEED";
+    if (kind === "pet") return "PET";
+    if (kind === "face") return "FACE";
     return "NEW";
   }
 
@@ -18498,6 +18701,8 @@
     } else if (item.kind === "speed") {
       ink.scale(1.4, 1.4);
       drawSpeedCatIcon(item.id, -4, -6);
+    } else if (item.kind === "pet") {
+      drawPetSprite(item.id, true, 1, 0, 0, time * 4);
     } else if (item.kind === "face") {
       const prev = cosmetics.face;
       cosmetics.face = item.id;
@@ -18510,21 +18715,54 @@
   /** Disney+-style featured rail on the right of the locker mannequin. */
   function drawWhatsNewRail(x, y, w, h) {
     tickWhatsNewCarousel();
-    if (!WHATS_NEW.length || w < 72 || h < 80) return;
+    const list = featuredRailList();
+    if (!list.length || w < 72 || h < 80) return;
 
-    const item = whatsNewItem(whatsNewIndex);
+    const item = whatsNewItem(featuredRailIndex());
+    if (!item) return;
     const hot = !!(menuHoverKey && String(menuHoverKey).indexOf("whatsnew:") === 0);
     whatsNewHover = hot;
+    const market = featuredRailTab === "blackmarket";
 
     // Outer wood frame
     px(x, y, w, h, "#1a120c");
     px(x + 1, y + 1, w - 2, h - 2, hot ? "#c9a227" : "#3a2414");
     px(x + 2, y + 2, w - 4, h - 4, "#2b1c12");
 
-    // Header band
-    px(x + 2, y + 2, w - 4, 13, "#3a2414");
-    px(x + 2, y + 14, w - 4, 1, "#c9a227");
-    drawPixTextSm("WHATS NEW", x + ((w / 2) | 0), y + 5, "#e8c44a", "center");
+    // Tab strip: WHATS NEW | BLACK MKT
+    const tabH = 13;
+    const tabY = y + 2;
+    const tabGap = 1;
+    const tabInner = w - 4 - tabGap;
+    const tabW = (tabInner / 2) | 0;
+    const railTabs = [
+      { id: "whatsnew", label: "NEW", x: x + 2 },
+      { id: "blackmarket", label: "MARKET", x: x + 2 + tabW + tabGap },
+    ];
+    for (let ti = 0; ti < railTabs.length; ti++) {
+      const t = railTabs[ti];
+      const on = featuredRailTab === t.id;
+      const thot = !on && menuHovering("whatsnew:tab:" + t.id);
+      px(t.x, tabY, tabW, tabH, on ? "#c9a227" : "#1a120c");
+      px(t.x + 1, tabY + 1, tabW - 2, tabH - 2, on ? "#e8c44a" : thot ? "#5c3a21" : "#3a2414");
+      drawPixTextSm(
+        t.label,
+        t.x + ((tabW / 2) | 0),
+        tabY + 3,
+        on ? "#2b1c12" : thot ? "#f3e2c4" : "#8a6a42",
+        "center"
+      );
+      addMenuHit(
+        "whatsnew:tab:" + t.id,
+        t.x,
+        tabY,
+        tabW,
+        tabH,
+        () => setFeaturedRailTab(t.id),
+        { hover: true }
+      );
+    }
+    px(x + 2, tabY + tabH, w - 4, 1, market ? "#8a3038" : "#c9a227");
 
     const artTop = y + 18;
     const artH = Math.max(36, ((h - 18 - 42) * 0.62) | 0);
@@ -18534,9 +18772,33 @@
 
     // Atmospheric art stage (kind tint — not flat fill)
     const kind = item.kind;
-    const stageA = kind === "speed" ? "#0c2230" : kind === "quest" ? "#241810" : "#122018";
-    const stageB = kind === "speed" ? "#163848" : kind === "quest" ? "#3a2414" : "#1a3840";
-    const stageC = kind === "speed" ? "#1e5070" : kind === "quest" ? "#5c3a21" : "#2a5860";
+    const stageA = market
+      ? "#140c10"
+      : kind === "speed"
+        ? "#0c2230"
+        : kind === "quest"
+          ? "#241810"
+          : kind === "pet"
+            ? "#1a1410"
+            : "#122018";
+    const stageB = market
+      ? "#2a1418"
+      : kind === "speed"
+        ? "#163848"
+        : kind === "quest"
+          ? "#3a2414"
+          : kind === "pet"
+            ? "#3a2818"
+            : "#1a3840";
+    const stageC = market
+      ? "#5c2030"
+      : kind === "speed"
+        ? "#1e5070"
+        : kind === "quest"
+          ? "#5c3a21"
+          : kind === "pet"
+            ? "#5c3a21"
+            : "#2a5860";
     px(x + 3, artTop, w - 6, artH, stageA);
     px(x + 4, artTop + 2, w - 8, ((artH * 0.55) | 0), stageB);
     px(x + 6, artTop + ((artH * 0.35) | 0), w - 12, ((artH * 0.28) | 0), stageC);
@@ -18556,21 +18818,29 @@
     ctx.rect(x + 3, artTop, w - 6, artH);
     ctx.clip();
     ctx.globalAlpha = 0.35 + 0.65 * fade;
-    drawWhatsNewArt(item, artCx, artCy, kind === "speed" ? 2.6 : 2.1);
+    drawWhatsNewArt(item, artCx, artCy, kind === "speed" ? 2.6 : kind === "pet" ? 2.4 : 2.1);
     ctx.restore();
 
-    // NEW chip + kind label over art
-    drawNewTag(x + 6, artTop + 4);
+    // NEW / MARKET chip + kind label over art
+    if (market) {
+      const tag = "MKT";
+      const tw = pixTextWidthSm(tag);
+      px(x + 6, artTop + 4, tw + 5, 9, "#1a120c");
+      px(x + 7, artTop + 5, tw + 3, 7, "#8a3038");
+      drawPixTextSm(tag, x + 8 + ((tw / 2) | 0), artTop + 6, "#f3e2c4", "center");
+    } else {
+      drawNewTag(x + 6, artTop + 4);
+    }
     const kindLab = whatsNewKindLabel(kind);
     const kw = pixTextWidthSm(kindLab);
     px(x + w - 8 - kw - 4, artTop + 3, kw + 5, 9, "#1a120c");
-    px(x + w - 7 - kw - 4, artTop + 4, kw + 3, 7, "#5c3a21");
+    px(x + w - 7 - kw - 4, artTop + 4, kw + 3, 7, market ? "#8a3038" : "#5c3a21");
     drawPixTextSm(kindLab, x + w - 6 - ((kw / 2) | 0) - 2, artTop + 5, "#f3e2c4", "center");
 
     // Copy block
     ctx.globalAlpha = 0.4 + 0.6 * fade;
     drawPixText(String(item.title || "").slice(0, 14), artCx, copyY, "#f3e2c4", "center");
-    drawPixTextSm(String(item.blurb || "").slice(0, 16), artCx, copyY + 10, "#c9a227", "center");
+    drawPixTextSm(String(item.blurb || "").slice(0, 16), artCx, copyY + 10, market ? "#e07070" : "#c9a227", "center");
     drawPixTextSm(String(item.detail || "").slice(0, 18), artCx, copyY + 19, "#8a6a42", "center");
     ctx.globalAlpha = 1;
 
@@ -18582,15 +18852,15 @@
     const prog = whatsNewRotAt
       ? Math.min(1, (Date.now() - whatsNewRotAt) / WHATS_NEW_ROT_MS)
       : 0;
-    if (prog > 0) px(progX, progY, Math.max(1, (progW * prog) | 0), 2, "#e8c44a");
+    if (prog > 0) px(progX, progY, Math.max(1, (progW * prog) | 0), 2, market ? "#e07070" : "#e8c44a");
 
     // Card click first; side nudges + dots registered after so they win hit tests
     addMenuHit(
       "whatsnew:card",
       x,
-      y,
+      artTop,
       w,
-      h - 14,
+      h - (artTop - y) - 14,
       () => openWhatsNewItem(item),
       { hover: true }
     );
@@ -18613,20 +18883,21 @@
       { hover: true }
     );
     if (menuHovering("whatsnew:prev") || hot) {
-      drawPixTextSm("<", x + 6, artTop + ((artH / 2) | 0) - 3, "#e8c44a", "left");
+      drawPixTextSm("<", x + 6, artTop + ((artH / 2) | 0) - 3, market ? "#e07070" : "#e8c44a", "left");
     }
     if (menuHovering("whatsnew:next") || hot) {
-      drawPixTextSm(">", x + w - 8, artTop + ((artH / 2) | 0) - 3, "#e8c44a", "left");
+      drawPixTextSm(">", x + w - 8, artTop + ((artH / 2) | 0) - 3, market ? "#e07070" : "#e8c44a", "left");
     }
 
     // Dot pagination
-    const n = WHATS_NEW.length;
+    const n = list.length;
+    const railIdx = featuredRailIndex();
     const dotGap = 5;
     const dotsW = n * 3 + (n - 1) * (dotGap - 3);
     let dx = artCx - ((dotsW / 2) | 0);
     for (let i = 0; i < n; i++) {
-      const on = i === whatsNewIndex;
-      px(dx, dotsY, on ? 4 : 3, 3, on ? "#e8c44a" : "#5c3a21");
+      const on = i === railIdx;
+      px(dx, dotsY, on ? 4 : 3, 3, on ? (market ? "#e07070" : "#e8c44a") : "#5c3a21");
       addMenuHit(
         "whatsnew:dot:" + i,
         dx - 2,
@@ -18634,7 +18905,7 @@
         8,
         7,
         () => {
-          whatsNewIndex = i;
+          setFeaturedRailIndex(i);
           whatsNewRotAt = Date.now();
           whatsNewFade = 0;
         },
@@ -21248,7 +21519,7 @@
       refund: (n) => {
         player.coins += n;
       },
-      giveItem: (id) => addToInventory(id),
+      giveItem: (id) => giveBoughtItem(id),
       grantPet: (id) => {
         grantPet(id);
         if (!equippedPet) equipPet(id);
