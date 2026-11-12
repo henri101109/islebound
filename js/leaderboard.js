@@ -880,6 +880,36 @@
     }
   }
 
+  /** Best posted time for the signed-in account (PR table or their score rows). */
+  async function fetchMyBest(category) {
+    const local = getLocalPr(category);
+    let best = local | 0;
+    if (session && session.user && configured()) {
+      const pr = await fetchPr(category);
+      const prMs = pr && pr.time_ms | 0;
+      if (prMs > 0 && (!best || prMs < best)) best = prMs;
+      const url =
+        restBase() +
+        "/" +
+        TABLE +
+        "?category=eq." +
+        encodeURIComponent(category) +
+        "&user_id=eq." +
+        encodeURIComponent(session.user.id) +
+        "&select=time_ms&order=time_ms.asc&limit=1";
+      try {
+        const res = await fetch(url, { headers: anonHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          const ms = data && data[0] ? data[0].time_ms | 0 : 0;
+          if (ms > 0 && (!best || ms < best)) best = ms;
+        }
+      } catch (e) {}
+    }
+    if (best > 0) setLocalPr(category, best);
+    return { ok: true, time_ms: best || 0 };
+  }
+
   function pbInfo(category, timeMs) {
     const prev = getLocalPr(category) | 0;
     if (!prev) return { prev: 0, delta: 0, label: "FIRST PB", isFirst: true, improved: true };
@@ -3228,6 +3258,7 @@
     pbInfo,
     getLocalPr,
     fetchPr,
+    fetchMyBest,
     upsertPr,
     // auth
     isSignedIn,

@@ -733,6 +733,8 @@
   let questTip = "";
   let questTipT = 0;
   let questCursor = 0;
+  let questScroll = 0;
+  let questListMax = 0;
   /** Rewards hub tab: "quests" | "weekly" | "levels". */
   let questTab = "quests";
   /** Levels sub-page: "overview" | "tiers". */
@@ -796,7 +798,17 @@
   let careerLastGainT = 0;
   /** name → estimated career level cache for boards / lobby. */
   let careerLevelCache = {};
+  /** Kings Race% under 3:35 unlocks the Lex Young skin. */
+  const LEX_YOUNG_MS = 215000;
   const NOV_QUESTS = [
+    {
+      id: "lex",
+      title: "SUB 3:35 RACE",
+      desc: "KINGS RACE UNDER 3:35",
+      rewardKind: "skin",
+      rewardId: "lex_young",
+      rewardLabel: "LEX SKIN",
+    },
     {
       id: "bolt",
       title: "SUB 9.58 DEATH",
@@ -896,7 +908,7 @@
       kind: "skin",
       id: "lex_young",
       title: "LEX YOUNG",
-      blurb: "NEW SKIN",
+      blurb: "QUEST REWARD",
       detail: "SUB 3:35 RACE",
     },
     {
@@ -3019,6 +3031,7 @@
     if (!api.fetchLocker) return;
     api.fetchLocker().then((res) => {
       if (res && res.locker) mergeCloudLocker(res.locker);
+      syncLexYoungFromHistory();
       // Push local (now merged) up so cloud catches any local-only unlocks.
       saveLockerProfile();
     });
@@ -3187,6 +3200,7 @@
     }
     if (cat === "shark_cloak") markQuestDone("jobapp");
     if (cat === "jelly_white" && t > 0 && t < 35000) markQuestDone("jelly");
+    if (cat === "kings_race" && t > 0 && t < LEX_YOUNG_MS) tryGrantLexYoung(t);
   }
 
   function tryGrantAmericanCloak() {
@@ -3368,23 +3382,35 @@
     drawPixText("CLAIM REWARDS HERE", (x + w / 2) | 0, y + 32, "#5c3a21", "center");
     const rowH = 14;
     const listTop = y + 44;
+    const listBot = y + h - 40;
+    const viewH = Math.max(rowH, listBot - (listTop - 2));
+    questListMax = Math.max(0, NOV_QUESTS.length * rowH - viewH);
+    const curTop = (questCursor | 0) * rowH;
+    if (curTop < questScroll) questScroll = curTop;
+    else if (curTop + rowH > questScroll + viewH) questScroll = curTop + rowH - viewH;
+    if (questScroll < 0) questScroll = 0;
+    if (questScroll > questListMax) questScroll = questListMax;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 4, listTop - 2, w - 10, viewH);
+    ctx.clip();
     for (let i = 0; i < NOV_QUESTS.length; i++) {
       const q = NOV_QUESTS[i];
       const st = questStatus(q);
       const key = "quest:" + i;
       const sel = questCursor === i || menuHovering(key);
-      const oy = listTop + i * rowH;
-      if (oy > y + h - 40) break;
-      if (sel) px(x + 6, oy - 2, w - 12, 12, "#e8c44a");
+      const oy = listTop + i * rowH - questScroll;
+      if (oy + 12 < listTop - 2 || oy > listBot) continue;
+      if (sel) px(x + 6, oy - 2, w - 16, 12, "#e8c44a");
       const stLabel = st === "claimed" ? "DONE" : st === "claimable" ? "CLAIM" : "----";
       const stCol = st === "claimed" ? "#5c3a21" : st === "claimable" ? "#2b1c12" : "#8a5a32";
       drawPixText(String(q.title).slice(0, 16), x + 10, oy, sel ? "#2b1c12" : "#3a2414");
-      drawPixText(stLabel, x + w - 42, oy, sel && st === "claimable" ? "#2b1c12" : stCol);
+      drawPixText(stLabel, x + w - 48, oy, sel && st === "claimable" ? "#2b1c12" : stCol);
       addMenuHit(
         key,
         x + 6,
         oy - 2,
-        w - 12,
+        w - 16,
         12,
         () => {
           questCursor = i;
@@ -3393,6 +3419,8 @@
         { hover: true }
       );
     }
+    ctx.restore();
+    if (questListMax > 0) drawLockerScrollBar(x + w - 8, listTop - 2, viewH, questScroll, questListMax);
     const cur = NOV_QUESTS[questCursor] || NOV_QUESTS[0];
     const st = questStatus(cur);
     let detail = cur.desc;
@@ -3580,6 +3608,7 @@
     if (cosmetics.back && !ownsCosmetic(cosmetics.back)) grantCosmetic(cosmetics.back);
     syncQuestOwnershipFlags();
     tryGrantAmericanCloak();
+    syncLexYoungFromHistory();
     loadCareer();
     backfillCareerFromHistory();
     refreshCareerLevelCache();
@@ -15650,11 +15679,81 @@
     else if (srCat === "coins_100" && player.coins >= 100) finishSpeedrun();
   }
 
+  function finishLexYoungQuest(equip) {
+    const fresh = !ownsSkin("lex_young");
+    if (fresh) grantSkin("lex_young");
+    if (!questDone.lex || !questClaimed.lex) {
+      questDone.lex = true;
+      questClaimed.lex = true;
+      saveLockerProfile();
+    }
+    if (fresh && equip) {
+      equipSkin("lex_young");
+      flashQuestUnlock("LEX YOUNG");
+    }
+  }
+
+  function ownKingsRaceMs(rows) {
+    const api = lbApi();
+    if (!api || !rows || !rows.length) return 0;
+    const user = api.currentUser && api.currentUser();
+    const uid = user && user.id ? String(user.id) : "";
+    const name = ((api.displayName && api.displayName()) || "").toUpperCase();
+    let best = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || !(r.time_ms > 0)) continue;
+      const rowName = String(r.player_name || "").toUpperCase();
+      const mine = (uid && r.user_id && String(r.user_id) === uid) || (name && rowName === name);
+      if (!mine) continue;
+      const t = r.time_ms | 0;
+      if (!best || t < best) best = t;
+    }
+    return best;
+  }
+
+  function syncLexYoungFromHistory() {
+    if (ownsSkin("lex_young")) {
+      if (!questDone.lex || !questClaimed.lex) {
+        questDone.lex = true;
+        questClaimed.lex = true;
+        saveLockerProfile();
+      }
+      return;
+    }
+    const api = lbApi();
+    const local = api && api.getLocalPr ? api.getLocalPr("kings_race") | 0 : 0;
+    if (local > 0 && local < LEX_YOUNG_MS) {
+      finishLexYoungQuest(false);
+      return;
+    }
+    const cached = api && api.getCachedBoard ? api.getCachedBoard("kings_race") : null;
+    const cachedMs = ownKingsRaceMs(cached);
+    if (cachedMs > 0 && cachedMs < LEX_YOUNG_MS) {
+      finishLexYoungQuest(false);
+      return;
+    }
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return;
+    const jobs = [];
+    if (api.fetchMyBest) jobs.push(api.fetchMyBest("kings_race").then((res) => (res && res.time_ms) | 0));
+    else if (api.fetchPr) jobs.push(api.fetchPr("kings_race").then((res) => (res && res.time_ms) | 0));
+    if (api.fetchTop) {
+      jobs.push(api.fetchTop("kings_race", 25).then((res) => ownKingsRaceMs(res && res.rows)));
+    }
+    if (!jobs.length) return;
+    Promise.all(jobs).then((times) => {
+      let best = 0;
+      for (let i = 0; i < times.length; i++) {
+        const t = times[i] | 0;
+        if (t > 0 && (!best || t < best)) best = t;
+      }
+      if (best > 0 && best < LEX_YOUNG_MS) finishLexYoungQuest(false);
+    });
+  }
+
   function tryGrantLexYoung(ms) {
-    if (!(ms > 0) || ms >= 215000) return;
-    if (!grantSkin("lex_young")) return;
-    equipSkin("lex_young");
-    flashQuestUnlock("LEX YOUNG");
+    if (!(ms > 0) || ms >= LEX_YOUNG_MS) return;
+    finishLexYoungQuest(true);
   }
 
   function commitRaceSegment(ms) {
@@ -19129,6 +19228,11 @@
           }
           return;
         }
+      }
+      if (uiScreen === "quests" && questTab === "quests" && questListMax > 0) {
+        e.preventDefault();
+        questScroll = clampLockerScroll(questScroll + (e.deltaY < 0 ? -14 : 14), questListMax);
+        return;
       }
       if (!chatOpen) return;
       const uiW = canvas.width / SCALE_UI;
