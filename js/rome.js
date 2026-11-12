@@ -550,6 +550,22 @@
       return best;
     }
 
+    function nearDealer() {
+      if (A.getScene() !== "rome") return null;
+      const f = feet();
+      let best = null;
+      let bestD = 30;
+      for (let i = 0; i < city.dealers.length; i++) {
+        const d = city.dealers[i];
+        const dist = Math.hypot(f.x - (d.x + 4), f.y - (d.y + 12));
+        if (dist < bestD) {
+          bestD = dist;
+          best = d;
+        }
+      }
+      return best;
+    }
+
     function onKey(k) {
       if (!isScene()) return false;
       if (script && (k === "enter" || k === " ")) {
@@ -562,6 +578,11 @@
         const stall = nearStall();
         if (stall) {
           buy(stall);
+          return true;
+        }
+        const dealer = nearDealer();
+        if (dealer) {
+          buy(dealer);
           return true;
         }
       }
@@ -898,6 +919,8 @@
       if (sc === "rome" && phase === "city") {
         const stall = nearStall();
         if (stall) return "T  " + stall.label + "  " + stall.price;
+        const dealer = nearDealer();
+        if (dealer) return "T  " + dealer.label + "  " + dealer.price;
         const f = feet();
         if (hitRect(f.x, f.y, city.palaceDoor) || Math.hypot(f.x - (city.palaceDoor.x + 16), f.y - city.palaceDoor.y) < 36) {
           return "THE KINGS PALACE";
@@ -1069,6 +1092,7 @@
       const g = A.ctx();
       const t = A.time();
       A.pxi(g, 0, 0, A.viewW(), A.viewH(), "#c2a06a");
+      drawAlleys(cam);
       // Street stones, viewport only.
       const x0 = Math.max(STREET_X, cam.x) | 0;
       const x1 = Math.min(STREET_X + STREET_W, cam.x + A.viewW() + 8) | 0;
@@ -1085,6 +1109,7 @@
       for (let i = 0; i < city.blocks.length; i++) drawBlock(cam, city.blocks[i], i);
       drawPalaceFace(cam);
       for (let i = 0; i < city.stalls.length; i++) drawStall(cam, city.stalls[i], t);
+      for (let i = 0; i < city.dealers.length; i++) drawDealer(cam, city.dealers[i], t);
       drawPortalPad(cam, t);
       for (let i = 0; i < city.people.length; i++) {
         const n = city.people[i];
@@ -1163,6 +1188,48 @@
       A.pxi(g, x + 8, y + 8, 4, 4, "#f3e2c4");
       A.pxi(g, x + 14, y + 8, 4, 4, s.goods);
       drawPerson(g, x + 6, y - 8 + ((Math.sin(t * 2 + s.x) * 0.5) | 0), s.robe, 1, 0, false);
+    }
+
+    function drawAlleys(cam) {
+      const g = A.ctx();
+      for (let i = 0; i < city.alleys.length; i++) {
+        const a = city.alleys[i];
+        if (a.x + a.w < cam.x - 8 || a.y + a.h < cam.y - 8 || a.x > cam.x + A.viewW() + 8 || a.y > cam.y + A.viewH() + 8) continue;
+        const x = (a.x - cam.x) | 0;
+        const y = (a.y - cam.y) | 0;
+        A.pxi(g, x, y, a.w, a.h, "#5a4634");
+        A.pxi(g, x, y + 3, a.w, a.h - 6, "#3a2c22");
+        A.pxi(g, x, y, a.w, 2, "#241810");
+        A.pxi(g, x, y + a.h - 2, a.w, 2, "#241810");
+      }
+    }
+
+    function drawDealer(cam, d, t) {
+      if (d.x + 24 < cam.x || d.y + 24 < cam.y || d.x > cam.x + A.viewW() || d.y > cam.y + A.viewH()) return;
+      const g = A.ctx();
+      const x = (d.x - cam.x) | 0;
+      const y = (d.y - cam.y) | 0;
+      const bob = (Math.sin(t * 2 + d.x) * 0.5) | 0;
+      const fill =
+        d.item === "potion_mystery"
+          ? ["#e85ad4", "#44e0c0", "#ffe14a", "#7a4bff"][((t * 4) | 0) % 4]
+          : d.fill;
+      A.pxi(g, x - 3, y - 4 + bob, 16, 2, "#120c10");
+      drawPerson(g, x, y + bob, d.robe, d.face, (t * 3) | 0, false);
+      A.pxi(g, x + 1, y - 2 + bob, 6, 3, "#120c10");
+      A.pxi(g, x + 2, y + bob, 4, 2, "#120c10");
+      const bx = d.face < 0 ? x - 4 : x + 8;
+      A.pxi(g, bx, y + 5 + bob, 3, 5, "#d0d8e0");
+      A.pxi(g, bx + 1, y + 7 + bob, 1, 2, fill);
+      const lamp = Math.sin(t * 9 + d.x) > 0 ? "#e8c44a" : "#a06028";
+      const mx = (d.mouth - cam.x) | 0;
+      const my = (d.mouthY - cam.y) | 0;
+      A.pxi(g, mx, my, 2, 3, "#3a2414");
+      A.pxi(g, mx, my - 2, 2, 2, lamp);
+      const f = feet();
+      if (Math.hypot(f.x - (d.x + 4), f.y - (d.y + 12)) < 72) {
+        A.drawPixText(d.line, x + 4, y - 12 + bob, "#f3e2c4", "center");
+      }
     }
 
     function drawPortalPad(cam, t) {
@@ -1893,12 +1960,53 @@
     const top = 430;
     const bot = CITY_H - 220;
     const rows = 6;
-    const gap = 28;
+    const gap = 44;
     const bh = ((bot - top - gap * (rows - 1)) / rows) | 0;
+    const alleys = [];
+    const gaps = [];
     for (let r = 0; r < rows; r++) {
       const y = top + r * (bh + gap);
       blocks.push({ x: leftX, y: y, w: leftW, h: bh });
       blocks.push({ x: rightX, y: y, w: rightW, h: bh });
+      if (r < rows - 1) {
+        const gy = y + bh;
+        gaps.push(gy);
+        // Dark mouths face the avenue so the gaps read as alleys.
+        alleys.push({ x: leftX, y: gy, w: leftW + 12, h: gap });
+        alleys.push({ x: rightX - 12, y: gy, w: rightW + 12, h: gap });
+      }
+    }
+    const brews = [
+      { item: "potion_slow", label: "SLOW", price: 6, fill: "#7a3a9a", robe: "#241428", line: "TAR IN A BOTTLE" },
+      { item: "potion_mend", label: "MEND", price: 8, fill: "#3ecf7a", robe: "#102820", line: "IT KNITS YOU" },
+      { item: "potion_fly", label: "FLY", price: 14, fill: "#7ec8ff", robe: "#142030", line: "LEAVE THE STONES" },
+      { item: "potion_mystery", label: "???", price: 10, fill: "#e85ad4", robe: "#2a1024", line: "DON'T ASK" },
+    ];
+    const spots = [
+      { side: 0, gap: 0, brew: 0 },
+      { side: 1, gap: 1, brew: 1 },
+      { side: 0, gap: 2, brew: 2 },
+      { side: 1, gap: 4, brew: 3 },
+    ];
+    const dealers = [];
+    for (let i = 0; i < spots.length; i++) {
+      const s = spots[i];
+      const g = brews[s.brew];
+      const gy = gaps[s.gap];
+      const left = s.side === 0;
+      dealers.push({
+        x: left ? leftX + leftW - 78 : rightX + 52,
+        y: gy + 14,
+        face: left ? 1 : -1,
+        mouth: left ? leftX + leftW + 2 : rightX - 4,
+        mouthY: gy + ((gap / 2) | 0),
+        item: g.item,
+        label: g.label,
+        price: g.price,
+        fill: g.fill,
+        robe: g.robe,
+        line: g.line,
+      });
     }
     const stalls = [];
     const goods = [
@@ -1934,6 +2042,8 @@
     const palaceSolid = { x: palaceFace.x, y: palaceFace.y, w: palaceFace.w, h: palaceFace.h };
     return {
       blocks: blocks,
+      alleys: alleys,
+      dealers: dealers,
       stalls: stalls,
       people: people,
       palaceFace: palaceFace,

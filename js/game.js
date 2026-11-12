@@ -67,6 +67,10 @@
     potion_fury: { name: "Fury potion", max: 4, xp: 10 },
     potion_warp: { name: "Warp potion", max: 4, xp: 8 },
     potion_smoke: { name: "Smoke potion", max: 4, xp: 6 },
+    potion_slow: { name: "Tar draught", max: 6, xp: 6 },
+    potion_mend: { name: "Mend draught", max: 6, xp: 6 },
+    potion_fly: { name: "Sky draught", max: 4, xp: 10 },
+    potion_mystery: { name: "Mystery draught", max: 4, xp: 12 },
     vein_gem: { name: "Vein gem", max: 24, xp: 22 },
     mountain_heart: { name: "Heart of the Mountain", max: 8, xp: 100 },
     key_bronze: { name: "Bronze key", max: 1, xp: 5 },
@@ -985,6 +989,146 @@
   let pondTip = "";
   let pondTipT = 0;
   let useFx = null;
+  const BREW_SEC = 60;
+  const brew = {
+    slow: 0,
+    mend: 0,
+    fly: 0,
+    trip: 0,
+    mendAcc: 0,
+    mendPop: 0,
+    trailAcc: 0,
+    trail: [],
+    lagX: 0,
+    lagY: 0,
+  };
+  const TRIP_LINES = [
+    "THE ROAD IS BREATHING",
+    "THAT COLUMN WAS YOU",
+    "THE SKY HAS TEETH",
+    "DON'T TRUST THE STONES",
+    "YOU ALREADY LEFT",
+    "THE KING IS A FISH",
+    "THIS ALLEY ISN'T HERE",
+    "YOUR HANDS ARE WRONG",
+    "THE WINE IS WATCHING",
+    "YOU ARE THE DOOR",
+    "NOTHING UNDER YOUR FEET",
+    "IT KNOWS YOUR NAME",
+  ];
+
+  function brewFlying() {
+    return brew.fly > 0 && (scene === "rome" || scene === "island");
+  }
+
+  function clearBrew() {
+    brew.slow = 0;
+    brew.mend = 0;
+    brew.fly = 0;
+    brew.trip = 0;
+    brew.mendAcc = 0;
+    brew.mendPop = 0;
+    brew.trailAcc = 0;
+    brew.trail.length = 0;
+  }
+
+  function drinkBrew(id) {
+    if (id === "potion_slow") {
+      brew.slow = BREW_SEC;
+      brew.lagX = player.x;
+      brew.lagY = player.y;
+      cosTip = "LEGS TURN TO TAR";
+    } else if (id === "potion_mend") {
+      brew.mend = BREW_SEC;
+      brew.mendAcc = 0;
+      brew.mendPop = 0.6;
+      if (player.dead <= 0) player.hp = Math.min(MAX_HP, player.hp + 1);
+      cosTip = "SKIN KNITS WRONG";
+    } else if (id === "potion_fly") {
+      brew.fly = BREW_SEC;
+      player.inWater = false;
+      player.submerged = 0;
+      player.drownTick = 0;
+      cosTip = "THE GROUND LETS GO";
+    } else if (id === "potion_mystery") {
+      brew.trip = BREW_SEC;
+      brew.trail.length = 0;
+      shake = Math.max(shake, 8);
+      cosTip = "NOTHING IS REAL";
+    } else return false;
+    cosTipT = 2.4;
+    return true;
+  }
+
+  function unstickAfterFly() {
+    if (canMove(player.x, player.y)) return;
+    const cx = player.x;
+    const cy = player.y;
+    for (let r = 12; r <= 320; r += 12) {
+      for (let a = 0; a < 10; a++) {
+        const ang = (a / 10) * Math.PI * 2 + r * 0.02;
+        const nx = cx + Math.cos(ang) * r;
+        const ny = cy + Math.sin(ang) * r;
+        if (canMove(nx, ny)) {
+          player.x = nx;
+          player.y = ny;
+          return;
+        }
+      }
+    }
+  }
+
+  function updateBrew(dt) {
+    if (brew.slow > 0) {
+      brew.slow = Math.max(0, brew.slow - dt);
+      const k = 1 - Math.exp(-dt * 2.4);
+      brew.lagX += (player.x - brew.lagX) * k;
+      brew.lagY += (player.y - brew.lagY) * k;
+      if (brew.slow === 0) {
+        cosTip = "THE TAR LETS GO";
+        cosTipT = 2;
+      }
+    }
+    if (brew.fly > 0) {
+      brew.fly = Math.max(0, brew.fly - dt);
+      if (brew.fly === 0) {
+        cosTip = "THE GROUND TAKES YOU BACK";
+        cosTipT = 2;
+        unstickAfterFly();
+      }
+    }
+    if (brew.mend > 0) {
+      brew.mend = Math.max(0, brew.mend - dt);
+      if (brew.mendPop > 0) brew.mendPop = Math.max(0, brew.mendPop - dt);
+      if (player.dead <= 0 && player.hp > 0 && player.hp < MAX_HP) {
+        brew.mendAcc += dt;
+        if (brew.mendAcc >= 6) {
+          brew.mendAcc -= 6;
+          player.hp += 1;
+          brew.mendPop = 0.5;
+        }
+      }
+      if (brew.mend === 0) {
+        brew.mendAcc = 0;
+        cosTip = "THE KNIT FADES";
+        cosTipT = 2;
+      }
+    }
+    if (brew.trip > 0) {
+      brew.trip = Math.max(0, brew.trip - dt);
+      brew.trailAcc += dt;
+      if (brew.trailAcc > 0.08) {
+        brew.trailAcc = 0;
+        brew.trail.push({ x: player.x, y: player.y });
+        if (brew.trail.length > 7) brew.trail.shift();
+      }
+      if (brew.trip === 0) {
+        brew.trail.length = 0;
+        cosTip = "THE WORLD SNAPS BACK";
+        cosTipT = 2;
+      }
+    }
+  }
   let audioCtx = null;
   let oceanGain = null;
   let oceanReady = false;
@@ -1518,6 +1662,7 @@
   }
 
   function canStand(px, py) {
+    if (brewFlying()) return true;
     if (rome && rome.isScene()) return !rome.solid(px, py);
     if (isSolidPoint(px, py)) return false;
     if (scene === "shop") {
@@ -2772,8 +2917,12 @@
     const feetY = player.y + player.h - 2;
     const onDock = scene === "island" && !!hitPad(player.x + 4, feetY, walkPads);
     const wadingPond = playerWadingPond();
-    if (player.aboard) {
+    if (player.aboard || brewFlying()) {
       player.inWater = false;
+      if (brewFlying()) {
+        player.submerged = 0;
+        player.drownTick = 0;
+      }
     } else {
       // Pond is wadable — counts as slow water move, but not drowning ocean/river.
       player.inWater =
@@ -2805,8 +2954,12 @@
       } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
         steerOwnedBoat(dt, dx, dy);
       } else {
-        const moveMul = rome && rome.isScene() ? rome.moveMul() : 1;
-        const speed = (player.inWater || wadingPond ? 70 : 165) * moveMul * dt;
+        const moveMul = brewFlying() ? 1 : rome && rome.isScene() ? rome.moveMul() : 1;
+        let brewMul = 1;
+        if (brew.slow > 0) brewMul *= 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(time * 7));
+        if (brewFlying()) brewMul *= 1.22;
+        const wet = !brewFlying() && (player.inWater || wadingPond);
+        const speed = (wet ? 70 : 165) * moveMul * brewMul * dt;
         if (player.moving) {
           const len = Math.hypot(dx, dy) || 1;
           const nx = player.x + (dx / len) * speed;
@@ -2833,7 +2986,8 @@
       player.y = Math.max(0, Math.min(ROWS * TILE - player.h, player.y));
     }
 
-    if (player.moving) player.anim += dt * 13;
+    const stepRate = brew.slow > 0 ? 4.2 : brew.fly > 0 ? 16 : 13;
+    if (player.moving) player.anim += dt * stepRate;
     else player.anim *= 0.7;
     player.frame = Math.floor(player.anim) % 4;
     player.bob += dt * 3;
@@ -6754,6 +6908,11 @@
       }
       if (stack.id === "potion_red") {
         player.hp = Math.min(MAX_HP, player.hp + 3);
+        takeOneFrom(inventory, stack.id);
+        useFx = { t: 0, id: stack.id };
+        return;
+      }
+      if (drinkBrew(stack.id)) {
         takeOneFrom(inventory, stack.id);
         useFx = { t: 0, id: stack.id };
         return;
@@ -11678,6 +11837,12 @@
       const y = Math.round(player.y - cpos.y);
       ink.translate(x + 4, y + player.h - 1);
       ink.scale(face, 1);
+      if (brew.fly > 0) {
+        const lift = 12 + Math.sin(time * 3.4) * 2.5;
+        px(-5, -1, 10, 2, "rgba(24, 16, 10, 0.45)");
+        px(-3, 0, 6, 1, "rgba(24, 16, 10, 0.25)");
+        ink.translate(0, -lift);
+      }
     }
 
     const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
@@ -11691,6 +11856,22 @@
     if (playerSkin === "flash") drawFlashElectricity(0, -8);
     if (player.inWater && !player.aboard) {
       px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
+    }
+    if (brew.fly > 0 && !player.aboard) {
+      const flap = Math.sin(time * 14);
+      px(-9, -11 + (flap > 0 ? 0 : 1), 3, 2, "#d6ecff");
+      px(6, -11 + (flap > 0 ? 1 : 0), 3, 2, "#d6ecff");
+      px(-11, -10, 2, 1, "#9ec8ee");
+      px(9, -10, 2, 1, "#9ec8ee");
+    }
+    if (brew.slow > 0) {
+      const drip = (time * 6) % 5;
+      px(-2, 0, 2, 1 + (drip | 0), "#5a2878");
+      px(1, 1, 1, (drip * 0.6) | 0, "#3a1848");
+    }
+    if (brew.mend > 0 && Math.sin(time * 5) > 0.15) {
+      px(-1, -9, 1, 1, "#b8ffc8");
+      px(2, -6, 1, 1, "#7dffa0");
     }
 
     ink.restore();
@@ -12047,6 +12228,22 @@
     }
   }
 
+  function potionFill(id) {
+    if (id === "potion_red") return "#c81e1e";
+    if (id === "potion_blue") return "#3a80e0";
+    if (id === "potion_gold") return "#e8c44a";
+    if (id === "potion_fury") return "#e05020";
+    if (id === "potion_smoke") return "#6a7080";
+    if (id === "potion_slow") return "#7a3a9a";
+    if (id === "potion_mend") return "#3ecf7a";
+    if (id === "potion_fly") return "#7ec8ff";
+    if (id === "potion_mystery") {
+      const cols = ["#e85ad4", "#44e0c0", "#ffe14a", "#ff5a2a", "#7a4bff"];
+      return cols[((time * 4) | 0) % cols.length];
+    }
+    return "#5ee8d0";
+  }
+
   function drawHudIcon(id, sx, sy) {
     if (id === "shell") {
       px(sx + 6, sy + 10, 12, 6, "#efe6d4");
@@ -12060,18 +12257,7 @@
       px(sx + 10, sy + 14, 4, 2, "#1a8a86");
       px(sx + 10, sy + 10, 4, 2, "#e8ffff");
     } else if (String(id).indexOf("potion_") === 0) {
-      const fill =
-        id === "potion_red"
-          ? "#c81e1e"
-          : id === "potion_blue"
-            ? "#3a80e0"
-            : id === "potion_gold"
-              ? "#e8c44a"
-              : id === "potion_fury"
-                ? "#e05020"
-                : id === "potion_smoke"
-                  ? "#6a7080"
-                  : "#5ee8d0";
+      const fill = potionFill(id);
       px(sx + 10, sy + 4, 4, 2, "#d0d8e0");
       px(sx + 8, sy + 6, 8, 10, "#c8d0d8");
       px(sx + 9, sy + 8, 6, 7, fill);
@@ -12171,6 +12357,10 @@
       px(-3, 5, 6, 2, "#8a6a18");
       px(-2, -3, 2, 2, "#fff3c0");
       px(0, -1, 2, 5, "#fff1a8");
+    } else if (String(id).indexOf("potion_") === 0) {
+      px(-1, -10, 3, 2, "#e8eef4");
+      px(-3, -8, 7, 10, "#c8d0d8");
+      px(-2, -6, 5, 6, potionFill(id));
     } else if (!drawTinyCatch(id, -5, -5)) {
       px(-2, -10, 4, 3, "#f4fbff");
       px(-6, -7, 12, 14, "#9ae0ff");
@@ -12377,6 +12567,32 @@
     }
     if (msg && !naming) {
       drawPixText(msg, Math.floor(uiW * 0.42), uiH - 12, "#f3e2c4", "center");
+    }
+    drawBrewChips(uiW);
+  }
+
+  function drawBrewChips(uiW) {
+    const rows = [];
+    if (brew.slow > 0) rows.push(["TAR " + Math.ceil(brew.slow), "#d2a6f0"]);
+    if (brew.mend > 0) rows.push(["MEND " + Math.ceil(brew.mend), "#9dffb8"]);
+    if (brew.fly > 0) rows.push(["FLY " + Math.ceil(brew.fly), "#b7e4ff"]);
+    if (brew.trip > 0) {
+      const cols = ["#ff9adf", "#b8fff0", "#ffe98a"];
+      rows.push(["??? " + Math.ceil(brew.trip), cols[((time * 4) | 0) % cols.length]]);
+    }
+    if (!rows.length) return;
+    let width = 0;
+    for (let i = 0; i < rows.length; i++) width += rows[i][0].length * 6 + 10;
+    let x = ((uiW - width) / 2) | 0;
+    if (x < 4) x = 4;
+    for (let i = 0; i < rows.length; i++) {
+      const label = rows[i][0];
+      const col = rows[i][1];
+      const w = label.length * 6 + 6;
+      px(x, 6, w, 11, "#140e10");
+      px(x, 6, w, 1, col);
+      drawPixText(label, x + 3, 8, col);
+      x += w + 4;
     }
   }
 
@@ -14711,13 +14927,161 @@
     }
   }
 
+  function drawPhantom(kind, x, y, t) {
+    const k = kind % 8;
+    const yy = y + ((Math.sin(t * 3 + kind) * 3) | 0);
+    if (k === 0) {
+      px(x, yy, 14, 10, "#f4fbff");
+      px(x + 2, yy + 2, 10, 6, "#1a120c");
+      px(x + 4 + ((Math.sin(t * 4 + kind) * 2) | 0), yy + 4, 4, 3, "#e23b3b");
+    } else if (k === 1) {
+      for (let i = 0; i < 10; i++) {
+        const a = t * 2.4 + i * 0.7;
+        const r = 4 + i * 1.6;
+        px((x + Math.cos(a) * r) | 0, (yy + Math.sin(a) * r * 0.7) | 0, 2, 2, i % 2 ? "#ff5ad0" : "#5affe0");
+      }
+    } else if (k === 2) {
+      px(x, yy + 4, 16, 6, "#7ec8ff");
+      px(x + 12, yy + 2, 6, 4, "#d6ecff");
+      px(x - 4, yy + 4, 4, 4, "#ff9adf");
+      px(x + 4, yy + 6, 2, 2, "#1a120c");
+    } else if (k === 3) {
+      px(x, yy, 16, 24, "#2a1810");
+      px(x + 4, yy + 4, 8, 16, "#6a3a9a");
+      px(x + 6, yy + 10, 4, 4, "#e8c44a");
+    } else if (k === 4) {
+      px(x, yy, 8, 28, "#f4efe4");
+      px(x, yy + 20, 8, 12, "#7a3a9a");
+      px(x + 2, yy + 28, 4, 6 + ((t * 4) | 0) % 6, "#5a2878");
+    } else if (k === 5) {
+      px(x, yy, 18, 18, "#ffe98a");
+      px(x + 4, yy + 4, 6, 6, "#fff8d0");
+      px(x + 10, yy + 2, 6, 6, "#1a120c");
+    } else if (k === 6) {
+      for (let i = 0; i < 5; i++) px(x + i * 4, yy, 2, 6 + (i % 2) * 2, "#f4efe4");
+      px(x, yy + 6, 20, 4, "#e23b3b");
+    } else {
+      px(x, yy + 12, 20, 4, "#cbb892");
+      px(x + 2, yy + 8, 16, 4, "#d8c4a0");
+      px(x + 4, yy + 4, 12, 4, "#e6d7b8");
+      px(x + 6, yy, 8, 4, "#f4efe4");
+    }
+  }
+
+  function drawBrewWorld(cpos) {
+    if (brew.slow <= 0 && brew.mend <= 0 && brew.fly <= 0 && brew.trip <= 0) return;
+    if (brew.slow > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      px((brew.lagX - cpos.x) | 0, (brew.lagY - cpos.y) | 0, 7, 10, "#5a2878");
+      px((brew.lagX - cpos.x + 1) | 0, (brew.lagY - cpos.y + 10) | 0, 5, 3, "#3a1848");
+      ctx.restore();
+    }
+    if (brew.mend > 0) {
+      const cx = player.x + player.w / 2 - cpos.x;
+      const cy = player.y + player.h / 2 - cpos.y;
+      for (let i = 0; i < 6; i++) {
+        const a = time * 2.2 + i;
+        const r = 7 + Math.sin(time * 3 + i) * 2;
+        px((cx + Math.cos(a) * r) | 0, (cy + Math.sin(a) * r) | 0, 1, 1, i % 2 ? "#b8ffc8" : "#e8c44a");
+      }
+      if (brew.mendPop > 0) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, brew.mendPop / 0.45);
+        px((cx - 3) | 0, (cy - 10) | 0, 2, 2, "#ffffff");
+        px((cx - 5) | 0, (cy - 8) | 0, 6, 2, "#9dffb8");
+        ctx.restore();
+      }
+    }
+    if (brew.fly > 0) {
+      const fx = (player.x - cpos.x) | 0;
+      const fy = (player.y + player.h - cpos.y) | 0;
+      px(fx, fy, 2, 1, "#d6ecff");
+      px(fx + 5, fy + 1, 2, 1, "#ffffff");
+      px(fx + 2, fy + 2, 3, 1, "rgba(180, 220, 255, 0.7)");
+    }
+    if (brew.trip > 0) {
+      for (let i = 0; i < brew.trail.length; i++) {
+        const p = brew.trail[i];
+        ctx.save();
+        ctx.globalAlpha = ((i + 1) / brew.trail.length) * 0.4;
+        px((p.x - cpos.x) | 0, (p.y - cpos.y) | 0, 6, 10, i % 2 ? "#ff5ad0" : "#5affe0");
+        ctx.restore();
+      }
+      const split = (Math.sin(time * 8) * 4) | 0;
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      px((player.x - cpos.x + split) | 0, (player.y - cpos.y) | 0, 6, 10, "#ff4060");
+      px((player.x - cpos.x - split) | 0, (player.y - cpos.y + 1) | 0, 6, 10, "#40fff0");
+      ctx.restore();
+      for (let i = 0; i < 8; i++) {
+        const spd = 0.35 + (i % 4) * 0.11;
+        const x = (viewW * (0.12 + ((i * 97) % 70) / 100) + Math.sin(time * spd + i) * 26) | 0;
+        const y = (viewH * (0.14 + ((i * 53) % 62) / 100) + Math.cos(time * spd * 1.25 + i) * 18) | 0;
+        drawPhantom(i + ((time * 0.15) | 0), x, y, time);
+      }
+    }
+  }
+
+  function drawTripOverlay() {
+    if (brew.trip <= 0) return;
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const hues = [
+      "rgba(255, 58, 209, 0.22)",
+      "rgba(58, 255, 224, 0.22)",
+      "rgba(255, 225, 74, 0.2)",
+      "rgba(122, 75, 255, 0.24)",
+      "rgba(255, 90, 42, 0.2)",
+    ];
+    const flash = time % 5.4 < 0.12;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = flash ? "rgba(255, 240, 255, 0.18)" : hues[((time * 0.7) | 0) % hues.length];
+    ctx.fillRect(0, 0, uiW, uiH);
+    ctx.fillStyle = "rgba(40, 0, 70, 0.16)";
+    ctx.fillRect(0, 0, uiW, 10);
+    ctx.fillRect(0, uiH - 10, uiW, 10);
+    for (let i = 0; i < 5; i++) {
+      const y = ((Math.sin(time * 0.9 + i * 1.4) * 0.5 + 0.5) * uiH) | 0;
+      ctx.fillStyle = i % 2 ? "rgba(255, 62, 200, 0.28)" : "rgba(62, 255, 224, 0.28)";
+      ctx.fillRect(0, y, uiW, 2);
+    }
+    for (let i = 0; i < 7; i++) {
+      const x = (uiW * (0.08 + i * 0.13) + Math.sin(time * 1.4 + i) * 10) | 0;
+      const y = ((time * 28 + i * 47) % uiH) | 0;
+      const h = 10 + ((time * 16 + i * 13) | 0) % 24;
+      ctx.fillStyle = i % 2 ? "rgba(255, 154, 223, 0.55)" : "rgba(184, 255, 240, 0.55)";
+      ctx.fillRect(x, y, 2, h);
+    }
+    ctx.restore();
+    for (let i = 0; i < 3; i++) {
+      const li = ((time * 0.35) | 0) + i * 3;
+      const line = TRIP_LINES[Math.abs(li) % TRIP_LINES.length];
+      const x = (uiW * (0.22 + 0.56 * (0.5 + 0.5 * Math.sin(time * 0.55 + i * 2)))) | 0;
+      const y = (uiH * (0.22 + i * 0.16) + Math.sin(time * 1.5 + i) * 8) | 0;
+      const cols = ["#ff9adf", "#b8fff0", "#ffe98a", "#ffffff"];
+      drawPixText(line, x, y, cols[(li + i) % cols.length], "center");
+    }
+  }
+
   function draw(t) {
     ink = ctx;
     const cpos = cam();
     const jx = ((Math.random() * 2 - 1) * shake) | 0;
     const jy = ((Math.random() * 2 - 1) * shake) | 0;
     ctx.imageSmoothingEnabled = false;
-    ctx.setTransform(zoom, 0, 0, zoom, jx, jy);
+    const tripping = brew.trip > 0;
+    const tox = tripping ? Math.sin(time * 2.6) * 18 : 0;
+    const toy = tripping ? Math.cos(time * 1.8) * 12 : 0;
+    ctx.setTransform(zoom, 0, 0, zoom, jx + tox, jy + toy);
+    if (tripping) {
+      ctx.translate(viewW / 2, viewH / 2);
+      ctx.rotate(Math.sin(time * 0.9) * 0.035);
+      ctx.translate(-viewW / 2, -viewH / 2);
+      const edge = ["#2a1030", "#102828", "#302010", "#201040"][((time * 0.7) | 0) % 4];
+      px(-24, -24, viewW + 48, viewH + 48, edge);
+    }
     if (isIndoor()) {
       px(
         0,
@@ -14846,9 +15210,11 @@
       if (serpent && serpent.phase === "breach") drawSerpent(cpos);
       drawWandBolts(cpos);
     }
+    drawBrewWorld(cpos);
     drawJadeMaskFx();
     if (cloakOn) applyCloakVision(cpos, jx, jy);
     ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+    drawTripOverlay();
     drawHud();
     drawSerpentBossBar();
     if (scene === "vein" && vein) {
@@ -16929,6 +17295,7 @@
     player.moving = false;
     player.facing = 1;
     cloakOn = false;
+    clearBrew();
     // Locker cosmetics stay equipped across modes — do not clear face/back.
     cosSelect = null;
     templeMaskTaken = false;
@@ -19847,6 +20214,7 @@
     updateXpFx(dt);
     updateHorn();
     updateUseFx(dt);
+    updateBrew(dt);
     updateLoot();
     updateShopTrade(dt);
     updateTradeCoinDrift(dt);
