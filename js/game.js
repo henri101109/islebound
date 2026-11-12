@@ -58,7 +58,6 @@
     job_app_cloak: { name: "Job App Cloak", label: "JOBAPP", max: 1, xp: 0, cosmetic: "back" },
     american_cloak: { name: "American Cloak", label: "USA", max: 1, xp: 0, cosmetic: "back" },
     jelly_cape: { name: "Jellyfish Cape", label: "JELLY", max: 1, xp: 0, cosmetic: "back" },
-    stop_pre_flag: { name: "STOP PRE Flag", label: "STOPPRE", max: 1, xp: 0, cosmetic: "back" },
     sun_idol: { name: "Sun Idol", max: 1, xp: 10 },
     serpent_heart: { name: "Heart of the Sea", max: 24, xp: 80 },
     sunken_chest: { name: "Sunken chest", max: 1, xp: 50 },
@@ -503,7 +502,7 @@
   let nmBoardRows = [];
   let nmBoardNote = "";
   let nmCursor = 0;
-  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS", "ISLEPASS"];
+  const MODE_PLAY = ["NORMAL", "SPEEDRUN", "HUB", "ACCOUNT", "STATS", "WEEKLY REWARDS"];
   const WEEKLY_SPIN = {
     firstEndMs: Date.UTC(2026, 10, 11, 23, 59, 59),
     weekMs: 7 * 24 * 60 * 60 * 1000,
@@ -710,14 +709,6 @@
     homer: { id: "homer", label: "HOMER" },
     indiana_jones: { id: "indiana_jones", label: "INDY" },
     flash: { id: "flash", label: "FLASH" },
-    eric_cartman: { id: "eric_cartman", label: "CARTMAN" },
-    shrek: { id: "shrek", label: "SHREK" },
-    batman: { id: "batman", label: "BATMAN" },
-    peter_griffin: { id: "peter_griffin", label: "PETER" },
-    sonic: { id: "sonic", label: "SONIC" },
-    deadpool: { id: "deadpool", label: "POOL" },
-    cole_hocker: { id: "cole_hocker", label: "HOCKER" },
-    steve_prefontaine: { id: "steve_prefontaine", label: "PRE" },
     lex_young: { id: "lex_young", label: "LEX" },
   };
   const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
@@ -729,23 +720,11 @@
     "flash",
     "lex_young",
   ];
-  /** Isle Pass / free-track skins (not quest unlocks). */
-  const PASS_SKIN_IDS = [
-    "shrek",
-    "batman",
-    "sonic",
-    "peter_griffin",
-    "deadpool",
-    "cole_hocker",
-    "steve_prefontaine",
-    "eric_cartman",
-  ];
-  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS).concat(PASS_SKIN_IDS);
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS);
   /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
   const SKIN_LOCKED_BACK = {
     jakob: "norway_flag",
     usain_bolt: "jamaica_flag",
-    cole_hocker: "us_flag",
   };
   /** Nov monthly quest progress (persisted in locker profile). */
   let questMaskRuns = 0;
@@ -756,10 +735,8 @@
   let questCursor = 0;
   /** Rewards hub tab: "quests" | "weekly" | "levels". */
   let questTab = "quests";
-  /** Levels sub-page: "overview" | "tiers" | "pass". */
+  /** Levels sub-page: "overview" | "tiers". */
   let levelsPage = "overview";
-  let passScroll = 0;
-  let passCursor = 0;
   const CAREER_BACKFILL_VER = 2;
   let careerBackfillVer = 0;
   /**
@@ -769,29 +746,6 @@
    * kind: "skin" | "cape" | "face" | "particle"
    * rewardId: real skin/cosmetic id when you wire grants later (null = TBD).
    */
-  const FREE_PASS = {
-    id: "season_design_1",
-    label: "ISLE PASS",
-    season: "S1",
-    track: "free",
-    /** Cumulative pass XP to unlock. Tuned for ~1–3h of active play. */
-    nodes: [
-      { n: 1, xp: 40, kind: "skin", rewardId: "shrek", label: "SHREK", blurb: "ISLE PASS SKIN" },
-      { n: 2, xp: 95, kind: "skin", rewardId: "batman", label: "BATMAN", blurb: "ISLE PASS SKIN" },
-      { n: 3, xp: 165, kind: "skin", rewardId: "sonic", label: "SONIC", blurb: "ISLE PASS SKIN" },
-      { n: 4, xp: 255, kind: "skin", rewardId: "peter_griffin", label: "PETER", blurb: "ISLE PASS SKIN" },
-      { n: 5, xp: 365, kind: "skin", rewardId: "deadpool", label: "POOL", blurb: "ISLE PASS SKIN" },
-      { n: 6, xp: 500, kind: "skin", rewardId: "cole_hocker", label: "HOCKER", blurb: "COLE HOCKER + US FLAG" },
-      { n: 7, xp: 660, kind: "skin", rewardId: "steve_prefontaine", label: "PRE", blurb: "STEVE PREFONTAINE" },
-      { n: 8, xp: 840, kind: "cape", rewardId: "stop_pre_flag", label: "STOP PRE", blurb: "ICONIC STOP PRE TEE FLAG" },
-      { n: 9, xp: 1050, kind: "skin", rewardId: "eric_cartman", label: "CARTMAN", blurb: "ISLE PASS FINALE SKIN" },
-      { n: 10, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
-      { n: 11, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
-      { n: 12, xp: 0, kind: "skin", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
-      { n: 13, xp: 0, kind: "cape", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
-      { n: 14, xp: 0, kind: "face", rewardId: null, label: "DIDNT ADD", blurb: "TBD — NOT SET" },
-    ],
-  };
   /**
    * Career rank XP (speedrun-driven). Survival loot XP is retired.
    * Tiers: 1-20 bronze, 21-35 silver, 36-55 gold, 56-75 diamond, 76+ champion.
@@ -840,10 +794,6 @@
   let careerBackfilled = false;
   let careerLastGain = 0;
   let careerLastGainT = 0;
-  /** Isle Pass XP (gains with career XP + light playtime). */
-  let passXp = 0;
-  let passClaimed = {};
-  let passPlayAcc = 0;
   /** name → estimated career level cache for boards / lobby. */
   let careerLevelCache = {};
   const NOV_QUESTS = [
@@ -969,27 +919,6 @@
       title: "KING CROWN",
       blurb: "NEW COSMETIC",
       detail: "WIN THE RACE",
-    },
-    {
-      kind: "skin",
-      id: "cole_hocker",
-      title: "HOCKER",
-      blurb: "ISLE PASS",
-      detail: "FREE PASS + US FLAG",
-    },
-    {
-      kind: "skin",
-      id: "steve_prefontaine",
-      title: "PRE",
-      blurb: "ISLE PASS",
-      detail: "STEVE PREFONTAINE",
-    },
-    {
-      kind: "skin",
-      id: "eric_cartman",
-      title: "CARTMAN",
-      blurb: "ISLE PASS",
-      detail: "FREE PASS NODE 15",
     },
     {
       kind: "speed",
@@ -3288,21 +3217,15 @@
     });
   }
 
-  /** Unified Rewards hub: quests + weekly + islepass. */
+  /** Unified Rewards hub: quests + weekly + levels. */
   function openRewardsMenu(tab) {
     uiScreen = "quests";
-    const t =
-      tab === "weekly" || tab === "levels" || tab === "islepass" || tab === "pass" || tab === "quests"
-        ? tab
-        : "quests";
-    questTab = t === "islepass" || t === "pass" ? "levels" : t;
-    levelsPage = t === "islepass" || t === "pass" || t === "levels" ? "pass" : "overview";
-    if (t === "levels" && tab === "levels") levelsPage = "overview";
+    questTab = tab === "weekly" || tab === "levels" || tab === "quests" ? tab : "quests";
+    levelsPage = "overview";
     questCursor = 0;
     syncQuestOwnershipFlags();
     syncCareerFromAccountHistory();
     refreshCareerLevelCache();
-    syncIslePassUnlocks();
     if (questTab === "weekly") prepareWeeklySpinState();
     if (questTab === "quests") {
       for (let i = 0; i < NOV_QUESTS.length; i++) {
@@ -3318,26 +3241,12 @@
     openRewardsMenu("quests");
   }
 
-  function openIslePassMenu() {
-    openRewardsMenu("islepass");
-    const nodes = passTrackNodes();
-    let focus = 0;
-    for (let i = 0; i < nodes.length; i++) {
-      const st = passNodeStatus(nodes[i]);
-      if (st === "claimable") {
-        focus = i;
-        break;
-      }
-      if (st === "claimed") focus = i;
-    }
-    passCursor = focus;
-  }
 
   function drawQuestTabSwitchers(x, y, w) {
     const tabs = [
       { id: "quests", label: "QUESTS" },
       { id: "weekly", label: "WEEKLY" },
-      { id: "levels", label: "ISLEPASS" },
+      { id: "levels", label: "LEVELS" },
     ];
     const gap = 3;
     const tw = ((w - 12 - gap * 2) / 3) | 0;
@@ -3359,9 +3268,8 @@
           questTab = t.id;
           if (t.id === "weekly") prepareWeeklySpinState();
           if (t.id === "levels") {
-            levelsPage = "pass";
+            levelsPage = "overview";
             syncCareerFromAccountHistory();
-            syncIslePassUnlocks();
           }
         },
         { hover: true }
@@ -3373,10 +3281,9 @@
     const pages = [
       { id: "overview", label: "RANK" },
       { id: "tiers", label: "TIERS" },
-      { id: "pass", label: "PASS" },
     ];
     const gap = 3;
-    const tw = ((w - 12 - gap * 2) / 3) | 0;
+    const tw = ((w - 12 - gap) / 2) | 0;
     for (let i = 0; i < pages.length; i++) {
       const p = pages[i];
       const tx = x + 6 + i * (tw + gap);
@@ -3455,320 +3362,6 @@
       drawPixText(def.label + "  " + range, x + 28, oy, on ? "#2b1c12" : "#3a2414");
     }
     drawPixTextSm("ALMOST NO ONE REACHES GOLD", (x + w / 2) | 0, top + 90, "#5c3a21", "center");
-  }
-
-  function passNodeKindColor(kind) {
-    if (kind === "skin") return "#e8c44a";
-    if (kind === "cape") return "#7ec8e8";
-    if (kind === "face") return "#c4a574";
-    if (kind === "particle") return "#9ad87a";
-    return "#8a6a42";
-  }
-
-  function passNodeKey(node) {
-    return String((node && node.n) || "");
-  }
-
-  function passNodeStatus(node) {
-    if (!node || !node.rewardId) return "empty";
-    const key = passNodeKey(node);
-    if (passClaimed[key]) return "claimed";
-    if ((passXp | 0) >= (node.xp | 0) && (node.xp | 0) > 0) return "claimable";
-    return "locked";
-  }
-
-  function grantPassReward(node) {
-    if (!node || !node.rewardId) return false;
-    if (node.kind === "skin") return grantSkin(node.rewardId) || ownsSkin(node.rewardId);
-    if (node.kind === "cape" || node.kind === "face") {
-      return grantCosmetic(node.rewardId) || ownsCosmetic(node.rewardId);
-    }
-    return false;
-  }
-
-  function claimPassNode(node) {
-    if (passNodeStatus(node) !== "claimable") return false;
-    const ok = grantPassReward(node);
-    if (!ok) return false;
-    passClaimed[passNodeKey(node)] = true;
-    saveCareer();
-    saveLockerProfile();
-    questTip = "PASS: " + String(node.label || "REWARD");
-    questTipT = 2.4;
-    cosTip = questTip;
-    cosTipT = 2.4;
-    playXpChime();
-    return true;
-  }
-
-  /** Auto-claim any unlocked pass nodes. */
-  function syncIslePassUnlocks() {
-    const nodes = FREE_PASS.nodes || [];
-    let any = false;
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      if (passNodeStatus(node) !== "claimable") continue;
-      if (claimPassNode(node)) any = true;
-    }
-    return any;
-  }
-
-  function passFinaleXp() {
-    const nodes = FREE_PASS.nodes || [];
-    let best = 1;
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      if (n && n.rewardId && (n.xp | 0) > best) best = n.xp | 0;
-    }
-    return best;
-  }
-
-  function passTrackNodes() {
-    return FREE_PASS.nodes || [];
-  }
-
-  function clampPassCursor() {
-    const nodes = passTrackNodes();
-    if (!nodes.length) {
-      passCursor = 0;
-      return;
-    }
-    if (passCursor < 0) passCursor = 0;
-    if (passCursor >= nodes.length) passCursor = nodes.length - 1;
-  }
-
-  function passRarityColor(node) {
-    if (!node || !node.rewardId) return "#6a6a68";
-    const n = node.n | 0;
-    if (n >= 9) return "#e8c44a"; // legendary finale
-    if (n >= 7) return "#c878ff"; // epic
-    if (n >= 4) return "#5a9ae8"; // rare
-    return "#5aba48"; // uncommon
-  }
-
-  function drawPassRewardArt(node, cx, cy, scale) {
-    const sc = scale || 3;
-    const prevInk = ink;
-    ink = ctx;
-    ink.save();
-    ink.translate(cx | 0, cy | 0);
-    ink.scale(sc, sc);
-    if (!node || !node.rewardId) {
-      px(-3, -12, 6, 2, "#8a6a42");
-      px(-2, -10, 4, 4, "#c4a574");
-      px(-1, -5, 2, 2, "#8a6a42");
-      px(-1, -2, 2, 2, "#c4a574");
-      ink.restore();
-      ink = prevInk;
-      return;
-    }
-    if (node.kind === "skin") {
-      const skin = node.rewardId;
-      const locked = SKIN_LOCKED_BACK[skin] || null;
-      const back = locked || null;
-      if (back) drawCapeSheet(back, 0.55, 2.0, time * 0.8);
-      drawPlayerBody(skin, 0, false, false);
-      if (back) drawCapeCollar(back);
-    } else if (node.kind === "cape" || node.kind === "face") {
-      const prevFace = cosmetics.face;
-      const prevBack = cosmetics.back;
-      if (node.kind === "cape") cosmetics.back = node.rewardId;
-      if (node.kind === "face") cosmetics.face = node.rewardId;
-      if (node.kind === "cape") drawCapeSheet(node.rewardId, 0.7, 2.1, time);
-      drawPlayerBody("classic", 0, false, false);
-      if (node.kind === "cape") drawCapeCollar(node.rewardId);
-      cosmetics.face = prevFace;
-      cosmetics.back = prevBack;
-    } else {
-      px(-4, -8, 8, 10, "#3a2414");
-      if (!drawTinyCatch(node.rewardId, -4, -6)) drawHudIcon(node.rewardId, -6, -8);
-    }
-    ink.restore();
-    ink = prevInk;
-  }
-
-  function drawPassTile(tx, ty, tw, th, node, selected) {
-    const st = passNodeStatus(node);
-    const rare = passRarityColor(node);
-    const hot = selected || menuHovering("passnode:" + (node && node.n));
-    // Card frame
-    px(tx, ty, tw, th, hot ? "#f3e2c4" : "#2b1c12");
-    px(tx + 1, ty + 1, tw - 2, th - 2, st === "claimed" ? "#5c3a21" : "#3a2414");
-    px(tx + 2, ty + 2, tw - 4, th - 4, st === "locked" || st === "empty" ? "#1a120c" : "#2b1c12");
-    // Art window
-    const artH = th - 16;
-    px(tx + 3, ty + 3, tw - 6, artH - 1, "#0e1a22");
-    drawPassRewardArt(node, tx + ((tw / 2) | 0), ty + artH - 2, tw >= 36 ? 2.2 : 1.7);
-    if (st === "locked" || st === "empty") {
-      ctx.globalAlpha = 0.45;
-      px(tx + 3, ty + 3, tw - 6, artH - 1, "#0a1018");
-      ctx.globalAlpha = 1;
-    }
-    // Rarity strip + level
-    px(tx + 2, ty + th - 14, tw - 4, 2, rare);
-    drawPixTextSm(String(node.n | 0), tx + ((tw / 2) | 0), ty + th - 11, "#f3e2c4", "center");
-    // FREE / TBD tag
-    if (node.rewardId) {
-      px(tx + 3, ty + th - 5, tw - 6, 4, "#2a6a98");
-      drawPixTextSm("FREE", tx + ((tw / 2) | 0), ty + th - 4, "#d8f0ff", "center");
-    } else {
-      px(tx + 3, ty + th - 5, tw - 6, 4, "#3a2414");
-      drawPixTextSm("TBD", tx + ((tw / 2) | 0), ty + th - 4, "#8a6a42", "center");
-    }
-    // Claimed check
-    if (st === "claimed") {
-      px(tx + tw - 9, ty + 3, 6, 6, "#1e8a34");
-      px(tx + tw - 8, ty + 4, 4, 4, "#5aba48");
-      px(tx + tw - 7, ty + 6, 1, 1, "#f4f4f8");
-      px(tx + tw - 6, ty + 7, 2, 1, "#f4f4f8");
-    }
-    // Claimable pulse border
-    if (st === "claimable") {
-      px(tx, ty, tw, 1, "#e8c44a");
-      px(tx, ty + th - 1, tw, 1, "#e8c44a");
-      px(tx, ty, 1, th, "#e8c44a");
-      px(tx + tw - 1, ty, 1, th, "#e8c44a");
-    }
-  }
-
-  function drawLevelsPass(x, y, w, h) {
-    const nodes = passTrackNodes();
-    clampPassCursor();
-    const node = nodes[passCursor] || nodes[0] || null;
-    const finale = passFinaleXp();
-    const prog = Math.min(1, (passXp | 0) / Math.max(1, finale));
-    const top = y + 46;
-
-    // Header / selected meta (Fortnite-style corners)
-    drawPixText((FREE_PASS.season || "S1") + "  ISLE PASS", x + 10, top, "#5c3a21");
-    const st = passNodeStatus(node);
-    const name = String((node && node.label) || "TBD").slice(0, 12);
-    const kind = String((node && node.kind) || "ITEM").toUpperCase();
-    drawPixText(name, x + w - 10, top, "#3a2414", "right");
-    const rare = passRarityColor(node);
-    const kindW = Math.max(28, pixTextWidthSm(kind) + 8);
-    px(x + w - 10 - kindW, top + 10, kindW, 9, rare);
-    drawPixTextSm(kind, x + w - 10 - ((kindW / 2) | 0), top + 12, "#0a1018", "center");
-    drawPixTextSm(
-      (passXp | 0) + " / " + finale + " XP",
-      x + 10,
-      top + 12,
-      "#8a5a32"
-    );
-
-    // XP bar under header
-    const barX = x + 10;
-    const barY = top + 24;
-    const barW = w - 20;
-    px(barX, barY, barW, 5, "#3a2414");
-    px(barX + 1, barY + 1, barW - 2, 3, "#5c3a21");
-    const fill = Math.floor((barW - 2) * prog);
-    if (fill > 0) px(barX + 1, barY + 1, fill, 3, "#e8c44a");
-
-    // Stage / preview
-    const stageTop = barY + 10;
-    const trackH = 58;
-    const stageH = Math.max(48, h - (stageTop - y) - trackH - 16);
-    const stageX = x + 8;
-    const stageW = w - 16;
-    px(stageX, stageTop, stageW, stageH, "#1a120c");
-    px(stageX + 1, stageTop + 1, stageW - 2, stageH - 2, "#0b1a22");
-    // floor strip
-    px(stageX + 1, stageTop + stageH - 8, stageW - 2, 7, "#243040");
-    px(stageX + 1, stageTop + stageH - 9, stageW - 2, 1, "#3a5080");
-    const prevCx = stageX + ((stageW / 2) | 0);
-    const prevCy = stageTop + stageH - 12;
-    drawPassRewardArt(node, prevCx, prevCy, 4.2);
-    const blurb = String((node && (node.blurb || node.label)) || "EMPTY SLOT").slice(0, 28);
-    drawPixTextSm(blurb, prevCx, stageTop + 4, "#c4a574", "center");
-    if (st === "claimable") {
-      drawPixText("CLAIM", prevCx, stageTop + 14, "#e8c44a", "center");
-    } else if (st === "claimed") {
-      drawPixTextSm("OWNED", prevCx, stageTop + 14, "#5aba48", "center");
-    } else if (st === "locked") {
-      drawPixTextSm("NEED " + (node.xp | 0) + " XP", prevCx, stageTop + 14, "#8a5a32", "center");
-    }
-
-    // Horizontal reward line
-    const trackY = y + h - trackH - 6;
-    const tileW = 32;
-    const tileH = 50;
-    const gap = 5;
-    const bigW = 40;
-    const pad = 10;
-    let totalW = 0;
-    for (let i = 0; i < nodes.length; i++) {
-      totalW += (i === nodes.length - 1 || (nodes[i] && (nodes[i].n | 0) >= 9 && nodes[i].rewardId) ? bigW : tileW) + gap;
-    }
-    totalW = Math.max(0, totalW - gap);
-    const viewW = w - pad * 2;
-    const maxScroll = Math.max(0, totalW - viewW);
-    // Keep selected tile in view
-    let selX = 0;
-    for (let i = 0; i < passCursor; i++) {
-      const wide = i === nodes.length - 1 || (nodes[i] && (nodes[i].n | 0) >= 9 && nodes[i].rewardId);
-      selX += (wide ? bigW : tileW) + gap;
-    }
-    const want = selX - ((viewW / 2) | 0) + ((tileW / 2) | 0);
-    passScroll = Math.max(0, Math.min(maxScroll, want | 0));
-
-    // Track rail
-    const railY = trackY + ((tileH / 2) | 0);
-    px(x + pad, railY, viewW, 3, "#3a2414");
-    const railFill = Math.floor(viewW * prog);
-    if (railFill > 0) px(x + pad, railY, railFill, 3, "#c9a227");
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x + pad - 1, trackY - 2, viewW + 2, tileH + 8);
-    ctx.clip();
-
-    let ox = x + pad - passScroll;
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      const wide = i === nodes.length - 1 || ((n.n | 0) >= 9 && n.rewardId);
-      const tw = wide ? bigW : tileW;
-      drawPassTile(ox | 0, trackY, tw, tileH, n, i === passCursor);
-      addMenuHit(
-        "passnode:" + (n.n | i),
-        ox | 0,
-        trackY,
-        tw,
-        tileH,
-        () => {
-          passCursor = i;
-          if (passNodeStatus(n) === "claimable") claimPassNode(n);
-        },
-        { hover: true }
-      );
-      ox += tw + gap;
-    }
-    ctx.restore();
-
-    // Page / nav affordance
-    drawPixTextSm("<  >", (x + w / 2) | 0, y + h - 5, "#8a5a32", "center");
-    addMenuHit(
-      "pass:prev",
-      x + pad,
-      trackY,
-      14,
-      tileH,
-      () => {
-        passCursor = Math.max(0, passCursor - 1);
-      },
-      { hover: true }
-    );
-    addMenuHit(
-      "pass:next",
-      x + w - pad - 14,
-      trackY,
-      14,
-      tileH,
-      () => {
-        passCursor = Math.min(nodes.length - 1, passCursor + 1);
-      },
-      { hover: true }
-    );
   }
 
   function drawQuestListPanel(x, y, w, h) {
@@ -3870,23 +3463,19 @@
     ctx.globalAlpha = 0.55;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
-    let w = 252;
+    const w = 252;
     let h = 156;
     if (questTab === "quests") h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * 14 + 56);
     else if (questTab === "weekly") h = 148;
-    else if (questTab === "levels" && levelsPage === "pass") {
-      w = Math.min(uiW - 12, 360);
-      h = Math.min(uiH - 8, 220);
-    } else h = 156;
+    else h = 156;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, w, h, questTab === "levels" ? "ISLEPASS" : "REWARDS");
+    drawPanelBox(x, y, w, h, "REWARDS");
     drawQuestTabSwitchers(x, y + 16, w);
 
     if (questTab === "levels") {
       drawLevelsPageSwitchers(x, y + 32, w);
       if (levelsPage === "tiers") drawLevelsTiers(x, y, w);
-      else if (levelsPage === "pass") drawLevelsPass(x, y, w, h);
       else drawLevelsOverview(x, y, w, h);
     } else if (questTab === "weekly") {
       drawWeeklyRewardsPanel(x, y, w, h);
@@ -3994,7 +3583,6 @@
     loadCareer();
     backfillCareerFromHistory();
     refreshCareerLevelCache();
-    syncIslePassUnlocks();
   }
 
   function addToInventory(id) {
@@ -4144,8 +3732,6 @@
           level: careerLevel | 0,
           backfilled: !!careerBackfilled,
           backfillVer: careerBackfillVer | 0,
-          passXp: passXp | 0,
-          passClaimed: passClaimed || {},
         })
       );
     } catch (e) {}
@@ -4163,15 +3749,11 @@
       careerLevel = Math.max(1, data.level | 0);
       careerBackfilled = !!data.backfilled;
       careerBackfillVer = data.backfillVer | 0;
-      passXp = Math.max(0, data.passXp | 0);
-      passClaimed = data.passClaimed && typeof data.passClaimed === "object" ? data.passClaimed : {};
     } else {
       careerXp = 0;
       careerLevel = 1;
       careerBackfilled = false;
       careerBackfillVer = 0;
-      passXp = 0;
-      passClaimed = {};
     }
     // Recompute level from xp (source of truth)
     careerLevel = careerLevelFromXp(careerXp);
@@ -4233,10 +3815,7 @@
     careerLevel = careerLevelFromXp(careerXp);
     careerLastGain = add;
     careerLastGainT = 2.4;
-    // Isle Pass shares speedrun XP (primary grind).
-    passXp = (passXp | 0) + add;
     saveCareer();
-    syncIslePassUnlocks();
     // Remember self in display cache
     const me = hubLocalName();
     if (me) careerLevelCache[String(me).toUpperCase()] = careerLevel;
@@ -4250,20 +3829,6 @@
     return add;
   }
 
-  /** Slow pass XP while actively in-world (normal or speedrun). ~120 XP / hour. */
-  function tickIslePassPlaytime(dt) {
-    if (!(playMode === "normal" || playMode === "speedrun")) return;
-    if (uiBlocksPlay() || guideOpen) return;
-    if (playMode === "speedrun" && !srRunning) return;
-    passPlayAcc += dt;
-    // 1 XP every 30s of live play (~120/hr) — softens pure speedrun gate for 1–3h clears
-    while (passPlayAcc >= 30) {
-      passPlayAcc -= 30;
-      passXp = (passXp | 0) + 1;
-      saveCareer();
-      syncIslePassUnlocks();
-    }
-  }
 
   /**
    * Sync rank upward from account/device history (PRs, runs, submits).
@@ -4646,7 +4211,7 @@
   }
 
   function openSpinMenu() {
-    openIslePassMenu();
+    openRewardsMenu("weekly");
   }
 
   function rollWeeklyPrize() {
@@ -11436,14 +11001,6 @@
       px(x + 5, y + 4, 1, 3, "#78c0e8");
       return true;
     }
-    if (id === "stop_pre_flag") {
-      px(x, y + 1, 7, 6, "#1a1a1a");
-      px(x + 1, y + 2, 5, 1, "#f4f4f8");
-      px(x + 1, y + 4, 5, 1, "#f4f4f8");
-      px(x + 2, y + 3, 1, 1, "#e8c44a");
-      px(x + 4, y + 3, 1, 1, "#e8c44a");
-      return true;
-    }
     if (id === "cloak") {
       px(x + 1, y + 1, 4, 6, "#2a4470");
       px(x, y + 2, 2, 6, "#1a2848");
@@ -11869,8 +11426,7 @@
       id !== "us_flag" &&
       id !== "job_app_cloak" &&
       id !== "american_cloak" &&
-      id !== "jelly_cape" &&
-      id !== "stop_pre_flag"
+      id !== "jelly_cape"
     ) {
       return;
     }
@@ -11880,8 +11436,7 @@
     const usa = id === "american_cloak" || id === "us_flag";
     const jelly = id === "jelly_cape";
     const job = id === "job_app_cloak";
-    const stopPre = id === "stop_pre_flag";
-    const flag = norway || jamaica || usa || stopPre;
+    const flag = norway || jamaica || usa;
     const body = ember
       ? ["#f06040", "#e04a32", "#c43a28", "#a82820", "#8a2020", "#6a1410"]
       : norway
@@ -11890,8 +11445,6 @@
           ? ["#2a8a34", "#1e7028", "#186020", "#e8c44a", "#1a1a1a", "#0c0c0c"]
           : usa
             ? ["#c43a48", "#ba2030", "#f4f4f8", "#3a5aaa", "#2a4a88", "#1a3868"]
-            : stopPre
-              ? ["#2a2a2a", "#1a1a1a", "#101010", "#0c0c0c", "#080808", "#040404"]
               : jelly
                 ? ["#d8f0ff", "#a8d8f0", "#78c0e8", "#58a8d8", "#3a88c0", "#2868a0"]
                 : job
@@ -11905,8 +11458,6 @@
           ? "#0a280c"
           : usa
             ? "#2a1020"
-            : stopPre
-              ? "#040404"
               : jelly
                 ? "#1a4868"
                 : job
@@ -11918,9 +11469,7 @@
         ? "#f4f4f8"
         : jamaica
           ? "#e8c44a"
-          : stopPre
-            ? "#f4f4f8"
-            : jelly
+          : jelly
               ? "#e8ffff"
               : job
                 ? "#fff8e8"
@@ -11962,12 +11511,6 @@
         } else {
           px(x, y, w, 1, i & 1 ? "#f4f4f8" : "#c43a48");
         }
-      } else if (stopPre) {
-        px(x, y, w, 1, "#1a1a1a");
-        if (i === 3 || i === 4) px(x + 1, y, Math.max(2, w - 2), 1, "#f4f4f8");
-        if (i === 7 || i === 8) px(x + 1, y, Math.max(2, w - 2), 1, "#f4f4f8");
-        if (i === 5 || i === 6) px(x + ((w / 2) | 0), y, 1, 1, "#e8c44a");
-        if ((i & 1) === 0) px(x + w - 1, y, 1, 1, fold);
       } else if (jelly) {
         if ((i & 1) === 0) px(x + 1, y, Math.max(1, w - 2), 1, "#e8ffff");
         if (i > 8 && (i & 1)) px(x + ((w / 2) | 0), y, 1, 1, "#78c0e8");
@@ -12017,12 +11560,6 @@
       px(2, -7, 2, 1, "#c43a48");
       px(-4, -8, 2, 1, "#c43a48");
       px(-1, -7, 1, 1, "#3a5aaa");
-    } else if (id === "stop_pre_flag") {
-      px(-5, -7, 2, 2, "#1a1a1a");
-      px(-3, -7, 5, 1, "#f4f4f8");
-      px(2, -7, 2, 1, "#1a1a1a");
-      px(-4, -8, 2, 1, "#e8c44a");
-      px(-1, -7, 1, 1, "#e8c44a");
     } else if (id === "jelly_cape") {
       px(-5, -7, 2, 2, "#58a8d8");
       px(-3, -7, 5, 1, "#d8f0ff");
@@ -12344,208 +11881,6 @@
         px(0, 1, 2, 3 - step, vest);
         px(-3, 3 + step, 2, 1, trim);
         px(0, 3 - step, 2, 1, trim);
-      }
-      return;
-    }
-    if (s === "eric_cartman") {
-      // Cyan beanie + yellow pom, fat face, red jacket, brown pants
-      const skinC = hurt ? "#8a3a3a" : "#f0c8a0";
-      const hat = hurt ? "#2a6a78" : "#3ab0c8";
-      const jacket = hurt ? "#8a2028" : "#c43a40";
-      px(-1, -16, 2, 1, "#e8c44a");
-      px(-3, -15, 6, 2, hat);
-      px(-4, -13, 8, 2, hat);
-      px(-3, -12, 6, 5, skinC);
-      px(-4, -11, 8, 4, skinC);
-      px(-2, -10, 1, 1, "#2a1810");
-      px(1, -10, 1, 1, "#2a1810");
-      px(-1, -8, 3, 1, "#c09070");
-      drawFaceCosmetic();
-      px(-4, -6, 8, 6, jacket);
-      px(-3, -5, 1, 1, "#e8c44a");
-      px(1, -5, 1, 1, "#e8c44a");
-      px(-6, -5, 2, 4, jacket);
-      px(4, -5, 2, 4, jacket);
-      px(-5, -2, 2, 2, skinC);
-      px(3, -2, 2, 2, skinC);
-      px(-4, 0, 8, 2, "#6a4028");
-      if (seated) {
-        px(-4, 2, 3, 1, "#3a2414");
-        px(0, 2, 3, 1, "#3a2414");
-      } else {
-        px(-4, 2, 3, 2 + step, "#3a2414");
-        px(0, 2, 3, 2 - step, "#3a2414");
-      }
-      return;
-    }
-    if (s === "shrek") {
-      const green = hurt ? "#3a6a28" : "#5a9a38";
-      px(-2, -15, 1, 2, green);
-      px(2, -15, 1, 2, green);
-      px(-3, -13, 7, 6, green);
-      px(-1, -11, 1, 1, "#1a2810");
-      px(1, -11, 1, 1, "#1a2810");
-      px(-1, -9, 3, 1, "#3a5a28");
-      drawFaceCosmetic();
-      px(-3, -6, 7, 5, "#c4a574");
-      px(-4, -5, 2, 3, green);
-      px(3, -5, 2, 3, green);
-      px(-3, -1, 7, 2, "#5c3a21");
-      if (seated) {
-        px(-3, 1, 2, 1, "#3a2414");
-        px(1, 1, 2, 1, "#3a2414");
-      } else {
-        px(-3, 1, 2, 3 + step, "#3a2414");
-        px(1, 1, 2, 3 - step, "#3a2414");
-      }
-      return;
-    }
-    if (s === "batman") {
-      const suit = hurt ? "#1a2030" : "#1a1a28";
-      px(-3, -14, 7, 2, suit);
-      px(-4, -13, 2, 3, suit);
-      px(3, -13, 2, 3, suit);
-      px(-2, -12, 5, 5, "#e8c39a");
-      px(-2, -11, 5, 2, suit);
-      px(-1, -10, 1, 1, "#f0d040");
-      px(1, -10, 1, 1, "#f0d040");
-      drawFaceCosmetic();
-      px(-3, -6, 6, 6, suit);
-      px(-2, -4, 4, 2, "#f0d040");
-      px(-5, -5, 2, 4, suit);
-      px(3, -5, 2, 4, suit);
-      if (seated) {
-        px(-3, 1, 2, 1, suit);
-        px(0, 1, 2, 1, suit);
-      } else {
-        px(-3, 1, 2, 3 + step, suit);
-        px(0, 1, 2, 3 - step, suit);
-      }
-      return;
-    }
-    if (s === "peter_griffin") {
-      const skinC = hurt ? "#8a3a3a" : "#e8c39a";
-      px(-2, -14, 5, 1, "#5c3a21");
-      px(-3, -13, 7, 6, skinC);
-      px(-1, -11, 1, 1, "#2a1810");
-      px(1, -11, 1, 1, "#2a1810");
-      px(-1, -9, 3, 1, "#c09070");
-      drawFaceCosmetic();
-      px(-4, -6, 9, 5, "#f4f4f8");
-      px(-3, -4, 7, 2, "#3a6aaa");
-      px(-5, -5, 2, 3, skinC);
-      px(4, -5, 2, 3, skinC);
-      px(-4, -1, 9, 2, "#3a6aaa");
-      if (seated) {
-        px(-3, 1, 3, 1, "#3a6aaa");
-        px(1, 1, 3, 1, "#3a6aaa");
-      } else {
-        px(-3, 1, 3, 3 + step, "#3a6aaa");
-        px(1, 1, 3, 3 - step, "#3a6aaa");
-      }
-      return;
-    }
-    if (s === "sonic") {
-      const blue = hurt ? "#2a4a8a" : "#3a6ad0";
-      px(-2, -15, 5, 2, blue);
-      px(-3, -13, 7, 5, blue);
-      px(-4, -12, 2, 3, blue);
-      px(-1, -11, 1, 1, "#1a1810");
-      px(1, -11, 1, 1, "#1a1810");
-      px(-1, -9, 3, 1, "#e8c39a");
-      drawFaceCosmetic();
-      px(-3, -6, 6, 5, blue);
-      px(-2, -4, 4, 2, "#e03840");
-      px(-5, -5, 2, 3, "#e8c39a");
-      px(3, -5, 2, 3, "#e8c39a");
-      px(-2, -1, 4, 1, "#e03840");
-      if (seated) {
-        px(-3, 1, 2, 1, "#e03840");
-        px(0, 1, 2, 1, "#e03840");
-      } else {
-        px(-3, 1, 2, 3 + step, "#e03840");
-        px(0, 1, 2, 3 - step, "#e03840");
-        px(-3, 3 + step, 2, 1, "#f4f4f8");
-        px(0, 3 - step, 2, 1, "#f4f4f8");
-      }
-      return;
-    }
-    if (s === "deadpool") {
-      const red = hurt ? "#6a2028" : "#c43a40";
-      px(-3, -13, 6, 2, red);
-      px(-2, -14, 4, 1, red);
-      px(-2, -12, 5, 5, red);
-      px(-1, -10, 1, 1, "#f4f4f8");
-      px(1, -10, 1, 1, "#f4f4f8");
-      px(-1, -10, 1, 1, "#1a1a1a");
-      px(1, -10, 1, 1, "#1a1a1a");
-      drawFaceCosmetic();
-      px(-3, -6, 6, 6, red);
-      px(-2, -4, 4, 2, "#1a1a1a");
-      px(-5, -5, 2, 4, red);
-      px(3, -5, 2, 4, red);
-      if (seated) {
-        px(-3, 1, 2, 1, red);
-        px(0, 1, 2, 1, red);
-      } else {
-        px(-3, 1, 2, 3 + step, red);
-        px(0, 1, 2, 3 - step, red);
-      }
-      return;
-    }
-    if (s === "cole_hocker") {
-      const skinC = hurt ? "#8a3a3a" : "#d4a07a";
-      px(-2, -14, 4, 1, "#1a1a1a");
-      px(-2, -13, 5, 1, "#2a2a2a");
-      px(-2, -12, 5, 5, skinC);
-      px(-1, -9, 1, 1, "#1a1010");
-      px(1, -8, 1, 1, "#b08060");
-      drawFaceCosmetic();
-      px(-3, -6, 6, 6, "#f4f4f8");
-      px(-3, -6, 6, 1, "#c43a48");
-      px(-3, -4, 6, 1, "#3a5aaa");
-      px(-2, -3, 4, 2, "#f4f4f8");
-      px(-5, -5, 2, 3, "#c43a48");
-      px(3, -5, 2, 3, "#3a5aaa");
-      px(-5, -2, 2, 2, skinC);
-      px(3, -2, 2, 2, skinC);
-      px(-2, -1, 4, 1, "#1a1a1a");
-      if (seated) {
-        px(-3, 1, 2, 1, "#c43a48");
-        px(0, 1, 2, 1, "#3a5aaa");
-      } else {
-        px(-3, 1, 2, 3 + step, "#c43a48");
-        px(0, 1, 2, 3 - step, "#3a5aaa");
-        px(-3, 3 + step, 2, 1, "#f4f4f8");
-        px(0, 3 - step, 2, 1, "#f4f4f8");
-      }
-      return;
-    }
-    if (s === "steve_prefontaine") {
-      const skinC = hurt ? "#8a3a3a" : "#e8c39a";
-      px(-2, -14, 4, 1, "#3a2414");
-      px(-2, -13, 5, 1, "#5c3a21");
-      px(-2, -12, 5, 5, skinC);
-      px(-1, -9, 1, 1, "#2a1810");
-      px(1, -8, 1, 1, "#d4a07a");
-      px(-1, -7, 3, 1, "#5c3a21");
-      drawFaceCosmetic();
-      px(-3, -6, 6, 5, "#1e6a34");
-      px(-3, -6, 6, 1, "#e8c44a");
-      px(-2, -4, 4, 2, "#1e6a34");
-      px(-5, -5, 2, 3, "#1e6a34");
-      px(3, -5, 2, 3, "#1e6a34");
-      px(-5, -2, 2, 2, skinC);
-      px(3, -2, 2, 2, skinC);
-      px(-2, -1, 4, 1, "#e8c44a");
-      if (seated) {
-        px(-3, 1, 2, 1, "#f4f4f8");
-        px(0, 1, 2, 1, "#f4f4f8");
-      } else {
-        px(-3, 1, 2, 2 + step, "#f4f4f8");
-        px(0, 1, 2, 2 - step, "#f4f4f8");
-        px(-3, 2 + step, 2, 1, "#1a1a1a");
-        px(0, 2 - step, 2, 1, "#1a1a1a");
       }
       return;
     }
@@ -17001,11 +16336,6 @@
       px(x, y + 2, 8, 1, "#f4f4f8");
       px(x, y + 3, 8, 2, "#c43a48");
       px(x, y, 3, 3, "#3a5aaa");
-    } else if (id === "stop_pre_flag") {
-      px(x, y, 8, 6, "#1a1a1a");
-      px(x + 1, y + 1, 6, 1, "#f4f4f8");
-      px(x + 1, y + 3, 6, 1, "#f4f4f8");
-      px(x + 3, y + 2, 2, 1, "#e8c44a");
     } else if (!drawTinyCatch(id, x, y)) {
       drawHudIcon(id, x - 4, y - 4);
     }
@@ -17031,8 +16361,7 @@
       } else if (
         showId === "norway_flag" ||
         showId === "jamaica_flag" ||
-        showId === "us_flag" ||
-        showId === "stop_pre_flag"
+        showId === "us_flag"
       ) {
         drawLockedBackIcon(showId, x + 9, y + 10);
       } else if (!drawTinyCatch(showId, x + 9, y + 9)) {
@@ -18419,7 +17748,7 @@
       px(x + 5, y + 2, 1, 3, "#e8c44a");
       return;
     }
-    if (k === "WEEKLY REWARDS" || k === "WEEKLY" || k === "ISLEPASS" || k === "ISLE PASS") {
+    if (k === "WEEKLY REWARDS" || k === "WEEKLY") {
       drawWeeklyRewardsIcon(x, y);
       return;
     }
@@ -18786,12 +18115,8 @@
         return true;
       }
       if (k === "arrowleft" || k === "a") {
-        if (questTab === "levels" && levelsPage === "pass") {
-          passCursor = Math.max(0, passCursor - 1);
-          return true;
-        }
         if (questTab === "levels") {
-          const pages = ["overview", "tiers", "pass"];
+          const pages = ["overview", "tiers"];
           const i = pages.indexOf(levelsPage);
           if (i > 0) levelsPage = pages[i - 1];
           else {
@@ -18803,20 +18128,15 @@
           questTab = tabs[(i + tabs.length - 1) % tabs.length];
           if (questTab === "weekly") prepareWeeklySpinState();
           if (questTab === "levels") {
-            levelsPage = "pass";
+            levelsPage = "overview";
             syncCareerFromAccountHistory();
           }
         }
         return true;
       }
       if (k === "arrowright" || k === "d") {
-        if (questTab === "levels" && levelsPage === "pass") {
-          const nodes = passTrackNodes();
-          passCursor = Math.min(Math.max(0, nodes.length - 1), passCursor + 1);
-          return true;
-        }
         if (questTab === "levels") {
-          const pages = ["overview", "tiers", "pass"];
+          const pages = ["overview", "tiers"];
           const i = pages.indexOf(levelsPage);
           if (i < pages.length - 1) levelsPage = pages[i + 1];
           else questTab = "quests";
@@ -18853,13 +18173,6 @@
             authStatus = "";
             srCursor = 0;
           } else tryWeeklySpin();
-        }
-      } else if (questTab === "levels" && levelsPage === "pass") {
-        if (k === "arrowup" || k === "w") levelsPage = "tiers";
-        if (k === "enter" || k === " ") {
-          const nodes = passTrackNodes();
-          const n = nodes[passCursor];
-          if (n && passNodeStatus(n) === "claimable") claimPassNode(n);
         }
       }
       return true;
@@ -19405,7 +18718,6 @@
     // Session playtime — survival → NM stats; speedrun → SR stats
     if ((playMode === "normal" || playMode === "speedrun") && !uiBlocksPlay() && !guideOpen) {
       playtimeAcc += dt * 1000;
-      tickIslePassPlaytime(dt);
     }
     playtimeFlush += dt;
     if (playtimeFlush >= 5 && playtimeAcc >= 1) {
