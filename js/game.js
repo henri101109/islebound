@@ -396,6 +396,20 @@
   let playMode = null;
   /** Cold boot shows logo card; Esc from play returns straight to "mode". */
   let uiScreen = "logo";
+  /** Two-tab duel room. Host owns the snapshot; guest applies broadcasts. */
+  let duel = null;
+  let duelSelfId = "";
+  let duelCh = null;
+  let duelStartedToken = -1;
+  let duelLegLocked = false;
+  let duelJoinPending = "";
+  let duelJoinAt = 0;
+  let duelStatus = "";
+  let duelCodeInput = "";
+  let duelTypingCode = false;
+  let duelLocalReady = false;
+  let duelHostBeat = 0;
+  let duelGuestBeat = 0;
   const LOGO_FRAMES = 12;
   const LOGO_FRAME_MS = 150;
   const LOGO_POP_MS = 220;
@@ -14856,6 +14870,7 @@
     drawDamage(canvas.width / SCALE_UI, canvas.height / SCALE_UI);
     drawFade();
     drawSpeedTimer();
+    drawDuelLegChip();
     drawAccountHudChip();
     drawSpeedUI();
     drawIslandChat();
@@ -14962,7 +14977,10 @@
       uiScreen === "profiles" ||
       uiScreen === "walkthrough" ||
       uiScreen === "spin" ||
-      uiScreen === "quests"
+      uiScreen === "quests" ||
+      uiScreen === "duel_home" ||
+      uiScreen === "duel_room" ||
+      uiScreen === "duel_card"
     );
   }
 
@@ -15060,6 +15078,861 @@
     return WALK_PAGES[walkKind] || WALK_PAGES.normal;
   }
 
+  function duelEnsureId() {
+    if (duelSelfId) return duelSelfId;
+    try {
+      duelSelfId = sessionStorage.getItem("islebound-duel-seat") || "";
+    } catch (e) {
+      duelSelfId = "";
+    }
+    if (!duelSelfId) {
+      duelSelfId = "d" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      try {
+        sessionStorage.setItem("islebound-duel-seat", duelSelfId);
+      } catch (e2) {}
+    }
+    return duelSelfId;
+  }
+
+  function duelEnsureNet() {
+    if (duelCh || typeof BroadcastChannel === "undefined") return;
+    duelCh = new BroadcastChannel("islebound-duel-v1");
+    duelCh.onmessage = (ev) => {
+      if (ev && ev.data) duelOnNet(ev.data);
+    };
+  }
+
+  function duelSend(type, extra) {
+    duelEnsureId();
+    duelEnsureNet();
+    if (!duelCh) return;
+    const msg = { type: type, from: duelSelfId, t: Date.now() };
+    if (extra) {
+      for (const k in extra) msg[k] = extra[k];
+    }
+    try {
+      duelCh.postMessage(msg);
+    } catch (e) {}
+  }
+
+  function duelBroadcast() {
+    if (!duel || !duelIsHost()) return;
+    duelSend("room", { room: duel });
+  }
+
+  function duelMyName() {
+    const n = String(hubLocalName() || "RUNNER")
+      .toUpperCase()
+      .replace(/[^A-Z0-9 ]/g, "")
+      .trim();
+    if (n.length >= 3) return n.slice(0, 12);
+    return "RUNNER";
+  }
+
+  function duelPoints(wr, ms) {
+    const w = Math.max(1, wr | 0);
+    const t = Math.max(1, ms | 0);
+    return Math.max(1, Math.round((100 * w) / t));
+  }
+
+  function duelIsHost() {
+    return !!(duel && duel.hostId && duel.hostId === duelSelfId);
+  }
+
+  function duelMakeCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let s = "";
+    for (let i = 0; i < 4; i++) s += alphabet[(Math.random() * alphabet.length) | 0];
+    return s;
+  }
+
+  function duelTotals() {
+    let h = 0;
+    let g = 0;
+    const rows = (duel && duel.results) || [];
+    for (let i = 0; i < rows.length; i++) {
+      h += rows[i].hostPts | 0;
+      g += rows[i].guestPts | 0;
+    }
+    return { h: h, g: g };
+  }
+
+  function duelRestLeft() {
+    if (!duel || !duel.restUntil) return 0;
+    return Math.max(0, Math.ceil((duel.restUntil - Date.now()) / 1000));
+  }
+
+  function duelShownFinish(id) {
+    if (duel && duel.finishes && duel.finishes[id]) return duel.finishes[id];
+    if (id && id === duelSelfId && duelLegLocked) {
+      const wr = catBoardWrMs(srCat);
+      return { ms: srFinalMs | 0, pts: duelPoints(wr, srFinalMs), wr: wr };
+    }
+    return null;
+  }
+
+  function duelFinishLine(name, fin) {
+    const who = String(name || "----").slice(0, 8);
+    if (!fin) return who + "  ----";
+    return who + "  " + formatSpeedTime(fin.ms) + "  " + (fin.pts | 0);
+  }
+
+  function openDuelMenu() {
+    closeIslandChat();
+    duelEnsureId();
+    duelEnsureNet();
+    duelTypingCode = false;
+    duelCodeInput = "";
+    duelStatus = "";
+    uiScreen = "duel_home";
+    playMode = null;
+    srCursor = 0;
+    srRunning = false;
+    srTiming = false;
+  }
+
+  function duelCreate() {
+    duelEnsureId();
+    duelEnsureNet();
+    duel = {
+      code: duelMakeCode(),
+      hostId: duelSelfId,
+      guestId: null,
+      hostName: duelMyName(),
+      guestName: "",
+      phase: "wait",
+      size: 0,
+      cats: [],
+      leg: 0,
+      token: 0,
+      results: [],
+      finishes: {},
+      ready: {},
+      restUntil: 0,
+      note: "",
+    };
+    duelStartedToken = -1;
+    duelLegLocked = false;
+    duelLocalReady = false;
+    duelJoinPending = "";
+    duelStatus = "";
+    duelTypingCode = false;
+    uiScreen = "duel_room";
+    playMode = null;
+    srCursor = 0;
+    srRunning = false;
+    srTiming = false;
+    duelBroadcast();
+  }
+
+  function duelJoin(code) {
+    const c = String(code || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 4);
+    if (c.length !== 4) {
+      duelStatus = "4 LETTERS";
+      return;
+    }
+    duelEnsureId();
+    duelEnsureNet();
+    duel = null;
+    duelJoinPending = c;
+    duelJoinAt = Date.now();
+    duelStatus = "LOOKING...";
+    duelSend("join", { code: c, name: duelMyName() });
+  }
+
+  function duelLeaveToHome() {
+    if (duel) duelSend("leave", { code: duel.code });
+    duel = null;
+    duelLegLocked = false;
+    duelStartedToken = -1;
+    duelLocalReady = false;
+    duelJoinPending = "";
+    duelTypingCode = false;
+    duelStatus = "";
+    duelCodeInput = "";
+    uiScreen = "duel_home";
+    playMode = null;
+    srRunning = false;
+    srTiming = false;
+    srCursor = 0;
+  }
+
+  function duelPickSize(n) {
+    if (!duelIsHost() || !duel || duel.phase !== "wait") return;
+    duel.size = n;
+    duel.cats = [];
+    duel.phase = "pick";
+    duel.ready = {};
+    duel.note = "";
+    srCursor = 0;
+    duelStatus = "";
+    duelBroadcast();
+  }
+
+  function duelToggleCat(id) {
+    if (!duelIsHost() || !duel || duel.phase !== "pick") return;
+    if (!id) return;
+    const i = duel.cats.indexOf(id);
+    if (i >= 0) {
+      duel.cats.splice(i, 1);
+      duelBroadcast();
+      return;
+    }
+    if (duel.cats.length >= (duel.size | 0)) return;
+    duel.cats.push(id);
+    if (duel.cats.length >= (duel.size | 0)) {
+      duel.phase = "arm";
+      duel.ready = {};
+      duelLocalReady = false;
+      srCursor = 0;
+    }
+    duelBroadcast();
+  }
+
+  function duelEditPicks() {
+    if (!duelIsHost() || !duel) return;
+    duel.phase = "pick";
+    duel.ready = {};
+    duelLocalReady = false;
+    srCursor = 0;
+    if (duel.cats.length) {
+      const last = duel.cats[duel.cats.length - 1];
+      const idx = SPEED_ORDER.indexOf(last);
+      if (idx >= 0) srCursor = idx;
+    }
+    duelBroadcast();
+  }
+
+  function duelRecordFinish(id, ms, cat) {
+    if (!duel || duel.phase !== "leg") return;
+    if (!duel.finishes) duel.finishes = {};
+    if (duel.finishes[id]) return;
+    const wr = catBoardWrMs(cat || (duel.cats && duel.cats[duel.leg]) || srCat);
+    const time = Math.max(1, ms | 0);
+    duel.finishes[id] = { ms: time, pts: duelPoints(wr, time), wr: wr };
+  }
+
+  function duelMaybeRest() {
+    if (!duelIsHost() || !duel || duel.phase !== "leg") return;
+    const h = duel.finishes && duel.finishes[duel.hostId];
+    const g = duel.finishes && duel.finishes[duel.guestId];
+    if (!h || !g) {
+      duelBroadcast();
+      return;
+    }
+    if (!duel.results) duel.results = [];
+    duel.results.push({
+      cat: duel.cats[duel.leg],
+      hostMs: h.ms,
+      guestMs: g.ms,
+      hostPts: h.pts,
+      guestPts: g.pts,
+    });
+    const last = (duel.leg | 0) >= duel.cats.length - 1;
+    duel.phase = last ? "done" : "rest";
+    duel.restUntil = last ? 0 : Date.now() + 15000;
+    duelBroadcast();
+    srTiming = false;
+    srRunning = false;
+    playMode = "speedrun";
+    uiScreen = "duel_card";
+  }
+
+  function duelStartLeg(index) {
+    if (!duelIsHost() || !duel) return;
+    duel.leg = index | 0;
+    duel.phase = "leg";
+    duel.token = (duel.token | 0) + 1;
+    duel.finishes = {};
+    duel.restUntil = 0;
+    duel.note = "";
+    duelStartedToken = duel.token;
+    duelLegLocked = false;
+    duelLocalReady = false;
+    duelBroadcast();
+    beginSpeedCategory(duel.cats[duel.leg] || SPEED_ORDER[0]);
+  }
+
+  function duelTryStart() {
+    if (!duelIsHost() || !duel || duel.phase !== "arm") return;
+    if (!duel.guestId) {
+      duelStatus = "NEED 2 PLAYERS";
+      duelBroadcast();
+      return;
+    }
+    duelStatus = "";
+    if (!duel.ready[duel.hostId] || !duel.ready[duel.guestId]) {
+      duelBroadcast();
+      return;
+    }
+    duel.results = [];
+    duel.note = "";
+    duelStartLeg(0);
+  }
+
+  function duelPressReady() {
+    if (!duel || duel.phase !== "arm") return;
+    if (!duel.guestId) {
+      duelStatus = "NEED 2 PLAYERS";
+      return;
+    }
+    duelStatus = "";
+    if (duelIsHost()) {
+      if (!duel.ready) duel.ready = {};
+      duel.ready[duelSelfId] = true;
+      duelTryStart();
+    } else {
+      duelLocalReady = true;
+      duelSend("ready", { code: duel.code });
+    }
+  }
+
+  function duelEnsureSubmitName() {
+    const api = lbApi();
+    let name = srName || hubLocalName() || "RUNNER";
+    if (api && api.sanitizeName) {
+      const n = api.sanitizeName(name);
+      srName = n || "RUNNER";
+    } else {
+      srName = String(name || "RUNNER")
+        .toUpperCase()
+        .replace(/[^A-Z0-9 ]/g, "")
+        .trim()
+        .slice(0, 12);
+    }
+    if (!srName || srName.length < 3) srName = "RUNNER";
+  }
+
+  function duelLockOwnFinish() {
+    if (!duel || duel.phase !== "leg" || duelLegLocked) return;
+    duelLegLocked = true;
+    duelEnsureSubmitName();
+    submitSpeedScore();
+    const ms = srFinalMs | 0;
+    const cat = srCat;
+    if (duelIsHost()) {
+      duelRecordFinish(duelSelfId, ms, cat);
+      duelMaybeRest();
+    } else {
+      duelSend("finish", { code: duel.code, leg: duel.leg, token: duel.token, cat: cat, ms: ms });
+    }
+  }
+
+  function duelStuck(note) {
+    if (!duel) return;
+    duel.note = note;
+    duel.phase = "done";
+    duel.restUntil = 0;
+    srTiming = false;
+    srRunning = false;
+    playMode = "speedrun";
+    uiScreen = "duel_card";
+  }
+
+  function duelApplyRoom(room) {
+    if (!room || room.hostId === duelSelfId) return;
+    if (room.guestId !== duelSelfId) return;
+    duel = room;
+    duelJoinPending = "";
+    if (room.phase === "wait" || room.phase === "pick" || room.phase === "arm") {
+      if (uiScreen !== "duel_room") {
+        playMode = null;
+        srRunning = false;
+        srTiming = false;
+        uiScreen = "duel_room";
+        srCursor = 0;
+      }
+      return;
+    }
+    if (room.phase === "leg" && room.token !== duelStartedToken) {
+      duelStartedToken = room.token;
+      duelLegLocked = false;
+      duelLocalReady = false;
+      beginSpeedCategory((room.cats && room.cats[room.leg]) || SPEED_ORDER[0]);
+      return;
+    }
+    if (room.phase === "rest" || room.phase === "done") {
+      srTiming = false;
+      srRunning = false;
+      playMode = "speedrun";
+      uiScreen = "duel_card";
+    }
+  }
+
+  function duelOnNet(msg) {
+    if (!msg || !msg.type || msg.from === duelSelfId) return;
+    if (msg.type === "join") {
+      if (!duelIsHost() || !duel || msg.code !== duel.code) return;
+      if (duel.guestId && duel.guestId !== msg.from) {
+        duelSend("full", { code: duel.code, to: msg.from });
+        return;
+      }
+      let name = String(msg.name || "GUEST")
+        .toUpperCase()
+        .replace(/[^A-Z0-9 ]/g, "")
+        .trim()
+        .slice(0, 12);
+      if (name.length < 3) name = "GUEST";
+      if (name === duel.hostName) name = (name.slice(0, 10) + " 2").slice(0, 12);
+      duel.guestId = msg.from;
+      duel.guestName = name;
+      duelBroadcast();
+      return;
+    }
+    if (msg.type === "full") {
+      if (msg.to && msg.to !== duelSelfId) return;
+      if (duelJoinPending && msg.code === duelJoinPending) {
+        duelStatus = "ROOM FULL";
+        duelJoinPending = "";
+      }
+      return;
+    }
+    if (msg.type === "room") {
+      if (!msg.room) return;
+      duelApplyRoom(msg.room);
+      return;
+    }
+    if (msg.type === "ready") {
+      if (!duelIsHost() || !duel || msg.code !== duel.code) return;
+      if (msg.from !== duel.guestId || duel.phase !== "arm") return;
+      if (!duel.ready) duel.ready = {};
+      duel.ready[msg.from] = true;
+      duelTryStart();
+      return;
+    }
+    if (msg.type === "finish") {
+      if (!duelIsHost() || !duel || msg.code !== duel.code) return;
+      if (duel.phase !== "leg" || msg.token !== duel.token) return;
+      if (msg.from !== duel.guestId && msg.from !== duel.hostId) return;
+      duelRecordFinish(msg.from, msg.ms, msg.cat);
+      duelMaybeRest();
+      return;
+    }
+    if (msg.type === "ping") {
+      if (duelIsHost() && duel && msg.code === duel.code && (!duel.guestId || msg.from === duel.guestId)) {
+        duelBroadcast();
+      }
+      return;
+    }
+    if (msg.type === "leave") {
+      if (!duel || msg.code !== duel.code) return;
+      if (duelIsHost() && msg.from === duel.guestId) {
+        const mid = duel.phase === "leg" || duel.phase === "rest";
+        duel.guestId = null;
+        duel.guestName = "";
+        duel.ready = {};
+        if (mid) {
+          duelStuck("OPP LEFT");
+          duelBroadcast();
+        } else {
+          if (duel.phase === "arm" || duel.phase === "pick") {
+            duel.phase = "wait";
+            duel.cats = [];
+            duel.size = 0;
+          }
+          duelBroadcast();
+        }
+      } else if (!duelIsHost() && msg.from === duel.hostId) {
+        duelStuck("HOST LEFT");
+      }
+    }
+  }
+
+  function tickDuel() {
+    const now = Date.now();
+    if (duelJoinPending && !duel && duelJoinAt && now - duelJoinAt > 2500) {
+      duelStatus = "NO ROOM";
+      duelJoinPending = "";
+    } else if (duelJoinPending && !duel && now - duelGuestBeat > 400) {
+      duelGuestBeat = now;
+      duelSend("join", { code: duelJoinPending, name: duelMyName() });
+    }
+    if (duel && !duelIsHost() && duel.code && now - duelGuestBeat > 1000) {
+      duelGuestBeat = now;
+      duelSend("ping", { code: duel.code });
+    }
+    if (!duel || !duelIsHost()) return;
+    if (duel.phase === "rest" && duel.restUntil && now >= duel.restUntil) {
+      duelStartLeg((duel.leg | 0) + 1);
+      return;
+    }
+    if (now - duelHostBeat > 1000) {
+      duelHostBeat = now;
+      duelBroadcast();
+    }
+  }
+
+  function drawDuelSlots(x, y, w) {
+    const cats = (duel && duel.cats) || [];
+    const n = Math.max((duel && duel.size) | 0, cats.length);
+    if (!n) {
+      drawPixText("NO RUNS YET", x, y, "#5c3a21");
+      return;
+    }
+    const cols = n > 6 ? 2 : 1;
+    const rows = Math.ceil(n / cols);
+    const colW = (w / cols) | 0;
+    for (let i = 0; i < n; i++) {
+      const col = (i / rows) | 0;
+      const row = i % rows;
+      const label = cats[i] ? i + 1 + " " + catLabel(cats[i]) : i + 1 + " ----";
+      drawPixText(label, x + col * colW, y + row * 9, cats[i] ? "#3a2414" : "#8a5a32");
+    }
+  }
+
+  function drawDuelPickList(x, y, w) {
+    const need = duel.size | 0;
+    const have = (duel.cats || []).length;
+    drawPixText("PICK " + have + "/" + need + "  ENTER TOGGLES", x, y, "#5c3a21");
+    const vis = 8;
+    const maxStart = Math.max(0, SPEED_ORDER.length - vis);
+    const start = Math.max(0, Math.min(srCursor - 3, maxStart));
+    for (let i = 0; i < vis; i++) {
+      const idx = start + i;
+      if (idx >= SPEED_ORDER.length) break;
+      const id = SPEED_ORDER[idx];
+      const on = duel.cats.indexOf(id) >= 0;
+      const sel = srCursor === idx || menuHovering("duel:cat:" + idx);
+      const oy = y + 12 + i * 10;
+      if (sel) px(x, oy - 1, w, 9, "#e8c44a");
+      drawPixText((on ? "X " : "  ") + catLabel(id), x + 2, oy, sel ? "#2b1c12" : on ? "#2f6a24" : "#3a2414");
+      addMenuHit(
+        "duel:cat:" + idx,
+        x,
+        oy - 1,
+        w,
+        9,
+        () => {
+          srCursor = idx;
+          duelToggleCat(id);
+        },
+        { hover: true }
+      );
+    }
+  }
+
+  function drawDuelLeaveButton(x, y, w, h) {
+    const sel = srCursor === 0 || menuHovering("duel:leave");
+    const bw = 72;
+    const bx = (x + (w - bw) / 2) | 0;
+    const by = y + h - 18;
+    if (sel) px(bx, by - 2, bw, 12, "#e8c44a");
+    drawPixText("DUELS", (x + w / 2) | 0, by, sel ? "#2b1c12" : "#3a2414", "center");
+    addMenuHit("duel:leave", bx, by - 2, bw, 12, () => duelLeaveToHome(), { hover: true });
+  }
+
+  function drawDuelHome() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 210;
+    const h = duelTypingCode ? 112 : 100;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "DUELS");
+    drawPixText("2 PLAYERS  SAME RUNS", (x + w / 2) | 0, y + 20, "#5c3a21", "center");
+    if (!duelTypingCode) {
+      const rows = ["CREATE ROOM", "JOIN ROOM"];
+      for (let i = 0; i < rows.length; i++) {
+        const sel = srCursor === i || menuHovering("duel:home:" + i);
+        const by = y + 36 + i * 16;
+        if (sel) px(x + 18, by - 2, w - 36, 12, "#e8c44a");
+        drawPixText(rows[i], (x + w / 2) | 0, by, sel ? "#2b1c12" : "#3a2414", "center");
+        addMenuHit(
+          "duel:home:" + i,
+          x + 18,
+          by - 2,
+          w - 36,
+          12,
+          () => {
+            srCursor = i;
+            if (i === 1) {
+              duelTypingCode = true;
+              duelCodeInput = "";
+              duelStatus = "";
+            } else duelCreate();
+          },
+          { hover: true }
+        );
+      }
+    } else {
+      drawPixText("CODE", x + 18, y + 40, "#5c3a21");
+      px(x + 54, y + 38, 88, 12, "#e8c44a");
+      px(x + 55, y + 39, 86, 10, "#f3e2c4");
+      const shown = (duelCodeInput || "").slice(0, 4);
+      drawPixText(shown, x + 58, y + 40, "#2b1c12");
+      if (((time * 3) | 0) % 2 === 0) px(x + 58 + (shown ? pixTextWidth(shown) + 1 : 0), y + 40, 5, 7, "#2b1c12");
+      drawPixText("ENTER JOINS", (x + w / 2) | 0, y + 58, "#5c3a21", "center");
+    }
+    if (duelStatus) drawPixText(duelStatus, (x + w / 2) | 0, y + h - 24, "#8a3038", "center");
+    drawPixText("ESC MENU", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
+  }
+
+  function drawDuelRoom() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    if (!duel) return;
+    const picking = duel.phase === "pick" && duelIsHost();
+    const w = picking ? 250 : 230;
+    const h = picking ? Math.min(uiH - 8, 168) : duel.phase === "arm" ? 210 : 156;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "DUEL ROOM");
+    drawPixText("CODE " + (duel.code || "----"), (x + w / 2) | 0, y + 20, "#2b1c12", "center");
+    drawPixText("HOST " + (duel.hostName || "----"), x + 12, y + 32, "#3a2414");
+    drawPixText(
+      duel.guestId ? "GUEST " + (duel.guestName || "GUEST") : "GUEST WAITING",
+      x + 12,
+      y + 42,
+      duel.guestId ? "#2f6a24" : "#5c3a21"
+    );
+    if (duelIsHost() && duel.phase === "wait") {
+      drawPixText("OPEN ANOTHER TAB", (x + w / 2) | 0, y + 58, "#5c3a21", "center");
+      drawPixText("JOIN THIS CODE", (x + w / 2) | 0, y + 68, "#5c3a21", "center");
+      const sizes = [4, 6, 10];
+      for (let i = 0; i < sizes.length; i++) {
+        const sel = srCursor === i || menuHovering("duel:size:" + sizes[i]);
+        const bx = x + 14 + i * 70;
+        const by = y + 86;
+        if (sel) px(bx - 2, by - 2, 64, 14, "#e8c44a");
+        drawPixText(sizes[i] + " RUNS", bx, by, sel ? "#2b1c12" : "#3a2414");
+        addMenuHit(
+          "duel:size:" + sizes[i],
+          bx - 2,
+          by - 2,
+          64,
+          14,
+          () => {
+            srCursor = i;
+            duelPickSize(sizes[i]);
+          },
+          { hover: true }
+        );
+      }
+    } else if (duel.phase === "pick" && duelIsHost()) {
+      drawDuelPickList(x + 10, y + 54, w - 20);
+    } else if (!duelIsHost() && (duel.phase === "wait" || duel.phase === "pick")) {
+      drawPixText(duel.phase === "wait" ? "HOST PICKS LENGTH" : "HOST IS PICKING", (x + w / 2) | 0, y + 58, "#5c3a21", "center");
+      drawDuelSlots(x + 12, y + 72, w - 24);
+    } else if (duel.phase === "arm") {
+      drawDuelSlots(x + 12, y + 56, w - 24);
+      const readyHost = !!(duel.ready && duel.ready[duel.hostId]);
+      const readyGuest = !!(duel.ready && duel.ready[duel.guestId]);
+      const mine = !!(duelLocalReady || (duel.ready && duel.ready[duelSelfId]));
+      drawPixText((duel.hostName || "HOST") + (readyHost ? " READY" : " ...."), x + 12, y + h - 48, readyHost ? "#2f6a24" : "#5c3a21");
+      drawPixText((duel.guestName || "GUEST") + (readyGuest ? " READY" : " ...."), x + 12, y + h - 38, readyGuest ? "#2f6a24" : "#5c3a21");
+      const selR = srCursor === 0 || menuHovering("duel:ready");
+      if (selR) px(x + 12, y + h - 26, 78, 12, "#e8c44a");
+      drawPixText(mine ? "READY" : "READY?", x + 16, y + h - 24, selR ? "#2b1c12" : "#3a2414");
+      addMenuHit(
+        "duel:ready",
+        x + 12,
+        y + h - 26,
+        78,
+        12,
+        () => {
+          srCursor = 0;
+          duelPressReady();
+        },
+        { hover: true }
+      );
+      if (duelIsHost()) {
+        const selE = srCursor === 1 || menuHovering("duel:edit");
+        if (selE) px(x + 100, y + h - 26, 52, 12, "#e8c44a");
+        drawPixText("EDIT", x + 108, y + h - 24, selE ? "#2b1c12" : "#3a2414");
+        addMenuHit(
+          "duel:edit",
+          x + 100,
+          y + h - 26,
+          52,
+          12,
+          () => {
+            srCursor = 1;
+            duelEditPicks();
+          },
+          { hover: true }
+        );
+      }
+    }
+    if (duelStatus) {
+      drawPixText(duelStatus, (x + w / 2) | 0, y + (duel.phase === "arm" ? h - 58 : h - 12), "#8a3038", "center");
+    }
+  }
+
+  function drawDuelCard() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.62;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    if (!duel) return;
+    const leftNote = duel.note === "OPP LEFT" || duel.note === "HOST LEFT";
+    const done = duel.phase === "done" || leftNote;
+    const results = duel.results || [];
+    const w = 260;
+    const h = done ? Math.min(uiH - 8, 64 + Math.max(1, results.length) * 8 + 28) : 176;
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(4, ((uiH - h) / 2) | 0);
+    const title = leftNote ? duel.note : done ? "SERIES" : duel.phase === "rest" ? "LEG DONE" : "LOCKED";
+    drawPanelBox(x, y, w, h, title);
+    if (leftNote) {
+      drawPixText("RUN STOPPED", (x + w / 2) | 0, y + 28, "#5c3a21", "center");
+      drawDuelLeaveButton(x, y, w, h);
+      return;
+    }
+    if (done) {
+      const tot = duelTotals();
+      const hn = duel.hostName || "HOST";
+      const gn = duel.guestName || "GUEST";
+      let win = "TIE";
+      if (tot.h > tot.g) win = hn + " WINS";
+      else if (tot.g > tot.h) win = gn + " WINS";
+      drawPixText(win, (x + w / 2) | 0, y + 20, "#2b1c12", "center");
+      drawPixText(tot.h + " - " + tot.g, (x + w / 2) | 0, y + 30, "#5c3a21", "center");
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const line =
+          i +
+          1 +
+          " " +
+          catLabel(r.cat) +
+          "  " +
+          formatSpeedTime(r.hostMs) +
+          " " +
+          (r.hostPts | 0) +
+          "  " +
+          formatSpeedTime(r.guestMs) +
+          " " +
+          (r.guestPts | 0);
+        drawPixText(line, x + 8, y + 42 + i * 8, "#3a2414");
+      }
+      drawDuelLeaveButton(x, y, w, h);
+      return;
+    }
+    const cat = (duel.cats && duel.cats[duel.leg]) || srCat;
+    const n = (duel.leg | 0) + 1;
+    const total = (duel.cats && duel.cats.length) || 0;
+    drawPixText(catLabel(cat) + "  " + n + "/" + total, (x + w / 2) | 0, y + 20, "#3a2414", "center");
+    drawPixText(duelFinishLine(duel.hostName || "HOST", duelShownFinish(duel.hostId)), x + 10, y + 32, "#2b1c12");
+    drawPixText(duelFinishLine(duel.guestName || "GUEST", duelShownFinish(duel.guestId)), x + 10, y + 42, "#2b1c12");
+    const tot = duelTotals();
+    drawPixText("SERIES " + tot.h + " - " + tot.g, x + 10, y + 54, "#5c3a21");
+    if (duel.phase === "rest") {
+      drawPixText("NEXT " + duelRestLeft() + "S", (x + w / 2) | 0, y + 66, "#8a3038", "center");
+    } else {
+      const opp = duelSelfId === duel.hostId ? duel.guestName || "GUEST" : duel.hostName || "HOST";
+      drawPixText("WAITING ON " + opp, (x + w / 2) | 0, y + 66, "#8a3038", "center");
+    }
+    if (srStatus) drawPixText(srStatus, x + 10, y + 76, "#5c3a21");
+    drawPixText("TOP 10", x + 10, y + 88, "#5c3a21");
+    drawBoardList(x + 10, y + 98, 6);
+  }
+
+  function drawDuelLegChip() {
+    if (!duel || (duel.phase !== "leg" && duel.phase !== "rest")) return;
+    if (uiScreen === "duel_home" || uiScreen === "duel_room" || uiScreen === "duel_card") return;
+    const n = (duel.leg | 0) + 1;
+    const total = (duel.cats && duel.cats.length) || 0;
+    const label = "DUEL " + n + "/" + total;
+    const tw = pixTextWidth(label);
+    px(8, 18, tw + 8, 11, "#3a2414");
+    drawPixText(label, 12, 20, "#f3e2c4");
+  }
+
+  function onDuelKey(k) {
+    if (uiScreen === "duel_home") {
+      if (duelTypingCode) {
+        if (k === "escape") {
+          duelTypingCode = false;
+          duelStatus = "";
+          return true;
+        }
+        if (k === "backspace") {
+          duelCodeInput = duelCodeInput.slice(0, -1);
+          return true;
+        }
+        if (k === "enter") {
+          if (duelCodeInput.length === 4) duelJoin(duelCodeInput);
+          else duelStatus = "4 LETTERS";
+          return true;
+        }
+        if (k.length === 1 && /[a-z0-9]/.test(k) && duelCodeInput.length < 4) {
+          duelCodeInput += k.toUpperCase();
+        }
+        return true;
+      }
+      if (k === "escape") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor === 0 ? 1 : 0;
+      if (k === "enter" || k === " ") {
+        if (srCursor === 1) {
+          duelTypingCode = true;
+          duelCodeInput = "";
+          duelStatus = "";
+        } else duelCreate();
+      }
+      return true;
+    }
+    if (uiScreen === "duel_room") {
+      if (k === "escape") {
+        if (duel && duelIsHost() && duel.phase === "pick") {
+          duel.phase = "wait";
+          duel.cats = [];
+          duel.size = 0;
+          srCursor = 0;
+          duelBroadcast();
+          return true;
+        }
+        if (duel && duelIsHost() && duel.phase === "arm") {
+          duelEditPicks();
+          return true;
+        }
+        duelLeaveToHome();
+        return true;
+      }
+      if (!duel) return true;
+      if (duelIsHost() && duel.phase === "wait") {
+        if (k === "arrowleft" || k === "a") srCursor = (srCursor + 2) % 3;
+        if (k === "arrowright" || k === "d") srCursor = (srCursor + 1) % 3;
+        if (k === "enter" || k === " ") duelPickSize([4, 6, 10][srCursor] || 4);
+        return true;
+      }
+      if (duelIsHost() && duel.phase === "pick") {
+        if (k === "arrowup" || k === "w") srCursor = (srCursor + SPEED_ORDER.length - 1) % SPEED_ORDER.length;
+        if (k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % SPEED_ORDER.length;
+        if (k === "enter" || k === " ") duelToggleCat(SPEED_ORDER[srCursor]);
+        return true;
+      }
+      if (duel.phase === "arm") {
+        const max = duelIsHost() ? 2 : 1;
+        if (k === "arrowleft" || k === "a" || k === "arrowup" || k === "w") srCursor = (srCursor + max - 1) % max;
+        if (k === "arrowright" || k === "d" || k === "arrowdown" || k === "s") srCursor = (srCursor + 1) % max;
+        if (k === "enter" || k === " ") {
+          if (srCursor === 1 && duelIsHost()) duelEditPicks();
+          else duelPressReady();
+        }
+        return true;
+      }
+      return true;
+    }
+    if (uiScreen === "duel_card") {
+      const canLeave = duel && (duel.phase === "done" || duel.note === "OPP LEFT" || duel.note === "HOST LEFT");
+      if (canLeave && (k === "enter" || k === " " || k === "escape")) duelLeaveToHome();
+      return true;
+    }
+    return true;
+  }
+
   function activateModeOpt(i) {
     if (i === 0) enterNormalMode();
     else if (i === 1) {
@@ -15067,7 +15940,7 @@
       uiScreen = "categories";
       srCursor = 0;
       refreshSpeedBoard(SPEED_ORDER[0]);
-    } else if (i === 2) enterHubMode();
+    } else if (i === 2) openDuelMenu();
     else if (i === 3) {
       uiScreen = "account";
       authMode = "menu";
@@ -15813,7 +16686,7 @@
   }
 
   function finishSpeedrun() {
-    if (playMode !== "speedrun" || uiScreen === "finish") return;
+    if (playMode !== "speedrun" || uiScreen === "finish" || uiScreen === "duel_card" || duelLegLocked) return;
     // Freeze timer this frame — all end hooks must land here.
     srBlowfishFinishT = -1;
     blowfishHearts = null;
@@ -15821,7 +16694,6 @@
     lockSpeedFinalMs();
     if (srCat === "kings_race") tryGrantLexYoung(srFinalMs);
     srRunning = false;
-    uiScreen = "finish";
     srFinishSel = 1;
     srStatus = "";
     srSubmitted = false;
@@ -15853,6 +16725,12 @@
     }
     checkNovQuestRewards(srCat, srFinalMs);
     refreshSpeedBoard(srCat);
+    if (duel && duel.phase === "leg") {
+      uiScreen = "duel_card";
+      duelLockOwnFinish();
+    } else {
+      uiScreen = "finish";
+    }
   }
 
   function resetSpeedrunWorld() {
@@ -16260,7 +17138,7 @@
         const hasVid = rowHasReplayVid(i);
         const vx = timeX + pixTextWidth(timeStr) + 4;
         const vidKey = "vid:" + (i + 1);
-        if (hasVid) {
+        if (hasVid && uiScreen !== "duel_card") {
           const vidSel = menuHovering(vidKey);
           px(vx - 1, yy - 1, 22, 9, vidSel ? "#e8c44a" : "#5c3a21");
           drawPixText("VID", vx + 1, yy, vidSel ? "#2b1c12" : "#f3e2c4");
@@ -17154,7 +18032,7 @@
     const modes = [
       { label: "SURVIVAL", idx: 0 },
       { label: "SPEEDRUN", idx: 1 },
-      { label: "HUB", idx: 2 },
+      { label: "DUELS", idx: 2 },
     ];
     const tileW = 78;
     const tileH = modeH;
@@ -17170,8 +18048,14 @@
       px(tx + 1, modeY + 1, tileW - 2, tileH - 2, sel ? "#e8c44a" : "#8a5a32");
       px(tx + 2, modeY + 2, tileW - 4, tileH - 4, sel ? "#f3e2c4" : "#5c3a21");
       const labelY = modeY + (((tileH - 7) / 2) | 0) + 1;
-      drawModeMenuIcon(m.label === "SURVIVAL" ? "NORMAL" : m.label, tx + 7, labelY - 1);
-      drawPixText(m.label, tx + 20, labelY, sel ? "#2b1c12" : "#f3e2c4");
+      const ink = sel ? "#2b1c12" : "#f3e2c4";
+      if (m.label === "DUELS") {
+        drawPixText("VS", tx + 5, labelY, sel ? "#2b1c12" : "#e8c44a");
+        drawPixText(m.label, tx + 20, labelY, ink);
+      } else {
+        drawModeMenuIcon(m.label === "SURVIVAL" ? "NORMAL" : m.label, tx + 7, labelY - 1);
+        drawPixText(m.label, tx + 20, labelY, ink);
+      }
       addMenuHit(
         key,
         tx,
@@ -17289,9 +18173,10 @@
     drawPixText(catLabel(srCat), (x + w / 2) | 0, y + 22, "#3a2414", "center");
     if (menuHovering("ready:play")) px(x + 14, y + 32, w - 28, 11, "#e8c44a");
     drawPixText("CLICK / ENTER PLAY", (x + w / 2) | 0, y + 36, menuHovering("ready:play") ? "#2b1c12" : "#5c3a21", "center");
-    drawPixText("R RESET   ESC BACK", (x + w / 2) | 0, y + 48, menuHovering("ready:back") ? "#2b1c12" : "#5c3a21", "center");
+    const duelLeg = duel && duel.phase === "leg";
+    drawPixText(duelLeg ? "R RESET" : "R RESET   ESC BACK", (x + w / 2) | 0, y + 48, menuHovering("ready:back") ? "#2b1c12" : "#5c3a21", "center");
     addMenuHit("ready:play", x + 10, y + 18, w - 20, 28, () => maybeStartSpeedTimer(), { hover: true });
-    addMenuHit("ready:back", x + 10, y + 46, w - 20, 14, () => backToCategories(), { hover: true });
+    if (!duelLeg) addMenuHit("ready:back", x + 10, y + 46, w - 20, 14, () => backToCategories(), { hover: true });
   }
 
   function drawFinishScreen() {
@@ -17831,6 +18716,10 @@
       px(x + 5, y + 4, 1, 1, "#e8c44a");
       return;
     }
+    if (k === "DUELS") {
+      drawPixText("VS", x, y, "#e8c44a");
+      return;
+    }
     if (k === "ACCOUNT") {
       // Person bust
       px(x + 3, y, 2, 2, "#f3e2c4");
@@ -18000,6 +18889,9 @@
     else if (uiScreen === "walkthrough") drawWalkthrough();
     else if (uiScreen === "spin") drawSpinScreen();
     else if (uiScreen === "quests") drawQuestScreen();
+    else if (uiScreen === "duel_home") drawDuelHome();
+    else if (uiScreen === "duel_room") drawDuelRoom();
+    else if (uiScreen === "duel_card") drawDuelCard();
   }
 
   async function submitSpeedScore() {
@@ -18194,6 +19086,7 @@
       if (k === "enter" || k === " " || k === "escape" || k === "backspace") skipLogoToMode();
       return true;
     }
+    if (uiScreen === "duel_home" || uiScreen === "duel_room" || uiScreen === "duel_card") return onDuelKey(k);
     if (uiScreen === "mode") {
       if (k === "arrowleft" || k === "a") srCursor = (srCursor + 2) % 3;
       if (k === "arrowright" || k === "d") srCursor = (srCursor + 1) % 3;
@@ -18488,6 +19381,7 @@
     }
     if (uiScreen === "ready") {
       if (k === "escape") {
+        if (duel && duel.phase === "leg") return true;
         backToCategories();
         return true;
       }
@@ -18751,6 +19645,7 @@
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     time = now / 1000;
+    tickDuel();
     const zoomTarget = zoomGoal();
     const punch = Math.abs(zoomTarget - zoom) > 0.04 || isIndoor();
     zoom += (zoomTarget - zoom) * (1 - Math.exp(-dt * (punch ? 14 : 5.2)));
@@ -18888,6 +19783,7 @@
     // Tab toggles island chat globally (not C — C/F still cast)
     if (k === "tab") {
       e.preventDefault();
+      if (uiScreen === "duel_home" || uiScreen === "duel_room" || uiScreen === "duel_card") return;
       if (!e.repeat) toggleIslandChat();
       return;
     }
