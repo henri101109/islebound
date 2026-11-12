@@ -10381,7 +10381,6 @@
     bakeFloorInterior();
     bakeWreckInterior();
     placeTemple(pier);
-    placeMountainsIntoWorld();
     placeRiverRuins(pier);
     placeJunglePond(pier);
     for (let i = palms.length - 1; i >= 0; i--) {
@@ -10567,13 +10566,10 @@
       ensureRome();
       if (rome) rome.enterFromPortal();
     }
-    if (scene === "island" && veinDoor && playerHits(veinDoor)) {
-      ensureVein();
-      beginFade("vein", { x: 28, y: (vein ? vein.ROOM_H : 152) - 42 });
-    }
-    if (scene === "vein" && vein && vein.getExitPad() && playerHits(vein.getExitPad())) {
-      const ex = veinIslandExit || vein.getIslandExit();
-      if (ex) beginFade("island", { x: ex.x, y: ex.y });
+    if (scene === "vein") {
+      scene = "island";
+      player.x = spawnX;
+      player.y = spawnY;
     }
     if (scene === "hub" && hubExit && playerHits(hubExit) && playMode === "hub") {
       leaveHubMode();
@@ -19760,17 +19756,12 @@
       data.scene === "sub" ||
       data.scene === "floor" ||
       data.scene === "wreck" ||
-      data.scene === "vein" ||
       (rome && data.scene && rome.isScene(data.scene))
     ) {
       scene = data.scene;
-      if (scene === "vein") {
-        ensureVein();
-        cloakOn = false;
-      }
       if (rome && rome.isScene(scene)) rome.restore(data.rome);
-    } else if (data.scene === "hub") {
-      // Hub is its own mode now — remount old island-gate saves to the dock
+    } else if (data.scene === "hub" || data.scene === "vein") {
+      // Hub and the removed mountain dungeon remount to the dock.
       scene = "island";
       player.x = spawnX;
       player.y = spawnY;
