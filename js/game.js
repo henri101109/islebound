@@ -564,7 +564,7 @@
       },
       {
         title: "COSMETICS",
-        lines: ["EQUIP IN MAIN MENU", "DRAG TO FACE/BACK", "SKINS ON THE LOCKER", "CLOAK SPACE = STEALTH"],
+        lines: ["EQUIP IN MAIN MENU", "DRAG TO FACE/BACK", "PETS ON THE LOCKER", "P SITS YOUR PET"],
       },
       {
         title: "FISH",
@@ -732,6 +732,16 @@
     flash: { id: "flash", label: "FLASH" },
     lex_young: { id: "lex_young", label: "LEX" },
   };
+  const PET_DEFS = {
+    blue_crab: { id: "blue_crab", label: "BLUE", name: "Blue Crab" },
+    egypt_cat: { id: "egypt_cat", label: "CAT", name: "Egyptian Cat" },
+  };
+  let ownedPets = [];
+  /** Equipped pet id, or null. */
+  let equippedPet = null;
+  /** Live companion in survival. Pets never die. */
+  let petWorld = null;
+  const PET_TP_DIST = 260;
   const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
   const QUEST_SKIN_IDS = [
     "usain_bolt",
@@ -918,6 +928,7 @@
   /** Pixel scroll offsets for locker browse grids. */
   let lockerScrollSkins = 0;
   let lockerScrollCosmetics = 0;
+  let lockerScrollPets = 0;
   /** Last locker grid clip rect + max scroll (for wheel). */
   let lockerGridBounds = null;
   /**
@@ -2133,6 +2144,7 @@
       anim: rand(0, 8),
       seen: hidden ? 0 : rand(0.2, 1.8),
       squash: 1,
+      blue: playMode !== "speedrun" && Math.random() < 0.01,
     });
   }
 
@@ -2504,7 +2516,27 @@
         else crabSetState(c, Math.random() < 0.62 ? "scuttle" : "pause");
       }
     }
+    maybeRespawnBeachCrab(dt);
     updateSandBits(dt);
+  }
+
+  let crabRespawnT = 0;
+  function maybeRespawnBeachCrab(dt) {
+    if (scene !== "island" || playMode === "speedrun") return;
+    if (crabs.length >= MAX_CRABS) return;
+    crabRespawnT -= dt;
+    if (crabRespawnT > 0) return;
+    crabRespawnT = rand(4, 9);
+    if (Math.random() > 0.45) return;
+    for (let n = 0; n < 18; n++) {
+      const c = 2 + ((Math.random() * (COLS - 4)) | 0);
+      const x = c * TILE + 8 + rand(-6, 6);
+      const rest = restShoreY(x);
+      const y = rest - rand(52, Math.max(54, sandWidth(c) * TILE - 22));
+      if (!isDryBeachSand(x, y)) continue;
+      pushBeachCrab(x, y, crabs.length + n, Math.random() > 0.55);
+      return;
+    }
   }
 
   function crabIsCatchable(c) {
@@ -2541,6 +2573,15 @@
   function tryCatchLandCrab() {
     const idx = nearestCatchableCrab();
     if (idx < 0) return false;
+    const c = crabs[idx];
+    if (c.blue && playMode === "normal" && !ownsPet("blue_crab")) {
+      crabs.splice(idx, 1);
+      grantPet("blue_crab");
+      equipPet("blue_crab");
+      cosTip = "BLUE CRAB";
+      cosTipT = 2.2;
+      return true;
+    }
     const toBag = canTake("catch_crab");
     const toSatchel = !toBag && canTakeSatchel("catch_crab");
     if (!toBag && !toSatchel) {
@@ -2548,7 +2589,6 @@
       cosTipT = 1.4;
       return true;
     }
-    const c = crabs[idx];
     const from = worldToUi(c.x, c.y - 2);
     crabs.splice(idx, 1);
     pickupAnims.push({
@@ -2564,6 +2604,256 @@
     cosTipT = 1.15;
     if (typeof checkCatchSpeedEnd === "function") checkCatchSpeedEnd("catch_crab");
     return true;
+  }
+
+  function isPetId(id) {
+    return !!(id && PET_DEFS[id]);
+  }
+
+  function ownsPet(id) {
+    return !!(id && ownedPets.indexOf(id) >= 0);
+  }
+
+  function petLabel(id) {
+    return (PET_DEFS[id] && PET_DEFS[id].label) || String(id || "").toUpperCase();
+  }
+
+  function grantPet(id) {
+    if (!isPetId(id)) return false;
+    if (ownedPets.indexOf(id) < 0) ownedPets.push(id);
+    saveLockerProfile();
+    return true;
+  }
+
+  function equipPet(id) {
+    if (!ownsPet(id)) return false;
+    equippedPet = id;
+    saveLockerProfile();
+    if (playMode === "normal") spawnPetWorld(true);
+    return true;
+  }
+
+  function unequipPet() {
+    equippedPet = null;
+    petWorld = null;
+    saveLockerProfile();
+  }
+
+  function petsLive() {
+    return playMode === "normal" && equippedPet && petWorld && isPetId(petWorld.id);
+  }
+
+  function petFollowAnchor() {
+    const face = player.facing < 0 ? -1 : 1;
+    return {
+      x: player.x + player.w / 2 - face * 16,
+      y: player.y + player.h - 2,
+    };
+  }
+
+  function spawnPetWorld(force) {
+    if (playMode !== "normal" || !equippedPet) {
+      if (force) petWorld = null;
+      return;
+    }
+    if (petWorld && petWorld.id === equippedPet && !force) return;
+    const keepSit = petWorld && petWorld.id === equippedPet && petWorld.sitting && !force;
+    if (keepSit) return;
+    const a = petFollowAnchor();
+    petWorld = {
+      id: equippedPet,
+      x: a.x,
+      y: a.y,
+      scene,
+      sitting: false,
+      face: player.facing < 0 ? -1 : 1,
+      anim: 0,
+      attackT: 0,
+      hop: 0,
+      lunge: 0,
+    };
+  }
+
+  function warpPetToPlayer() {
+    if (!petWorld || petWorld.sitting) return;
+    const a = petFollowAnchor();
+    petWorld.x = a.x;
+    petWorld.y = a.y;
+    petWorld.scene = scene;
+    petWorld.face = player.facing < 0 ? -1 : 1;
+    petWorld.hop = 0;
+    petWorld.lunge = 0;
+  }
+
+  function togglePetSit() {
+    if (playMode !== "normal" || uiBlocksPlay() || guideOpen || cabinCut.kind) return;
+    if (!equippedPet) {
+      cosTip = "NO PET";
+      cosTipT = 1.2;
+      return;
+    }
+    if (!petWorld || petWorld.id !== equippedPet) spawnPetWorld(true);
+    if (!petWorld) return;
+    petWorld.sitting = !petWorld.sitting;
+    if (petWorld.sitting) {
+      petWorld.scene = scene;
+      petWorld.hop = 0;
+      petWorld.lunge = 0;
+      cosTip = "PET SITS";
+    } else {
+      cosTip = "PET FOLLOWS";
+    }
+    cosTipT = 1.4;
+  }
+
+  function petFightTarget() {
+    if (!petsLive() || petWorld.scene !== scene) return null;
+    if (serpent && scene === "island" && serpent.phase === "breach") {
+      const d = Math.hypot(petWorld.x - serpent.x, petWorld.y - serpent.y);
+      if (d < 28) return { kind: "serpent", x: serpent.x, y: serpent.y, d };
+    }
+    if (scene === "vein" && vein && typeof vein.nearestFoe === "function") {
+      const f = vein.nearestFoe(petWorld.x, petWorld.y, 26);
+      if (f) return { kind: "vein", x: f.x, y: f.y, d: f.d };
+    }
+    return null;
+  }
+
+  function petStrike() {
+    if (!petsLive() || petWorld.scene !== scene) return;
+    if (petWorld.attackT > 0) return;
+    const t = petFightTarget();
+    if (!t) return;
+    petWorld.attackT = petWorld.id === "egypt_cat" ? 0.55 : 0.72;
+    petWorld.lunge = 0.18;
+    petWorld.face = t.x >= petWorld.x ? 1 : -1;
+    if (t.kind === "serpent") hurtSerpent(1);
+    else if (t.kind === "vein" && vein && typeof vein.petStrike === "function") {
+      vein.petStrike(petWorld.x, petWorld.y, 1);
+    }
+  }
+
+  function updatePet(dt) {
+    if (playMode !== "normal") return;
+    if (!equippedPet) {
+      petWorld = null;
+      return;
+    }
+    if (!petWorld || petWorld.id !== equippedPet) spawnPetWorld(false);
+    if (!petWorld) return;
+    petWorld.anim += dt * (petWorld.sitting ? 4 : 10);
+    if (petWorld.attackT > 0) petWorld.attackT = Math.max(0, petWorld.attackT - dt);
+    if (petWorld.lunge > 0) petWorld.lunge = Math.max(0, petWorld.lunge - dt);
+    petStrike();
+    if (petWorld.sitting) return;
+    if (petWorld.scene !== scene) {
+      warpPetToPlayer();
+      return;
+    }
+    const a = petFollowAnchor();
+    const dx = a.x - petWorld.x;
+    const dy = a.y - petWorld.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > PET_TP_DIST) {
+      warpPetToPlayer();
+      return;
+    }
+    if (dist > 10) {
+      const spd = (petWorld.id === "egypt_cat" ? 148 : 118) * dt;
+      const step = Math.min(dist, spd);
+      petWorld.x += (dx / dist) * step;
+      petWorld.y += (dy / dist) * step;
+      petWorld.face = dx < 0 ? -1 : 1;
+      petWorld.hop = Math.sin(petWorld.anim * 1.6) * 1.2;
+    } else {
+      petWorld.hop *= Math.max(0, 1 - dt * 8);
+    }
+  }
+
+  function drawPetSprite(id, sitting, face, hop, lunge, anim) {
+    const dir = face < 0 ? -1 : 1;
+    const p = (ox, oy, ww, hh, col) => {
+      px(ox * dir - (dir < 0 ? ww : 0), oy, ww, hh, col);
+    };
+    const lift = ((hop || 0) | 0) - ((lunge || 0) > 0.04 ? 1 : 0);
+    ink.save();
+    ink.translate(0, -lift);
+    if (id === "blue_crab") {
+      const bury = sitting ? 0.35 : 0;
+      const dy = ((bury * 3) | 0);
+      const body = "#2a68b8";
+      const hi = "#7ab8e8";
+      const sh = "#1a4068";
+      p(-3, dy - 1, 6, 2, body);
+      p(-2, dy - 2, 4, 1, hi);
+      p(-2, dy + 1, 4, 1, sh);
+      p(-4, dy, 1, 1, hi);
+      p(3, dy, 1, 1, hi);
+      p(-3, dy + 1, 1, 1, sh);
+      p(2, dy + 1, 1, 1, sh);
+      p(-1, dy - 1, 1, 1, "#0e1820");
+      p(1, dy - 1, 1, 1, "#0e1820");
+    } else {
+      const sit = !!sitting;
+      const body = "#1a1816";
+      const gold = "#e8c44a";
+      const eye = "#f3e2c4";
+      if (sit) {
+        p(-2, -6, 2, 3, body);
+        p(1, -6, 2, 3, body);
+        p(-3, -4, 7, 5, body);
+        p(-2, -3, 5, 3, "#2a2420");
+        p(-1, 1, 4, 2, body);
+        p(3, 0, 2, 3, body);
+        p(-2, -7, 1, 2, body);
+        p(2, -7, 1, 2, body);
+        p(-2, -8, 1, 1, gold);
+        p(2, -8, 1, 1, gold);
+        p(-1, -2, 1, 1, eye);
+        p(1, -2, 1, 1, eye);
+        p(-2, -1, 5, 1, gold);
+      } else {
+        const step = ((anim | 0) & 1) ? 1 : 0;
+        p(-2, -7, 2, 3, body);
+        p(1, -7, 2, 3, body);
+        p(-3, -5, 7, 5, body);
+        p(-2, -4, 5, 3, "#2a2420");
+        p(-2, -8, 1, 2, body);
+        p(2, -8, 1, 2, body);
+        p(-2, -9, 1, 1, gold);
+        p(2, -9, 1, 1, gold);
+        p(-1, -3, 1, 1, eye);
+        p(1, -3, 1, 1, eye);
+        p(-2, -2, 5, 1, gold);
+        p(-3, 0, 2, 2 + step, body);
+        p(1, 0, 2, 2 - step, body);
+        p(3, -2, 2, 2, body);
+      }
+    }
+    ink.restore();
+  }
+
+  function drawPetWorld(cpos) {
+    if (!petsLive() || petWorld.scene !== scene) return;
+    const x = Math.round(petWorld.x - cpos.x);
+    const y = Math.round(petWorld.y - cpos.y);
+    if (x < -16 || y < -20 || x > viewW + 16 || y > viewH + 16) return;
+    ink.save();
+    ink.translate(x, y);
+    drawPetSprite(petWorld.id, petWorld.sitting, petWorld.face, petWorld.hop, petWorld.lunge, petWorld.anim);
+    ink.restore();
+  }
+
+  function drawLobbyPet(fx, fy, id, scale) {
+    if (!isPetId(id)) return;
+    const s = scale == null ? 2 : scale;
+    ink.save();
+    ink.translate(fx, fy);
+    ink.scale(s, s);
+    const bob = ((Math.sin(time * 2.4) * 0.5) | 0);
+    ink.translate(0, bob);
+    drawPetSprite(id, true, 1, 0, 0, time * 4);
+    ink.restore();
   }
 
   function emitSplash(wx, wy, n, fromFish) {
@@ -3171,6 +3461,8 @@
       skin: playerSkin,
       ownedCosmetics: ownedCosmetics.slice(),
       ownedSkins: ownedSkins.slice(),
+      ownedPets: ownedPets.slice(),
+      equippedPet: equippedPet || null,
       skinsGrantedLegacy: !!skinsGrantedLegacy,
       questMaskRuns: questMaskRuns | 0,
       questDone: questDone || {},
@@ -3378,6 +3670,37 @@
     const api = lbApi();
     if (!api || !api.isSignedIn || !api.isSignedIn()) return;
     markQuestDone("usa");
+  }
+
+  function henriAccountNameNorm(raw) {
+    return String(raw || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+  }
+
+  function isHenriAccount() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return false;
+    const names = [];
+    if (api.displayName) names.push(api.displayName());
+    const user = api.currentUser && api.currentUser();
+    if (user && user.username) names.push(user.username);
+    for (let i = 0; i < names.length; i++) {
+      const n = henriAccountNameNorm(names[i]);
+      if (n === "HENRI" || n === "HENRI101109") return true;
+    }
+    return false;
+  }
+
+  /** Test grant: Henri's signed-in account owns both pets. */
+  function tryGrantHenriTestPets() {
+    if (!isHenriAccount()) return;
+    let changed = false;
+    if (grantPet("blue_crab")) changed = true;
+    if (grantPet("egypt_cat")) changed = true;
+    if (!equippedPet && ownsPet("egypt_cat")) equipPet("egypt_cat");
+    else if (!equippedPet && ownsPet("blue_crab")) equipPet("blue_crab");
+    else if (changed) saveLockerProfile();
   }
 
   function prepareWeeklySpinState() {
@@ -3719,6 +4042,11 @@
     return cosmetics.back;
   }
 
+  function lockerPreviewPet() {
+    if (lockerHover && lockerHover.type === "pet" && ownsPet(lockerHover.id)) return lockerHover.id;
+    return equippedPet;
+  }
+
   /** Pull cosmetics out of bag/satchel into the locker collection. */
   function migrateCosmeticsFromLists(lists) {
     const moved = [];
@@ -3745,6 +4073,8 @@
     }
     ownedCosmetics = [];
     ownedSkins = ["classic"];
+    ownedPets = [];
+    equippedPet = null;
     playerSkin = "classic";
     skinsGrantedLegacy = false;
     questMaskRuns = 0;
@@ -3768,6 +4098,13 @@
       if (data.face && isCosmeticId(data.face)) cosmetics.face = data.face;
       if (data.back && isCosmeticId(data.back)) cosmetics.back = data.back;
       if (data.skin && SKIN_DEFS[data.skin] && ownsSkin(data.skin)) playerSkin = data.skin;
+      if (Array.isArray(data.ownedPets)) {
+        for (let i = 0; i < data.ownedPets.length; i++) {
+          const id = data.ownedPets[i];
+          if (isPetId(id) && ownedPets.indexOf(id) < 0) ownedPets.push(id);
+        }
+      }
+      if (data.equippedPet && ownsPet(data.equippedPet)) equippedPet = data.equippedPet;
       skinsGrantedLegacy = !!data.skinsGrantedLegacy;
       questMaskRuns = data.questMaskRuns | 0;
       if (data.questDone && typeof data.questDone === "object") questDone = data.questDone;
@@ -3779,6 +4116,7 @@
     if (cosmetics.back && !ownsCosmetic(cosmetics.back)) grantCosmetic(cosmetics.back);
     syncQuestOwnershipFlags();
     tryGrantAmericanCloak();
+    tryGrantHenriTestPets();
     syncLexYoungFromHistory();
     loadCareer();
     backfillCareerFromHistory();
@@ -4684,7 +5022,16 @@
       return "STEER TO DODGE";
     }
     if (scene === "island" && !player.aboard && nearestCatchableCrab() >= 0) {
+      const ci = nearestCatchableCrab();
+      if (ci >= 0 && crabs[ci] && crabs[ci].blue && !ownsPet("blue_crab")) return "SPACE  BLUE CRAB";
       return "SPACE CATCH";
+    }
+    if (
+      petsLive() &&
+      petWorld.scene === scene &&
+      Math.hypot(petWorld.x - (player.x + player.w / 2), petWorld.y - (player.y + player.h - 1)) < 28
+    ) {
+      return petWorld.sitting ? "P  FOLLOW" : "P  SIT";
     }
     if (ruinsPortal && scene === "island" && !player.aboard && playerHits(ruinsPortal)) {
       return rome && carriesPortalLeech() ? "ENTER THE PORTAL" : "PORTAL DORMANT";
@@ -10664,6 +11011,7 @@
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     if (next.scene === "vein" && vein) vein.lockCam();
     else clampCamera();
+    if (playMode === "normal") warpPetToPlayer();
   }
 
   function updateFade(dt) {
@@ -12627,9 +12975,9 @@
       const w = c.w;
       const hw = (w / 2) | 0;
       const leg = ((c.anim | 0) & 1) === 0 && c.state === "scuttle" ? 1 : 0;
-      const body = w > 6 ? "#d45a28" : "#c44e24";
-      const hi = "#e87840";
-      const sh = "#8a3018";
+      const body = c.blue ? (w > 6 ? "#3a78c8" : "#2a68b8") : w > 6 ? "#d45a28" : "#c44e24";
+      const hi = c.blue ? "#7ab8e8" : "#e87840";
+      const sh = c.blue ? "#1a4068" : "#8a3018";
       const p = (ox, oy, ww, hh, col) => {
         px(x + ox * dir - (dir < 0 ? ww : 0), dy + oy, ww, hh, col);
       };
@@ -15146,6 +15494,7 @@
       if (scene === "cabin") drawWardenMagic(cpos, t);
       else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
+      drawPetWorld(cpos);
       drawPlayerLit(cpos, false);
       if (rome && rome.isScene()) rome.drawFront(cpos);
       if (scene === "vein") drawWandBolts(cpos);
@@ -15207,6 +15556,7 @@
           drawPlayerLit(cpos, false);
         }
       }
+      drawPetWorld(cpos);
       if (serpent && serpent.phase === "breach") drawSerpent(cpos);
       drawWandBolts(cpos);
     }
@@ -17497,6 +17847,7 @@
     camera.x = player.x + player.w / 2 - viewW / 2;
     camera.y = player.y + player.h / 2 - viewH * 0.36;
     clampCamera();
+    if (equippedPet && (!petWorld || petWorld.id !== equippedPet)) spawnPetWorld(false);
   }
 
   function enterHubMode() {
@@ -17840,6 +18191,8 @@
     ink.restore();
     cosmetics.face = prevFace;
     cosmetics.back = prevBack;
+    const petId = lockerPreviewPet();
+    if (petId) drawLobbyPet(fx - 22, fy + 2, petId, 2);
   }
 
   function drawNorwayFlagIcon(x, y) {
@@ -17944,7 +18297,9 @@
     const eq =
       type === "skin"
         ? playerSkin === id
-        : cosmetics.face === id || cosmetics.back === id;
+        : type === "pet"
+          ? equippedPet === id
+          : cosmetics.face === id || cosmetics.back === id;
     const dragging = lockerDrag && lockerDrag.id === id && lockerDrag.type === type;
     const hot =
       !dragging &&
@@ -17960,12 +18315,17 @@
         ink.translate(x + ((w / 2) | 0), y + h - 4);
         drawPlayerBody(id, 0, false, true);
         ink.restore();
+      } else if (type === "pet") {
+        ink.save();
+        ink.translate(x + ((w / 2) | 0), y + h - 4);
+        drawPetSprite(id, true, 1, 0, 0, time * 4);
+        ink.restore();
       } else if (!drawTinyCatch(id, x + ((w / 2) | 0) - 4, y + ((h / 2) | 0) - 4)) {
         drawHudIcon(id, x + (((w - 16) / 2) | 0), y + (((h - 16) / 2) | 0));
       }
     }
     if (showLabel) {
-      const lab = type === "skin" ? skinLabel(id) : cosmeticLabel(id);
+      const lab = type === "skin" ? skinLabel(id) : type === "pet" ? petLabel(id) : cosmeticLabel(id);
       drawPixTextSm(lab, x + ((w / 2) | 0), y + h + 2, eq ? "#e8c44a" : "#8a6a42", "center");
     }
     // Clip hit box to the browse grid so scrolled / bottom-row skins stay clickable
@@ -17994,7 +18354,10 @@
       hh,
       () => {
         if (type === "skin") equipSkin(id);
-        else {
+        else if (type === "pet") {
+          if (equippedPet === id) unequipPet();
+          else equipPet(id);
+        } else {
           const kind = cosmeticKindOf(id);
           if (cosmetics[kind] === id) unequipCosmetic(kind);
           else equipCosmetic(id);
@@ -18005,7 +18368,7 @@
     addLockerHit("item:" + type + ":" + id, hx, hy, hw, hh, {
       type,
       id,
-      kind: type === "skin" ? "skin" : cosmeticKindOf(id),
+      kind: type === "skin" ? "skin" : type === "pet" ? "pet" : cosmeticKindOf(id),
     });
   }
 
@@ -18288,7 +18651,7 @@
     // Read hover from last frame's hit boxes before rebuilding them
     {
       const lh = hitLockerAt(pointerUi.x, pointerUi.y);
-      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "tab")) {
+      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "pet" || lh.meta.type === "tab")) {
         lockerHover = { id: lh.meta.id, type: lh.meta.type };
       } else {
         lockerHover = null;
@@ -18415,12 +18778,13 @@
     const tabGap = 2;
     const tabPad = 3;
     const tabInnerW = panelW - 4 - tabPad * 2;
-    const tabW = ((tabInnerW - tabGap) / 2) | 0;
-    const tabX0 = panelX + 2 + tabPad;
     const tabs = [
       { id: "skins", label: "SKINS" },
-      { id: "cosmetics", label: "COSMETICS" },
+      { id: "cosmetics", label: "GEAR" },
+      { id: "pets", label: "PETS" },
     ];
+    const tabW = ((tabInnerW - tabGap * (tabs.length - 1)) / tabs.length) | 0;
+    const tabX0 = panelX + 2 + tabPad;
     for (let ti = 0; ti < tabs.length; ti++) {
       const t = tabs[ti];
       const tx = tabX0 + ti * (tabW + tabGap);
@@ -18451,7 +18815,49 @@
     const gridViewH = Math.max(0, gridBot - gridTop);
     lockerGridBounds = null;
 
-    if (lockerTab === "cosmetics") {
+    if (lockerTab === "pets") {
+      const petList = ownedPets.slice();
+      const cell = 22;
+      const cellGap = 4;
+      const labelH = 8;
+      const cols = 3;
+      const rowPitch = cell + cellGap + labelH;
+      const gridInnerW = cols * cell + (cols - 1) * cellGap;
+      const gridPad = ((panelW - gridInnerW) / 2) | 0;
+      if (!petList.length) {
+        drawPixTextSm("NONE YET", panelX + ((panelW / 2) | 0), gridTop + 18, "#5c3a21", "center");
+        drawPixTextSm("1% BLUE CRAB", panelX + ((panelW / 2) | 0), gridTop + 30, "#5c3a21", "center");
+        drawPixTextSm("CAT 950 COINS", panelX + ((panelW / 2) | 0), gridTop + 40, "#5c3a21", "center");
+      } else {
+        const rows = Math.max(1, Math.ceil(petList.length / cols));
+        const contentH = rows * rowPitch - cellGap;
+        const maxScroll = Math.max(0, contentH - gridViewH);
+        lockerScrollPets = clampLockerScroll(lockerScrollPets, maxScroll);
+        lockerGridBounds = {
+          x: panelX,
+          y: gridTop,
+          w: panelW,
+          h: gridViewH,
+          maxScroll,
+          tab: "pets",
+          step: rowPitch,
+        };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(panelX + 2, gridTop, panelW - 4, gridViewH);
+        ctx.clip();
+        for (let i = 0; i < petList.length; i++) {
+          const col = i % cols;
+          const row = (i / cols) | 0;
+          const ix = panelX + gridPad + col * (cell + cellGap);
+          const iy = gridTop - lockerScrollPets + row * rowPitch;
+          if (iy + cell + labelH < gridTop || iy > gridBot) continue;
+          drawLockerStripItem(ix, iy, petList[i], "pet", { w: cell, h: cell, label: true });
+        }
+        ctx.restore();
+        drawLockerScrollBar(panelX + panelW - 4, gridTop, gridViewH, lockerScrollPets, maxScroll);
+      }
+    } else if (lockerTab === "cosmetics") {
       const cosList = ownedCosmetics.slice();
       const cell = 22;
       const cellGap = 4;
@@ -19610,6 +20016,7 @@
           srCursor = 0;
           authPin = "";
           tryGrantAmericanCloak();
+          tryGrantHenriTestPets();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
@@ -19622,6 +20029,7 @@
           srCursor = 0;
           authPin = "";
           tryGrantAmericanCloak();
+          tryGrantHenriTestPets();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
@@ -19996,6 +20404,8 @@
       skin: playerSkin,
       ownedCosmetics: ownedCosmetics.slice(),
       ownedSkins: ownedSkins.slice(),
+      ownedPets: ownedPets.slice(),
+      equippedPet: equippedPet || null,
       skinsGrantedLegacy: !!skinsGrantedLegacy,
       questMaskRuns: questMaskRuns | 0,
       questDone: Object.assign({}, questDone || {}),
@@ -20020,6 +20430,13 @@
     if (snap.face && isCosmeticId(snap.face)) cosmetics.face = snap.face;
     if (snap.back && isCosmeticId(snap.back)) cosmetics.back = snap.back;
     if (snap.skin && SKIN_DEFS[snap.skin] && ownsSkin(snap.skin)) playerSkin = snap.skin;
+    if (Array.isArray(snap.ownedPets)) {
+      for (let i = 0; i < snap.ownedPets.length; i++) {
+        const id = snap.ownedPets[i];
+        if (isPetId(id) && ownedPets.indexOf(id) < 0) ownedPets.push(id);
+      }
+    }
+    if (snap.equippedPet && ownsPet(snap.equippedPet)) equippedPet = snap.equippedPet;
     if (snap.skinsGrantedLegacy) skinsGrantedLegacy = true;
     if (typeof snap.questMaskRuns === "number") {
       questMaskRuns = Math.max(questMaskRuns | 0, snap.questMaskRuns | 0);
@@ -20077,6 +20494,16 @@
         cloak: cloakOn,
         cosmetics: { face: cosmetics.face, back: cosmetics.back },
         locker: lockerSnapshot(),
+        pet: petWorld
+          ? {
+              id: petWorld.id,
+              x: petWorld.x,
+              y: petWorld.y,
+              scene: petWorld.scene,
+              sitting: !!petWorld.sitting,
+              face: petWorld.face,
+            }
+          : null,
         templeMaskTaken: !!templeMaskTaken,
         sunkenTaken: !!sunkenTaken,
         divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
@@ -20181,6 +20608,25 @@
       player.aboard = false;
     }
     rescueOffshoreSpawn();
+    if (data.pet && isPetId(data.pet.id) && ownsPet(data.pet.id)) {
+      equippedPet = data.pet.id;
+      petWorld = {
+        id: data.pet.id,
+        x: data.pet.x | 0,
+        y: data.pet.y | 0,
+        scene: data.pet.scene || scene,
+        sitting: !!data.pet.sitting,
+        face: data.pet.face === -1 ? -1 : 1,
+        anim: 0,
+        attackT: 0,
+        hop: 0,
+        lunge: 0,
+      };
+    } else if (equippedPet) {
+      spawnPetWorld(true);
+    } else {
+      petWorld = null;
+    }
   }
 
   let last = performance.now();
@@ -20206,6 +20652,7 @@
     updateFade(dt);
     updateDoors(dt);
     updatePlayer(dt);
+    updatePet(dt);
     updatePickup(dt);
     if (hubUi.tipT > 0) hubUi.tipT = Math.max(0, hubUi.tipT - dt);
     if (hubEmoteT > 0) hubEmoteT = Math.max(0, hubEmoteT - dt);
@@ -20316,6 +20763,7 @@
         "h",
         "r",
         "e",
+        "p",
         "escape",
         "tab",
         "backspace",
@@ -20365,7 +20813,7 @@
         return;
       }
       // Swallow game binds while chat focused
-      if (["c", "f", "t", " ", "h", "r"].includes(k) || (k >= "1" && k <= "8")) {
+      if (["c", "f", "t", "p", " ", "h", "r"].includes(k) || (k >= "1" && k <= "8")) {
         e.preventDefault();
         return;
       }
@@ -20451,6 +20899,7 @@
       slotDrag = null;
     }
     if (k === "c" || k === "f") tryCastRod();
+    if (k === "p") togglePetSit();
   });
   window.addEventListener("keyup", (e) => {
     const k = e.key.toLowerCase();
@@ -20466,7 +20915,7 @@
     pointerUi.y = uy;
     if (uiScreen === "mode") {
       const lh = hitLockerAt(ux, uy);
-      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "tab")) {
+      if (lh && lh.meta && (lh.meta.type === "skin" || lh.meta.type === "cosmetic" || lh.meta.type === "pet" || lh.meta.type === "tab")) {
         lockerHover = { id: lh.meta.id, type: lh.meta.type };
       } else {
         lockerHover = null;
@@ -20591,6 +21040,13 @@
         refreshMenuHover(p.x, p.y);
         return;
       }
+      if (lock && lock.meta && lock.meta.type === "pet") {
+        e.preventDefault();
+        if (equippedPet === lock.meta.id) unequipPet();
+        else equipPet(lock.meta.id);
+        refreshMenuHover(p.x, p.y);
+        return;
+      }
       if (lock && lock.meta && lock.meta.type === "cosmetic") {
         e.preventDefault();
         lockerDrag = {
@@ -20663,6 +21119,8 @@
               lockerScrollCosmetics + delta,
               g.maxScroll
             );
+          } else if (g.tab === "pets") {
+            lockerScrollPets = clampLockerScroll(lockerScrollPets + delta, g.maxScroll);
           } else {
             lockerScrollSkins = clampLockerScroll(lockerScrollSkins + delta, g.maxScroll);
           }
@@ -20791,6 +21249,13 @@
         player.coins += n;
       },
       giveItem: (id) => addToInventory(id),
+      grantPet: (id) => {
+        grantPet(id);
+        if (!equippedPet) equipPet(id);
+        else if (equippedPet === id) spawnPetWorld(true);
+        return true;
+      },
+      ownsPet: (id) => ownsPet(id),
       grantCrown: () => {
         grantCosmetic("king_crown");
         equipCosmetic("king_crown");

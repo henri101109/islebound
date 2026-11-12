@@ -1827,6 +1827,36 @@
       isActive: () => A.getScene() === "vein",
       lockCam,
       getRoom: () => room,
+      nearestFoe: (x, y, range) => {
+        let best = null;
+        let bd = range || 26;
+        for (let i = 0; i < enemies.length; i++) {
+          const e = enemies[i];
+          if (!e || e.dead || e.room !== room) continue;
+          const d = Math.hypot(x - (e.x + e.w / 2), y - (e.y + e.h));
+          if (d < bd) {
+            bd = d;
+            best = e;
+          }
+        }
+        if (!best) return null;
+        return { x: best.x + best.w / 2, y: best.y + best.h, d: bd };
+      },
+      petStrike: (x, y, dmg) => {
+        let best = null;
+        let bd = 26;
+        for (let i = 0; i < enemies.length; i++) {
+          const e = enemies[i];
+          if (!e || e.dead || e.room !== room) continue;
+          const d = Math.hypot(x - (e.x + e.w / 2), y - (e.y + e.h));
+          if (d < bd) {
+            bd = d;
+            best = e;
+          }
+        }
+        if (!best) return false;
+        return hurtEnemy(best, dmg || 1, "pet");
+      },
     };
   }
 
