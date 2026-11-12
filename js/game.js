@@ -410,6 +410,9 @@
   let duelLocalReady = false;
   let duelHostBeat = 0;
   let duelGuestBeat = 0;
+  let duelLobby = [];
+  let duelCloudOff = false;
+  let duelListBeat = 0;
   const LOGO_FRAMES = 12;
   const LOGO_FRAME_MS = 150;
   const LOGO_POP_MS = 220;
@@ -15118,6 +15121,121 @@
   function duelBroadcast() {
     if (!duel || !duelIsHost()) return;
     duelSend("room", { room: duel });
+    duelCloudPush();
+  }
+
+  function duelRest(path, opts) {
+    const cfg = window.ISLE_LEADERBOARD || {};
+    if (duelCloudOff || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) return Promise.resolve(null);
+    const headers = {
+      apikey: cfg.SUPABASE_ANON_KEY,
+      Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY,
+      "Content-Type": "application/json",
+    };
+    if (opts && opts.prefer) headers.Prefer = opts.prefer;
+    return fetch(String(cfg.SUPABASE_URL).replace(/\/$/, "") + "/rest/v1/" + path, {
+      method: (opts && opts.method) || "GET",
+      headers: headers,
+      body: opts && opts.body != null ? JSON.stringify(opts.body) : undefined,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          if (res.status === 404 || detail.indexOf("duel_rooms") >= 0 || detail.indexOf("PGRST205") >= 0) {
+            duelCloudOff = true;
+          }
+          return null;
+        }
+        const txt = await res.text();
+        if (!txt) return [];
+        try {
+          return JSON.parse(txt);
+        } catch (e) {
+          return [];
+        }
+      })
+      .catch(() => null);
+  }
+
+  function duelCloudPush() {
+    if (duelCloudOff || !duelIsHost() || !duel) return;
+    const listed = !duel.guestId && duel.phase !== "done" && duel.phase !== "leg" && duel.phase !== "rest";
+    duelRest("duel_rooms?on_conflict=id", {
+      method: "POST",
+      prefer: "resolution=merge-duplicates,return=minimal",
+      body: {
+        id: duel.code,
+        host_id: duel.hostId,
+        host_name: duel.hostName || "HOST",
+        guest_id: duel.guestId || null,
+        guest_name: duel.guestName || null,
+        phase: duel.phase || "wait",
+        listed: listed,
+        payload: duel,
+        updated_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  function duelCloudDrop(code) {
+    if (duelCloudOff || !code) return;
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(code), {
+      method: "DELETE",
+      prefer: "return=minimal",
+    });
+  }
+
+  function duelCloudSignal(msg) {
+    if (duelCloudOff || !duel || duelIsHost() || !duel.code || !msg) return;
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: { signal: msg },
+    });
+  }
+
+  function duelNoteListing(room) {
+    if (!room || !room.hostId || room.hostId === duelSelfId) return;
+    const open = !room.guestId && room.phase !== "done" && room.phase !== "leg" && room.phase !== "rest";
+    if (!open) {
+      duelLobby = duelLobby.filter((r) => r.hostId !== room.hostId);
+      return;
+    }
+    const row = {
+      code: room.code,
+      hostId: room.hostId,
+      hostName: room.hostName || "HOST",
+      phase: room.phase || "wait",
+      size: room.size | 0,
+      seen: Date.now(),
+    };
+    let found = false;
+    for (let i = 0; i < duelLobby.length; i++) {
+      if (duelLobby[i].hostId === row.hostId) {
+        duelLobby[i] = row;
+        found = true;
+        break;
+      }
+    }
+    if (!found) duelLobby.push(row);
+  }
+
+  function duelLobbyRows() {
+    const now = Date.now();
+    const out = [];
+    for (let i = 0; i < duelLobby.length; i++) {
+      if (now - duelLobby[i].seen < 8000) out.push(duelLobby[i]);
+    }
+    out.sort((a, b) => String(a.hostName).localeCompare(String(b.hostName)));
+    return out;
+  }
+
+  function duelRoomBlurb(row) {
+    if (!row) return "OPEN";
+    if (row.phase === "pick") return "PICKING";
+    if (row.phase === "arm") return "READY";
+    if ((row.size | 0) > 0) return row.size + " RUNS";
+    return "OPEN";
   }
 
   function duelMyName() {
@@ -15239,12 +15357,41 @@
     duel = null;
     duelJoinPending = c;
     duelJoinAt = Date.now();
-    duelStatus = "LOOKING...";
+    duelStatus = "JOINING...";
     duelSend("join", { code: c, name: duelMyName() });
+    duelCloudJoin(c, duelMyName());
+  }
+
+  function duelCloudJoin(code, name) {
+    if (duelCloudOff || !code) return;
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(code) + "&guest_id=is.null", {
+      method: "PATCH",
+      prefer: "return=representation",
+      body: {
+        guest_id: duelSelfId,
+        guest_name: name,
+        listed: false,
+        signal: { type: "join", from: duelSelfId, code: code, name: name, t: Date.now() },
+      },
+    }).then((rows) => {
+      if (duelCloudOff || duel || !rows) return;
+      if (!rows.length) {
+        if (duelJoinPending === code) {
+          duelStatus = "ROOM FULL";
+          duelJoinPending = "";
+        }
+        return;
+      }
+      if (rows[0].payload) duelApplyRoom(rows[0].payload);
+    });
   }
 
   function duelLeaveToHome() {
-    if (duel) duelSend("leave", { code: duel.code });
+    if (duel) {
+      duelSend("leave", { code: duel.code });
+      if (duelIsHost()) duelCloudDrop(duel.code);
+      else duelCloudSignal({ type: "leave", from: duelSelfId, code: duel.code, t: Date.now() });
+    }
     duel = null;
     duelLegLocked = false;
     duelStartedToken = -1;
@@ -15386,7 +15533,9 @@
       duelTryStart();
     } else {
       duelLocalReady = true;
+      const readyMsg = { type: "ready", from: duelSelfId, code: duel.code, t: Date.now() };
       duelSend("ready", { code: duel.code });
+      duelCloudSignal(readyMsg);
     }
   }
 
@@ -15417,7 +15566,9 @@
       duelRecordFinish(duelSelfId, ms, cat);
       duelMaybeRest();
     } else {
+      const fin = { type: "finish", from: duelSelfId, code: duel.code, leg: duel.leg, token: duel.token, cat: cat, ms: ms, t: Date.now() };
       duelSend("finish", { code: duel.code, leg: duel.leg, token: duel.token, cat: cat, ms: ms });
+      duelCloudSignal(fin);
     }
   }
 
@@ -15492,6 +15643,7 @@
     }
     if (msg.type === "room") {
       if (!msg.room) return;
+      duelNoteListing(msg.room);
       duelApplyRoom(msg.room);
       return;
     }
@@ -15518,6 +15670,7 @@
       return;
     }
     if (msg.type === "leave") {
+      duelLobby = duelLobby.filter((r) => r.hostId !== msg.from && r.code !== msg.code);
       if (!duel || msg.code !== duel.code) return;
       if (duelIsHost() && msg.from === duel.guestId) {
         const mid = duel.phase === "leg" || duel.phase === "rest";
@@ -15554,6 +15707,13 @@
       duelGuestBeat = now;
       duelSend("ping", { code: duel.code });
     }
+    if (now - duelListBeat > 1000) {
+      duelListBeat = now;
+      duelLobby = duelLobby.filter((r) => now - r.seen < 8000);
+      if (uiScreen === "duel_home") duelCloudList();
+      if (duel && duelIsHost()) duelCloudPull();
+      else if (duel && !duelIsHost()) duelCloudWatch();
+    }
     if (!duel || !duelIsHost()) return;
     if (duel.phase === "rest" && duel.restUntil && now >= duel.restUntil) {
       duelStartLeg((duel.leg | 0) + 1);
@@ -15563,6 +15723,55 @@
       duelHostBeat = now;
       duelBroadcast();
     }
+  }
+
+  function duelCloudList() {
+    if (duelCloudOff) return;
+    const cutoff = new Date(Date.now() - 15000).toISOString();
+    duelRest(
+      "duel_rooms?listed=eq.true&guest_id=is.null&updated_at=gt." +
+        encodeURIComponent(cutoff) +
+        "&select=id,host_id,host_name,phase,payload&order=updated_at.desc&limit=12"
+    ).then((rows) => {
+      if (!rows || !rows.length) return;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const room = row.payload && row.payload.hostId ? row.payload : null;
+        if (room) duelNoteListing(room);
+        else if (row.host_id && row.host_id !== duelSelfId) {
+          duelNoteListing({
+            code: row.id,
+            hostId: row.host_id,
+            hostName: row.host_name,
+            phase: row.phase || "wait",
+            guestId: null,
+            size: 0,
+          });
+        }
+      }
+    });
+  }
+
+  function duelCloudPull() {
+    if (duelCloudOff || !duelIsHost() || !duel) return;
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code) + "&select=signal").then((rows) => {
+      const sig = rows && rows[0] && rows[0].signal;
+      if (!sig || !sig.type) return;
+      duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: { signal: null },
+      });
+      duelOnNet(sig);
+    });
+  }
+
+  function duelCloudWatch() {
+    if (duelCloudOff || !duel || duelIsHost()) return;
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code) + "&select=payload").then((rows) => {
+      const room = rows && rows[0] && rows[0].payload;
+      if (room && room.hostId) duelApplyRoom(room);
+    });
   }
 
   function drawDuelSlots(x, y, w) {
@@ -15630,46 +15839,44 @@
     ctx.globalAlpha = 0.55;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
-    const w = 210;
-    const h = duelTypingCode ? 112 : 100;
+    const rooms = duelLobbyRows();
+    if (srCursor > rooms.length) srCursor = 0;
+    const vis = Math.min(6, Math.max(rooms.length, 1));
+    const w = 236;
+    const h = Math.min(uiH - 8, 78 + vis * 12);
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, "DUELS");
-    drawPixText("2 PLAYERS  SAME RUNS", (x + w / 2) | 0, y + 20, "#5c3a21", "center");
-    if (!duelTypingCode) {
-      const rows = ["CREATE ROOM", "JOIN ROOM"];
-      for (let i = 0; i < rows.length; i++) {
-        const sel = srCursor === i || menuHovering("duel:home:" + i);
-        const by = y + 36 + i * 16;
-        if (sel) px(x + 18, by - 2, w - 36, 12, "#e8c44a");
-        drawPixText(rows[i], (x + w / 2) | 0, by, sel ? "#2b1c12" : "#3a2414", "center");
-        addMenuHit(
-          "duel:home:" + i,
-          x + 18,
-          by - 2,
-          w - 36,
-          12,
-          () => {
-            srCursor = i;
-            if (i === 1) {
-              duelTypingCode = true;
-              duelCodeInput = "";
-              duelStatus = "";
-            } else duelCreate();
-          },
-          { hover: true }
-        );
-      }
+    const createSel = srCursor === 0 || menuHovering("duel:home:0");
+    if (createSel) px(x + 12, y + 20, w - 24, 12, "#e8c44a");
+    drawPixText("CREATE ROOM", (x + w / 2) | 0, y + 22, createSel ? "#2b1c12" : "#3a2414", "center");
+    addMenuHit("duel:home:0", x + 12, y + 20, w - 24, 12, () => {
+      srCursor = 0;
+      duelCreate();
+    }, { hover: true });
+    drawPixText("ROOMS", x + 12, y + 38, "#5c3a21");
+    if (!rooms.length) {
+      drawPixText("NO OPEN ROOMS", (x + w / 2) | 0, y + 52, "#8a5a32", "center");
     } else {
-      drawPixText("CODE", x + 18, y + 40, "#5c3a21");
-      px(x + 54, y + 38, 88, 12, "#e8c44a");
-      px(x + 55, y + 39, 86, 10, "#f3e2c4");
-      const shown = (duelCodeInput || "").slice(0, 4);
-      drawPixText(shown, x + 58, y + 40, "#2b1c12");
-      if (((time * 3) | 0) % 2 === 0) px(x + 58 + (shown ? pixTextWidth(shown) + 1 : 0), y + 40, 5, 7, "#2b1c12");
-      drawPixText("ENTER JOINS", (x + w / 2) | 0, y + 58, "#5c3a21", "center");
+      const maxStart = Math.max(0, rooms.length - 6);
+      const start = Math.max(0, Math.min((srCursor > 0 ? srCursor - 1 : 0) - 2, maxStart));
+      const n = Math.min(6, rooms.length - start);
+      for (let i = 0; i < n; i++) {
+        const row = rooms[start + i];
+        const idx = start + i + 1;
+        const sel = srCursor === idx || menuHovering("duel:room:" + row.hostId);
+        const by = y + 50 + i * 12;
+        if (sel) px(x + 10, by - 1, w - 20, 11, "#e8c44a");
+        const who = String(row.hostName || "HOST").slice(0, 10);
+        drawPixText(who, x + 14, by, sel ? "#2b1c12" : "#3a2414");
+        drawPixText(duelRoomBlurb(row), x + w - 14, by, sel ? "#2b1c12" : "#5c3a21", "right");
+        addMenuHit("duel:room:" + row.hostId, x + 10, by - 1, w - 20, 11, () => {
+          srCursor = idx;
+          duelJoin(row.code);
+        }, { hover: true });
+      }
     }
-    if (duelStatus) drawPixText(duelStatus, (x + w / 2) | 0, y + h - 24, "#8a3038", "center");
+    if (duelStatus) drawPixText(duelStatus, (x + w / 2) | 0, y + h - 22, "#8a3038", "center");
     drawPixText("ESC MENU", (x + w / 2) | 0, y + h - 12, "#5c3a21", "center");
   }
 
@@ -15685,23 +15892,20 @@
     const h = picking ? Math.min(uiH - 8, 168) : duel.phase === "arm" ? 210 : 156;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, w, h, "DUEL ROOM");
-    drawPixText("CODE " + (duel.code || "----"), (x + w / 2) | 0, y + 20, "#2b1c12", "center");
-    drawPixText("HOST " + (duel.hostName || "----"), x + 12, y + 32, "#3a2414");
+    drawPanelBox(x, y, w, h, duel.hostName || "DUEL");
+    drawPixText("HOST " + (duel.hostName || "----"), x + 12, y + 20, "#3a2414");
     drawPixText(
-      duel.guestId ? "GUEST " + (duel.guestName || "GUEST") : "GUEST WAITING",
+      duel.guestId ? "WITH " + (duel.guestName || "GUEST") : "WAITING FOR A PLAYER",
       x + 12,
-      y + 42,
+      y + 32,
       duel.guestId ? "#2f6a24" : "#5c3a21"
     );
     if (duelIsHost() && duel.phase === "wait") {
-      drawPixText("OPEN ANOTHER TAB", (x + w / 2) | 0, y + 58, "#5c3a21", "center");
-      drawPixText("JOIN THIS CODE", (x + w / 2) | 0, y + 68, "#5c3a21", "center");
       const sizes = [4, 6, 10];
       for (let i = 0; i < sizes.length; i++) {
         const sel = srCursor === i || menuHovering("duel:size:" + sizes[i]);
         const bx = x + 14 + i * 70;
-        const by = y + 86;
+        const by = y + 52;
         if (sel) px(bx - 2, by - 2, 64, 14, "#e8c44a");
         drawPixText(sizes[i] + " RUNS", bx, by, sel ? "#2b1c12" : "#3a2414");
         addMenuHit(
@@ -15849,37 +16053,18 @@
 
   function onDuelKey(k) {
     if (uiScreen === "duel_home") {
-      if (duelTypingCode) {
-        if (k === "escape") {
-          duelTypingCode = false;
-          duelStatus = "";
-          return true;
-        }
-        if (k === "backspace") {
-          duelCodeInput = duelCodeInput.slice(0, -1);
-          return true;
-        }
-        if (k === "enter") {
-          if (duelCodeInput.length === 4) duelJoin(duelCodeInput);
-          else duelStatus = "4 LETTERS";
-          return true;
-        }
-        if (k.length === 1 && /[a-z0-9]/.test(k) && duelCodeInput.length < 4) {
-          duelCodeInput += k.toUpperCase();
-        }
-        return true;
-      }
+      const rooms = duelLobbyRows();
+      const max = rooms.length;
+      if (srCursor > max) srCursor = 0;
       if (k === "escape") {
         backToModeMenu();
         return true;
       }
-      if (k === "arrowup" || k === "w" || k === "arrowdown" || k === "s") srCursor = srCursor === 0 ? 1 : 0;
+      if (k === "arrowup" || k === "w") srCursor = srCursor <= 0 ? max : srCursor - 1;
+      if (k === "arrowdown" || k === "s") srCursor = srCursor >= max ? 0 : srCursor + 1;
       if (k === "enter" || k === " ") {
-        if (srCursor === 1) {
-          duelTypingCode = true;
-          duelCodeInput = "";
-          duelStatus = "";
-        } else duelCreate();
+        if (srCursor <= 0) duelCreate();
+        else if (rooms[srCursor - 1]) duelJoin(rooms[srCursor - 1].code);
       }
       return true;
     }

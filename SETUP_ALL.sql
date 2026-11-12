@@ -510,3 +510,26 @@ create policy "Update own weekly_spins" on public.weekly_spins
 -- Account-bound locker (cosmetics / skins / loadout). Client soft-fails if missing.
 alter table public.profiles add column if not exists locker jsonb;
 alter table public.profiles add column if not exists updated_at timestamptz default now();
+
+-- ========== duel rooms (visible lobby, no codes) ==========
+create table if not exists public.duel_rooms (
+  id text primary key,
+  host_id text not null,
+  host_name text not null,
+  guest_id text,
+  guest_name text,
+  phase text not null default 'wait',
+  listed boolean not null default true,
+  payload jsonb not null default '{}'::jsonb,
+  signal jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.duel_rooms enable row level security;
+drop policy if exists "Public read duel_rooms" on public.duel_rooms;
+create policy "Public read duel_rooms" on public.duel_rooms for select to anon, authenticated using (true);
+drop policy if exists "Public insert duel_rooms" on public.duel_rooms;
+create policy "Public insert duel_rooms" on public.duel_rooms for insert to anon, authenticated with check (true);
+drop policy if exists "Public update duel_rooms" on public.duel_rooms;
+create policy "Public update duel_rooms" on public.duel_rooms for update to anon, authenticated using (true) with check (true);
+drop policy if exists "Public delete duel_rooms" on public.duel_rooms;
+create policy "Public delete duel_rooms" on public.duel_rooms for delete to anon, authenticated using (true);
