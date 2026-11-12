@@ -483,9 +483,10 @@
         return;
       }
       if (cat === "full_kings") {
-        A.setScene("rome");
+        // Fresh island. The run has to reach the portal on its own.
         phase = "city";
-        placePlayer(city.spawn.x, city.spawn.y);
+        crowned = false;
+        runDead = false;
       }
     }
 

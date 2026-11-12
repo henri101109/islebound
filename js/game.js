@@ -759,6 +759,7 @@
   /** Levels sub-page: "overview" | "tiers" | "pass". */
   let levelsPage = "overview";
   let passScroll = 0;
+  let passCursor = 0;
   const CAREER_BACKFILL_VER = 2;
   let careerBackfillVer = 0;
   /**
@@ -943,31 +944,31 @@
   const WHATS_NEW = [
     {
       kind: "skin",
-      id: "usain_bolt",
-      title: "BOLT SKIN",
-      blurb: "QUEST REWARD",
-      detail: "SUB 9.58 DEATH%",
+      id: "lex_young",
+      title: "LEX YOUNG",
+      blurb: "NEW SKIN",
+      detail: "SUB 3:35 RACE",
     },
     {
-      kind: "skin",
-      id: "flash",
-      title: "FLASH SKIN",
-      blurb: "QUEST REWARD",
-      detail: "SUB 8S BOAT%",
+      kind: "speed",
+      id: "kings_race",
+      title: "KINGS RACE%",
+      blurb: "NEW CATEGORY",
+      detail: "THE 1500M LINE",
     },
     {
-      kind: "skin",
-      id: "homer",
-      title: "HOMER SKIN",
-      blurb: "QUEST REWARD",
-      detail: "SUB 1:30 MEGA%",
+      kind: "speed",
+      id: "full_kings",
+      title: "FULL KINGS%",
+      blurb: "NEW CATEGORY",
+      detail: "WALK THE CITY",
     },
     {
-      kind: "skin",
-      id: "indiana_jones",
-      title: "INDY SKIN",
-      blurb: "QUEST REWARD",
-      detail: "5 MASK% RUNS",
+      kind: "face",
+      id: "king_crown",
+      title: "KING CROWN",
+      blurb: "NEW COSMETIC",
+      detail: "WIN THE RACE",
     },
     {
       kind: "skin",
@@ -989,41 +990,6 @@
       title: "CARTMAN",
       blurb: "ISLE PASS",
       detail: "FREE PASS NODE 15",
-    },
-    {
-      kind: "quest",
-      id: "jelly",
-      title: "SUB 35S JELLY",
-      blurb: "NOV QUEST",
-      detail: "UNLOCK JELLY CAPE",
-    },
-    {
-      kind: "quest",
-      id: "jobapp",
-      title: "INVIS SHARK",
-      blurb: "NOV QUEST",
-      detail: "UNLOCK JOBAPP CAPE",
-    },
-    {
-      kind: "speed",
-      id: "serpent",
-      title: "SERPENT%",
-      blurb: "SPEED CATEGORY",
-      detail: "HUNT THE SERPENT",
-    },
-    {
-      kind: "speed",
-      id: "megalodon",
-      title: "MEGALODON%",
-      blurb: "SPEED CATEGORY",
-      detail: "LAND THE MEGA",
-    },
-    {
-      kind: "speed",
-      id: "waterfall_eel",
-      title: "EEL%",
-      blurb: "SPEED CATEGORY",
-      detail: "WATERFALL CATCH",
     },
     {
       kind: "speed",
@@ -3354,6 +3320,17 @@
 
   function openIslePassMenu() {
     openRewardsMenu("islepass");
+    const nodes = passTrackNodes();
+    let focus = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const st = passNodeStatus(nodes[i]);
+      if (st === "claimable") {
+        focus = i;
+        break;
+      }
+      if (st === "claimed") focus = i;
+    }
+    passCursor = focus;
   }
 
   function drawQuestTabSwitchers(x, y, w) {
@@ -3546,100 +3523,252 @@
     return best;
   }
 
+  function passTrackNodes() {
+    return FREE_PASS.nodes || [];
+  }
+
+  function clampPassCursor() {
+    const nodes = passTrackNodes();
+    if (!nodes.length) {
+      passCursor = 0;
+      return;
+    }
+    if (passCursor < 0) passCursor = 0;
+    if (passCursor >= nodes.length) passCursor = nodes.length - 1;
+  }
+
+  function passRarityColor(node) {
+    if (!node || !node.rewardId) return "#6a6a68";
+    const n = node.n | 0;
+    if (n >= 9) return "#e8c44a"; // legendary finale
+    if (n >= 7) return "#c878ff"; // epic
+    if (n >= 4) return "#5a9ae8"; // rare
+    return "#5aba48"; // uncommon
+  }
+
+  function drawPassRewardArt(node, cx, cy, scale) {
+    const sc = scale || 3;
+    const prevInk = ink;
+    ink = ctx;
+    ink.save();
+    ink.translate(cx | 0, cy | 0);
+    ink.scale(sc, sc);
+    if (!node || !node.rewardId) {
+      px(-3, -12, 6, 2, "#8a6a42");
+      px(-2, -10, 4, 4, "#c4a574");
+      px(-1, -5, 2, 2, "#8a6a42");
+      px(-1, -2, 2, 2, "#c4a574");
+      ink.restore();
+      ink = prevInk;
+      return;
+    }
+    if (node.kind === "skin") {
+      const skin = node.rewardId;
+      const locked = SKIN_LOCKED_BACK[skin] || null;
+      const back = locked || null;
+      if (back) drawCapeSheet(back, 0.55, 2.0, time * 0.8);
+      drawPlayerBody(skin, 0, false, false);
+      if (back) drawCapeCollar(back);
+    } else if (node.kind === "cape" || node.kind === "face") {
+      const prevFace = cosmetics.face;
+      const prevBack = cosmetics.back;
+      if (node.kind === "cape") cosmetics.back = node.rewardId;
+      if (node.kind === "face") cosmetics.face = node.rewardId;
+      if (node.kind === "cape") drawCapeSheet(node.rewardId, 0.7, 2.1, time);
+      drawPlayerBody("classic", 0, false, false);
+      if (node.kind === "cape") drawCapeCollar(node.rewardId);
+      cosmetics.face = prevFace;
+      cosmetics.back = prevBack;
+    } else {
+      px(-4, -8, 8, 10, "#3a2414");
+      if (!drawTinyCatch(node.rewardId, -4, -6)) drawHudIcon(node.rewardId, -6, -8);
+    }
+    ink.restore();
+    ink = prevInk;
+  }
+
+  function drawPassTile(tx, ty, tw, th, node, selected) {
+    const st = passNodeStatus(node);
+    const rare = passRarityColor(node);
+    const hot = selected || menuHovering("passnode:" + (node && node.n));
+    // Card frame
+    px(tx, ty, tw, th, hot ? "#f3e2c4" : "#2b1c12");
+    px(tx + 1, ty + 1, tw - 2, th - 2, st === "claimed" ? "#5c3a21" : "#3a2414");
+    px(tx + 2, ty + 2, tw - 4, th - 4, st === "locked" || st === "empty" ? "#1a120c" : "#2b1c12");
+    // Art window
+    const artH = th - 16;
+    px(tx + 3, ty + 3, tw - 6, artH - 1, "#0e1a22");
+    drawPassRewardArt(node, tx + ((tw / 2) | 0), ty + artH - 2, tw >= 36 ? 2.2 : 1.7);
+    if (st === "locked" || st === "empty") {
+      ctx.globalAlpha = 0.45;
+      px(tx + 3, ty + 3, tw - 6, artH - 1, "#0a1018");
+      ctx.globalAlpha = 1;
+    }
+    // Rarity strip + level
+    px(tx + 2, ty + th - 14, tw - 4, 2, rare);
+    drawPixTextSm(String(node.n | 0), tx + ((tw / 2) | 0), ty + th - 11, "#f3e2c4", "center");
+    // FREE / TBD tag
+    if (node.rewardId) {
+      px(tx + 3, ty + th - 5, tw - 6, 4, "#2a6a98");
+      drawPixTextSm("FREE", tx + ((tw / 2) | 0), ty + th - 4, "#d8f0ff", "center");
+    } else {
+      px(tx + 3, ty + th - 5, tw - 6, 4, "#3a2414");
+      drawPixTextSm("TBD", tx + ((tw / 2) | 0), ty + th - 4, "#8a6a42", "center");
+    }
+    // Claimed check
+    if (st === "claimed") {
+      px(tx + tw - 9, ty + 3, 6, 6, "#1e8a34");
+      px(tx + tw - 8, ty + 4, 4, 4, "#5aba48");
+      px(tx + tw - 7, ty + 6, 1, 1, "#f4f4f8");
+      px(tx + tw - 6, ty + 7, 2, 1, "#f4f4f8");
+    }
+    // Claimable pulse border
+    if (st === "claimable") {
+      px(tx, ty, tw, 1, "#e8c44a");
+      px(tx, ty + th - 1, tw, 1, "#e8c44a");
+      px(tx, ty, 1, th, "#e8c44a");
+      px(tx + tw - 1, ty, 1, th, "#e8c44a");
+    }
+  }
+
   function drawLevelsPass(x, y, w, h) {
-    const nodes = FREE_PASS.nodes || [];
-    const top = y + 48;
+    const nodes = passTrackNodes();
+    clampPassCursor();
+    const node = nodes[passCursor] || nodes[0] || null;
     const finale = passFinaleXp();
     const prog = Math.min(1, (passXp | 0) / Math.max(1, finale));
-    drawPixText(FREE_PASS.label || "ISLE PASS", (x + w / 2) | 0, top, "#5c3a21", "center");
+    const top = y + 46;
+
+    // Header / selected meta (Fortnite-style corners)
+    drawPixText((FREE_PASS.season || "S1") + "  ISLE PASS", x + 10, top, "#5c3a21");
+    const st = passNodeStatus(node);
+    const name = String((node && node.label) || "TBD").slice(0, 12);
+    const kind = String((node && node.kind) || "ITEM").toUpperCase();
+    drawPixText(name, x + w - 10, top, "#3a2414", "right");
+    const rare = passRarityColor(node);
+    const kindW = Math.max(28, pixTextWidthSm(kind) + 8);
+    px(x + w - 10 - kindW, top + 10, kindW, 9, rare);
+    drawPixTextSm(kind, x + w - 10 - ((kindW / 2) | 0), top + 12, "#0a1018", "center");
     drawPixTextSm(
-      (passXp | 0) + " / " + finale + " PASS XP",
-      (x + w / 2) | 0,
-      top + 10,
-      "#8a5a32",
-      "center"
+      (passXp | 0) + " / " + finale + " XP",
+      x + 10,
+      top + 12,
+      "#8a5a32"
     );
-    const barW = w - 24;
-    const barX = x + 12;
-    const barY = top + 20;
+
+    // XP bar under header
+    const barX = x + 10;
+    const barY = top + 24;
+    const barW = w - 20;
     px(barX, barY, barW, 5, "#3a2414");
     px(barX + 1, barY + 1, barW - 2, 3, "#5c3a21");
     const fill = Math.floor((barW - 2) * prog);
     if (fill > 0) px(barX + 1, barY + 1, fill, 3, "#e8c44a");
 
-    const listTop = top + 30;
-    const listBot = y + h - 18;
-    const rowH = 14;
-    const viewH = Math.max(14, listBot - listTop);
-    const maxScroll = Math.max(0, nodes.length * rowH - viewH);
-    if (passScroll < 0) passScroll = 0;
-    if (passScroll > maxScroll) passScroll = maxScroll;
+    // Stage / preview
+    const stageTop = barY + 10;
+    const trackH = 58;
+    const stageH = Math.max(48, h - (stageTop - y) - trackH - 16);
+    const stageX = x + 8;
+    const stageW = w - 16;
+    px(stageX, stageTop, stageW, stageH, "#1a120c");
+    px(stageX + 1, stageTop + 1, stageW - 2, stageH - 2, "#0b1a22");
+    // floor strip
+    px(stageX + 1, stageTop + stageH - 8, stageW - 2, 7, "#243040");
+    px(stageX + 1, stageTop + stageH - 9, stageW - 2, 1, "#3a5080");
+    const prevCx = stageX + ((stageW / 2) | 0);
+    const prevCy = stageTop + stageH - 12;
+    drawPassRewardArt(node, prevCx, prevCy, 4.2);
+    const blurb = String((node && (node.blurb || node.label)) || "EMPTY SLOT").slice(0, 28);
+    drawPixTextSm(blurb, prevCx, stageTop + 4, "#c4a574", "center");
+    if (st === "claimable") {
+      drawPixText("CLAIM", prevCx, stageTop + 14, "#e8c44a", "center");
+    } else if (st === "claimed") {
+      drawPixTextSm("OWNED", prevCx, stageTop + 14, "#5aba48", "center");
+    } else if (st === "locked") {
+      drawPixTextSm("NEED " + (node.xp | 0) + " XP", prevCx, stageTop + 14, "#8a5a32", "center");
+    }
+
+    // Horizontal reward line
+    const trackY = y + h - trackH - 6;
+    const tileW = 32;
+    const tileH = 50;
+    const gap = 5;
+    const bigW = 40;
+    const pad = 10;
+    let totalW = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      totalW += (i === nodes.length - 1 || (nodes[i] && (nodes[i].n | 0) >= 9 && nodes[i].rewardId) ? bigW : tileW) + gap;
+    }
+    totalW = Math.max(0, totalW - gap);
+    const viewW = w - pad * 2;
+    const maxScroll = Math.max(0, totalW - viewW);
+    // Keep selected tile in view
+    let selX = 0;
+    for (let i = 0; i < passCursor; i++) {
+      const wide = i === nodes.length - 1 || (nodes[i] && (nodes[i].n | 0) >= 9 && nodes[i].rewardId);
+      selX += (wide ? bigW : tileW) + gap;
+    }
+    const want = selX - ((viewW / 2) | 0) + ((tileW / 2) | 0);
+    passScroll = Math.max(0, Math.min(maxScroll, want | 0));
+
+    // Track rail
+    const railY = trackY + ((tileH / 2) | 0);
+    px(x + pad, railY, viewW, 3, "#3a2414");
+    const railFill = Math.floor(viewW * prog);
+    if (railFill > 0) px(x + pad, railY, railFill, 3, "#c9a227");
 
     ctx.save();
     ctx.beginPath();
-    ctx.rect(x + 6, listTop, w - 12, viewH);
+    ctx.rect(x + pad - 1, trackY - 2, viewW + 2, tileH + 8);
     ctx.clip();
+
+    let ox = x + pad - passScroll;
     for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const oy = listTop - passScroll + i * rowH;
-      if (oy + rowH < listTop || oy > listBot) continue;
-      const st = passNodeStatus(node);
-      const col =
-        st === "claimed" ? "#5c3a21" : st === "claimable" ? "#e8c44a" : passNodeKindColor(node.kind);
-      if (st === "claimable") px(x + 8, oy - 1, w - 16, rowH - 1, "#e8c44a");
-      px(x + 8, oy, 14, 11, "#3a2414");
-      px(x + 9, oy + 1, 12, 9, col);
-      drawPixTextSm(String(node.n | (i + 1)).padStart(2, "0"), x + 15, oy + 2, "#2b1c12", "center");
-      const lab = String(node.label || "TBD").slice(0, 12);
-      drawPixTextSm(lab, x + 26, oy + 2, st === "claimable" ? "#2b1c12" : "#3a2414");
-      const right =
-        st === "claimed" ? "OWN" : st === "claimable" ? "CLAIM" : st === "empty" ? "TBD" : String(node.xp | 0);
-      drawPixTextSm(right, x + w - 14, oy + 2, st === "claimable" ? "#2b1c12" : "#8a5a32", "right");
+      const n = nodes[i];
+      const wide = i === nodes.length - 1 || ((n.n | 0) >= 9 && n.rewardId);
+      const tw = wide ? bigW : tileW;
+      drawPassTile(ox | 0, trackY, tw, tileH, n, i === passCursor);
       addMenuHit(
-        "passnode:" + i,
-        x + 8,
-        oy,
-        w - 16,
-        rowH - 2,
+        "passnode:" + (n.n | i),
+        ox | 0,
+        trackY,
+        tw,
+        tileH,
         () => {
-          if (st === "claimable") claimPassNode(node);
-          else {
-            questTip = String(node.blurb || node.label || "NODE").toUpperCase().slice(0, 28);
-            questTipT = 2.2;
-            cosTip = questTip;
-            cosTipT = 2.2;
-          }
+          passCursor = i;
+          if (passNodeStatus(n) === "claimable") claimPassNode(n);
         },
         { hover: true }
       );
+      ox += tw + gap;
     }
     ctx.restore();
 
-    if (maxScroll > 0) {
-      drawPixTextSm("^ V SCROLL", (x + w / 2) | 0, y + h - 14, "#8a5a32", "center");
-      addMenuHit(
-        "pass:up",
-        x + 8,
-        listTop,
-        w - 16,
-        10,
-        () => {
-          passScroll = Math.max(0, passScroll - rowH * 2);
-        },
-        { hover: true }
-      );
-      addMenuHit(
-        "pass:down",
-        x + 8,
-        listBot - 10,
-        w - 16,
-        10,
-        () => {
-          passScroll = Math.min(maxScroll, passScroll + rowH * 2);
-        },
-        { hover: true }
-      );
-    }
+    // Page / nav affordance
+    drawPixTextSm("<  >", (x + w / 2) | 0, y + h - 5, "#8a5a32", "center");
+    addMenuHit(
+      "pass:prev",
+      x + pad,
+      trackY,
+      14,
+      tileH,
+      () => {
+        passCursor = Math.max(0, passCursor - 1);
+      },
+      { hover: true }
+    );
+    addMenuHit(
+      "pass:next",
+      x + w - pad - 14,
+      trackY,
+      14,
+      tileH,
+      () => {
+        passCursor = Math.min(nodes.length - 1, passCursor + 1);
+      },
+      { hover: true }
+    );
   }
 
   function drawQuestListPanel(x, y, w, h) {
@@ -3741,12 +3870,14 @@
     ctx.globalAlpha = 0.55;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
-    const w = 252;
+    let w = 252;
     let h = 156;
     if (questTab === "quests") h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * 14 + 56);
     else if (questTab === "weekly") h = 148;
-    else if (questTab === "levels" && levelsPage === "pass") h = Math.min(uiH - 10, 188);
-    else h = 156;
+    else if (questTab === "levels" && levelsPage === "pass") {
+      w = Math.min(uiW - 12, 360);
+      h = Math.min(uiH - 8, 220);
+    } else h = 156;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, questTab === "levels" ? "ISLEPASS" : "REWARDS");
@@ -11267,6 +11398,15 @@
       px(x + 5, y + 2, 1, 1, "#c43a48");
       return true;
     }
+    if (id === "king_crown") {
+      px(x, y + 1, 1, 3, "#c9a227");
+      px(x + 2, y, 1, 3, "#e8c44a");
+      px(x + 4, y, 1, 2, "#f4efe4");
+      px(x + 6, y + 1, 1, 3, "#c9a227");
+      px(x, y + 4, 7, 1, "#e8c44a");
+      px(x + 3, y + 2, 1, 1, "#8a3038");
+      return true;
+    }
     if (id === "cape") {
       px(x + 1, y + 1, 4, 6, "#c43a28");
       px(x, y + 2, 2, 6, "#8a2020");
@@ -11912,12 +12052,12 @@
       px(1, -16, 1, 3, "#c9a227");
       px(-3, -14, 6, 1, "#e8c44a");
     } else if (id === "king_crown") {
-      px(-4, -16, 8, 1, "#2f6a30");
-      px(-3, -17, 1, 2, "#c9a227");
-      px(-1, -18, 1, 2, "#e8c44a");
-      px(1, -17, 1, 2, "#c9a227");
-      px(3, -16, 1, 1, "#2f6a30");
-      px(-3, -15, 6, 1, "#e8c44a");
+      px(-4, -17, 1, 3, "#c9a227");
+      px(-2, -18, 1, 3, "#e8c44a");
+      px(0, -19, 1, 2, "#f4efe4");
+      px(2, -17, 1, 3, "#c9a227");
+      px(-4, -15, 8, 1, "#e8c44a");
+      px(-1, -17, 1, 1, "#8a3038");
     } else if (id === "beta_crown") {
       px(-3, -16, 1, 3, "#c9a227");
       px(-1, -17, 1, 2, "#e8c44a");
@@ -17141,6 +17281,11 @@
     } else if (item.kind === "speed") {
       ink.scale(1.4, 1.4);
       drawSpeedCatIcon(item.id, -4, -6);
+    } else if (item.kind === "face") {
+      const prev = cosmetics.face;
+      cosmetics.face = item.id;
+      drawPlayerBody("classic", 0, false, false);
+      cosmetics.face = prev;
     }
     ink.restore();
   }
@@ -18641,6 +18786,10 @@
         return true;
       }
       if (k === "arrowleft" || k === "a") {
+        if (questTab === "levels" && levelsPage === "pass") {
+          passCursor = Math.max(0, passCursor - 1);
+          return true;
+        }
         if (questTab === "levels") {
           const pages = ["overview", "tiers", "pass"];
           const i = pages.indexOf(levelsPage);
@@ -18661,6 +18810,11 @@
         return true;
       }
       if (k === "arrowright" || k === "d") {
+        if (questTab === "levels" && levelsPage === "pass") {
+          const nodes = passTrackNodes();
+          passCursor = Math.min(Math.max(0, nodes.length - 1), passCursor + 1);
+          return true;
+        }
         if (questTab === "levels") {
           const pages = ["overview", "tiers", "pass"];
           const i = pages.indexOf(levelsPage);
@@ -18701,16 +18855,11 @@
           } else tryWeeklySpin();
         }
       } else if (questTab === "levels" && levelsPage === "pass") {
-        if (k === "arrowup" || k === "w") passScroll = Math.max(0, passScroll - 32);
-        if (k === "arrowdown" || k === "s") passScroll += 32;
+        if (k === "arrowup" || k === "w") levelsPage = "tiers";
         if (k === "enter" || k === " ") {
-          const nodes = FREE_PASS.nodes || [];
-          for (let i = 0; i < nodes.length; i++) {
-            if (passNodeStatus(nodes[i]) === "claimable") {
-              claimPassNode(nodes[i]);
-              break;
-            }
-          }
+          const nodes = passTrackNodes();
+          const n = nodes[passCursor];
+          if (n && passNodeStatus(n) === "claimable") claimPassNode(n);
         }
       }
       return true;
