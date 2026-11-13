@@ -4124,26 +4124,38 @@
     }
   }
 
-  /** Minecraft-style rank capsule: icon square + colored label. Returns width. */
+  /** Rank capsule: colored label only (no icon). Returns width. */
   function drawRankBadge(id, x, y, opts) {
     const def = RANK_DEFS[id];
     if (!def) return 0;
     const o = opts || {};
     const dim = !!o.dim;
+    const small = !!o.small;
     const label = def.label;
-    const tw = pixTextWidth(label);
-    const iw = 11;
-    const h = 11;
-    const w = iw + 2 + tw + 4;
+    const tw = small ? pixTextWidthSm(label) : pixTextWidth(label);
+    const h = small ? 8 : 9;
+    const padX = small ? 2 : 3;
+    const w = tw + padX * 2;
     const edge = dim ? "#3a2414" : def.edge;
     const fill = dim ? "#5c4030" : def.fill;
     const face = dim ? "#8a6a48" : def.face;
     px(x, y, w, h, edge);
     px(x + 1, y + 1, w - 2, h - 2, fill);
-    drawRankIcon(id, x, y, fill);
-    px(x + iw, y + 1, 1, h - 2, edge);
-    drawPixText(label, x + iw + 3, y + 2, face);
+    if (small) drawPixTextSm(label, x + padX, y + 1, face);
+    else drawPixText(label, x + padX, y + 1, face);
     return w;
+  }
+
+  /** Shared rank pick for boards / hub / locker nametags. */
+  function resolveNametagRank(name, isAccount) {
+    if (isOwnerName(name)) return "owner";
+    const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
+    const isMe =
+      me &&
+      String(name || "").toUpperCase() === String(me).toUpperCase();
+    if (isMe) return primaryRankId() || (isAccount || isSignedInAccount() ? "vip" : null);
+    if (isAccount) return "vip";
+    return null;
   }
 
   /** Compact nametag chip for the player's primary rank. Returns width. */
@@ -8316,9 +8328,25 @@
     return tw + 4;
   }
 
+  /** Smaller chip for crowded leaderboard rows. */
+  function drawChipTagSm(label, x, y, theme) {
+    const s = String(label || "").toUpperCase();
+    const tw = pixTextWidthSm(s);
+    const owner = theme === "owner";
+    px(x - 1, y - 1, tw + 3, 8, owner ? "#2a0808" : "#3a2414");
+    px(x, y, tw + 1, 6, owner ? "#9a2420" : "#8a5a18");
+    drawPixTextSm(s, x + 1, y, owner ? "#ffc8b8" : "#ffe27a");
+    return tw + 4;
+  }
+
   function drawNameTag(name, x, y, maxLen) {
     const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
     return drawChipTag(n, x, y, isOwnerName(n) ? "owner" : null);
+  }
+
+  function drawNameTagSm(name, x, y, maxLen) {
+    const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
+    return drawChipTagSm(n, x, y, isOwnerName(n) ? "owner" : null);
   }
 
   /** Classic board name (no chip) — guests only. Returns width used. */
@@ -8326,6 +8354,12 @@
     const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
     drawPixText(n, x, y, "#3a2414");
     return pixTextWidth(n);
+  }
+
+  function drawClassicBoardNameSm(name, x, y, maxLen) {
+    const n = String(name || "?").slice(0, maxLen == null ? 10 : maxLen);
+    drawPixTextSm(n, x, y, "#3a2414");
+    return pixTextWidthSm(n);
   }
 
   /**
@@ -8336,26 +8370,16 @@
     const o = opts || {};
     const isAcc = !!o.isAccount;
     const isOnline = !!o.isOnline;
+    const small = o.small !== false;
     const maxLen = o.maxLen == null ? (isAcc ? 7 : 10) : o.maxLen;
     const showLv = o.level != null ? o.level | 0 : careerLevelForName(name);
     let cx = x;
     if (isOnline) cx += drawOnlineDot(cx, y);
     if (showLv > 0) cx += drawLevelBadge(showLv, cx, y) + 2;
-    // Social rank chip — owner by name; local MVP/media; VIP for any account.
-    const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
-    const isMe =
-      me &&
-      String(name || "").toUpperCase() === String(me).toUpperCase();
-    let rankId = null;
-    if (isOwnerName(name)) rankId = "owner";
-    else if (isMe && hasRank("mvp")) rankId = "mvp";
-    else if (isMe && hasRank("youtuber")) rankId = "youtuber";
-    else if (isMe && hasRank("tiktok")) rankId = "tiktok";
-    else if (isMe && hasRank("twitch")) rankId = "twitch";
-    else if (isAcc) rankId = "vip";
-    if (rankId) cx += drawRankBadge(rankId, cx, y - 1) + 2;
-    if (isAcc) cx += drawNameTag(name, cx, y, maxLen);
-    else cx += drawClassicBoardName(name, cx, y, maxLen);
+    const rankId = resolveNametagRank(name, isAcc);
+    if (rankId) cx += drawRankBadge(rankId, cx, y - 1, { small }) + 2;
+    if (isAcc) cx += (small ? drawNameTagSm : drawNameTag)(name, cx, y, maxLen);
+    else cx += (small ? drawClassicBoardNameSm : drawClassicBoardName)(name, cx, y, maxLen);
     return cx - x;
   }
 
@@ -16245,10 +16269,11 @@
    * Hub hangout nametag above a sprite. Accounts → gold/wood chip;
    * guests → classic pixel text on a dark pad so it stays readable on the plaza.
    */
-  function rankBadgeWidth(id) {
+  function rankBadgeWidth(id, small) {
     const def = RANK_DEFS[id];
     if (!def) return 0;
-    return 11 + 2 + pixTextWidth(def.label) + 4;
+    const tw = small ? pixTextWidthSm(def.label) : pixTextWidth(def.label);
+    return tw + (small ? 4 : 6);
   }
 
   function drawHubNametagAbove(sx, sy, name, isAccount) {
@@ -16259,26 +16284,25 @@
     const prevInk = ink;
     ink = ctx;
     ctx.globalAlpha = 1;
-    const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
-    const isMe = me && String(name || "").toUpperCase() === String(me).toUpperCase();
-    let rankId = null;
-    if (isOwnerName(name)) rankId = "owner";
-    else if (isMe) rankId = primaryRankId();
-    else if (isAccount) rankId = "vip";
-    if (isAccount) {
-      const nameW = pixTextWidth(label) + 4;
-      const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
-      let tagX = (sx + 4 - (badgeW + nameW) / 2) | 0;
-      if (rankId) tagX += drawRankBadge(rankId, tagX, tagY - 1) + 2;
-      drawNameTag(label, tagX, tagY, maxLen);
-    } else {
-      const tw = pixTextWidth(label);
-      const tagX = (sx + 4 - tw / 2) | 0;
-      px(tagX - 2, tagY - 1, tw + 4, 9, "#1a120c");
-      px(tagX - 1, tagY, tw + 2, 7, "#3a2414");
-      drawPixText(label, tagX, tagY, "#f3e2c4");
-    }
+    const rankId = resolveNametagRank(name, isAccount);
+    const nameW = pixTextWidth(label) + 4;
+    const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
+    let tagX = (sx + 4 - (badgeW + nameW) / 2) | 0;
+    if (rankId) tagX += drawRankBadge(rankId, tagX, tagY - 1) + 2;
+    // Always draw the nametag chip (menu + player), accounts and guests alike.
+    drawNameTag(label, tagX, tagY, maxLen);
     ink = prevInk;
+  }
+
+  /** Local player nametag in-world (island / interiors) — always on while playing. */
+  function drawLocalPlayerNametag(cpos) {
+    if (uiScreen || uiBlocksPlay()) return;
+    if (player.dead > 0) return;
+    if (scene === "hub") return;
+    const sx = Math.round(player.x + player.w / 2 - 4 - cpos.x);
+    const sy = Math.round(player.y - cpos.y);
+    if (sx < -40 || sy < -40 || sx > viewW + 40 || sy > viewH + 40) return;
+    drawHubNametagAbove(sx, sy, hubLocalName(), hubLocalIsAccount());
   }
 
   function drawMiniPlayerAt(sx, sy, face, faceId, backId, alpha) {
@@ -16808,6 +16832,8 @@
       if (scene === "hub") {
         drawHubNametags(cpos);
         if (hubEmoteT > 0) drawHubEmote(cpos);
+      } else {
+        drawLocalPlayerNametag(cpos);
       }
     } else {
       px(0, 0, viewW, viewH, WATER_BLUE);
@@ -16869,6 +16895,7 @@
       drawPetWorld(cpos);
       if (serpent && serpent.phase === "breach") drawSerpent(cpos);
       drawWandBolts(cpos);
+      drawLocalPlayerNametag(cpos);
     }
     drawBrewWorld(cpos);
     drawJadeMaskFx();
@@ -20479,12 +20506,14 @@
       const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
       const nameY = previewY - 40;
       const lvStr = String(careerLevel);
+      const rankId = resolveNametagRank(localName, isAcc) || (isAcc || isSignedInAccount() ? "vip" : null);
+      const nameW = pixTextWidth(tag) + 4;
+      const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
+      const totalW = badgeW + nameW;
+      let tagX = (stageCx - totalW / 2) | 0;
       drawLevelBadge(careerLevel, (stageCx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
-      if (isAcc) {
-        drawNameTag(tag, (stageCx - pixTextWidth(tag) / 2) | 0, nameY);
-      } else {
-        drawPixText(tag, stageCx, nameY, "#f3e2c4", "center");
-      }
+      if (rankId) tagX += drawRankBadge(rankId, tagX, nameY - 1) + 2;
+      drawNameTag(tag, tagX, nameY, tag.length);
     }
     ctx.restore();
 
