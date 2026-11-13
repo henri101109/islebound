@@ -449,6 +449,47 @@
     "storm_fish",
     "hammerhead",
   ];
+  /** Category-screen groups. Every SPEED_ORDER id is in exactly one. */
+  const SPEED_GROUPS = [
+    {
+      id: "catch",
+      label: "CATCH",
+      cats: [
+        "shark",
+        "jelly_white",
+        "chest",
+        "shark_cloak",
+        "blowfish",
+        "megalodon",
+        "waterfall_eel",
+        "portal_leech",
+        "blue_crab",
+        "angler_fish",
+        "storm_fish",
+        "hammerhead",
+      ],
+    },
+    {
+      id: "stat",
+      label: "STAT",
+      cats: ["coins_10", "coins_25", "coins_100", "death", "full_inv", "boat"],
+    },
+    {
+      id: "adventure",
+      label: "ADVENTURE",
+      cats: ["mask", "serpent"],
+    },
+    {
+      id: "race",
+      label: "RACE",
+      cats: ["kings_race", "full_kings"],
+    },
+    {
+      id: "dimension",
+      label: "DIMENSION",
+      cats: ["egypt_cat", "trip"],
+    },
+  ];
   let playMode = null;
   /** Cold boot shows logo card; Esc from play returns straight to "mode". */
   let uiScreen = "logo";
@@ -507,11 +548,8 @@
   let srWasDead = false;
   let srName = "";
   let srCursor = 0;
-  /** Pixel scroll for the speedrun category list (arrows / side slider only). */
-  let srCatScroll = 0;
-  let srCatScrollMax = 0;
-  /** Clickable scrollbar track while on categories: { x, y, w, h }. */
-  let srCatBarBounds = null;
+  /** Index into SPEED_GROUPS while the category screen is open. */
+  let srGroup = 0;
   let srFinishSel = 1;
   let srBoardRows = [];
   let srBoardNote = "";
@@ -3779,29 +3817,11 @@
   }
 
   function saveLockerProfile() {
-    const snap = {
-      face: cosmetics.face,
-      back: cosmetics.back,
-      skin: playerSkin,
-      ownedCosmetics: ownedCosmetics.slice(),
-      ownedSkins: ownedSkins.slice(),
-      ownedPets: ownedPets.slice(),
-      equippedPet: equippedPet || null,
-      skinsGrantedLegacy: !!skinsGrantedLegacy,
-      questMaskRuns: questMaskRuns | 0,
-      questDone: questDone || {},
-      questClaimed: questClaimed || {},
-      rankMvp: !!rankMvp,
-      rankMedia: {
-        youtuber: !!(rankMedia && rankMedia.youtuber),
-        tiktok: !!(rankMedia && rankMedia.tiktok),
-        twitch: !!(rankMedia && rankMedia.twitch),
-      },
-    };
+    const snap = lockerSnapshot();
     try {
       localStorage.setItem(LOCKER_PROFILE_KEY, JSON.stringify(snap));
     } catch (e) {}
-    // Account sync so cosmetics + world survive browser clears / logout / other devices.
+    // Account is the copy that survives a browser clear. Never attach a wiped island.
     const api = lbApi();
     if (api && api.isSignedIn && api.isSignedIn() && api.syncLockerSoon) {
       const cloudSnap = Object.assign({}, snap);
@@ -4124,26 +4144,50 @@
     }
   }
 
+  /** Capsule badge — shared by ranks + NEW/ACC (edge + fill + face text). */
+  function drawStatusBadge(label, x, y, colors, opts) {
+    const o = opts || {};
+    const small = !!o.small;
+    const s = String(label || "").toUpperCase();
+    // Full glyph advance is 6px; keep sm width as ceil so last letter never clips.
+    const tw = small
+      ? Math.max(1, Math.ceil((String(s).length * 6 * 2) / 3))
+      : pixTextWidth(s);
+    const h = small ? 9 : 10;
+    const padX = small ? 2 : 3;
+    const w = tw + padX * 2;
+    const edge = (colors && colors.edge) || "#6a5020";
+    const fill = (colors && colors.fill) || "#c9a227";
+    const face = (colors && colors.face) || "#fff4c8";
+    const prevInk = ink;
+    ink = ctx;
+    px(x, y, w, h, edge);
+    px(x + 1, y + 1, w - 2, h - 2, fill);
+    // Vertically center 7px (or ~4.7px sm) glyph in the inner fill.
+    const textY = small ? y + 2 : y + 2;
+    if (small) drawPixTextSm(s, x + padX, textY, face);
+    else drawPixText(s, x + padX, textY, face);
+    ink = prevInk;
+    return w;
+  }
+
   /** Rank capsule: colored label only (no icon). Returns width. */
   function drawRankBadge(id, x, y, opts) {
     const def = RANK_DEFS[id];
     if (!def) return 0;
     const o = opts || {};
     const dim = !!o.dim;
-    const small = !!o.small;
-    const label = def.label;
-    const tw = small ? pixTextWidthSm(label) : pixTextWidth(label);
-    const h = small ? 8 : 9;
-    const padX = small ? 2 : 3;
-    const w = tw + padX * 2;
-    const edge = dim ? "#3a2414" : def.edge;
-    const fill = dim ? "#5c4030" : def.fill;
-    const face = dim ? "#8a6a48" : def.face;
-    px(x, y, w, h, edge);
-    px(x + 1, y + 1, w - 2, h - 2, fill);
-    if (small) drawPixTextSm(label, x + padX, y + 1, face);
-    else drawPixText(label, x + padX, y + 1, face);
-    return w;
+    return drawStatusBadge(
+      def.label,
+      x,
+      y,
+      {
+        edge: dim ? "#3a2414" : def.edge,
+        fill: dim ? "#5c4030" : def.fill,
+        face: dim ? "#8a6a48" : def.face,
+      },
+      o
+    );
   }
 
   /** Shared rank pick for boards / hub / locker nametags. */
@@ -4764,7 +4808,7 @@
     return Math.max(1, xp | 0);
   }
 
-  function saveCareer() {
+  function writeCareerLocal() {
     try {
       localStorage.setItem(
         CAREER_KEY,
@@ -4776,6 +4820,13 @@
         })
       );
     } catch (e) {}
+  }
+
+  function saveCareer() {
+    writeCareerLocal();
+    // Rank lives on the account locker, not only this browser.
+    const api = lbApi();
+    if (api && api.isSignedIn && api.isSignedIn()) saveLockerProfile();
   }
 
   function loadCareer() {
@@ -8390,12 +8441,13 @@
     return 4;
   }
 
-  function drawNewTag(x, y) {
-    return drawChipTag("NEW", x, y);
+  function drawNewTag(x, y, opts) {
+    // Dark face on gold — light-on-gold ate the E's horizontal bars.
+    return drawStatusBadge("NEW", x, y, { edge: "#6a5020", fill: "#e8c44a", face: "#2b1c12" }, opts);
   }
 
-  function drawMemberTag(x, y) {
-    return drawChipTag("ACC", x, y);
+  function drawMemberTag(x, y, opts) {
+    return drawStatusBadge("ACC", x, y, { edge: "#3a2414", fill: "#8a5a18", face: "#ffe27a" }, opts);
   }
 
   function boardRowOnline(r) {
@@ -14125,8 +14177,9 @@
         drawHudIcon(stack.id, sx, sy);
         if (stack.count > 1) drawCount(sx, sy, stack.count);
       }
-    } else if (playMode === "normal" && !satchelOpen && satchelHolding()) {
-      drawPixText("E", x0 - 8, y0, "#e8c44a");
+    } else if (playMode === "normal" && !satchelOpen) {
+      // Always show the satchel key hint left of the bag (not only when holding).
+      drawStatusBadge("E", x0 - 12, y0 + 8, { edge: "#6a5020", fill: "#e8c44a", face: "#2b1c12" });
     }
     if (boatRodSlotVisible()) {
       const br = boatRodSlotRect();
@@ -15391,7 +15444,7 @@
       mode = "normal";
     } else if (playMode === "speedrun") {
       mode = "speedrun";
-      if (uiScreen === "categories") cat = SPEED_ORDER[srCursor] || srCat;
+      if (uiScreen === "categories") cat = categoryMenuCat();
       else cat = srCat;
     }
     api.setPresenceActivity(mode, cat);
@@ -15504,8 +15557,36 @@
     cosmetics.back = prevBack;
   }
 
+  /** Half-width of a lobby nametag (name chip or guest text, mode line, level). */
+  function lobbyTagHalf(name, isAccount, modeLabel, level, nameMax) {
+    const tag = String(name || "?").toUpperCase().slice(0, nameMax);
+    const nameW = isAccount ? pixTextWidth(tag) + 4 : pixTextWidthSm(tag);
+    const mode = String(modeLabel || "").toUpperCase().slice(0, 8);
+    const modeW = mode ? pixTextWidthSm(mode) : 0;
+    const lv = String(level || 1);
+    const lvW = pixTextWidth(lv) + 6;
+    return Math.ceil(Math.max(nameW, modeW, lvW) / 2);
+  }
+
+  function lobbyPeerHalf(peer) {
+    const lv = peer.level || careerLevelForName(peer.name);
+    return lobbyTagHalf(peer.name, peer.isAccount, peer.modeLabel || "LOBBY", lv, peer.isAccount ? 7 : 6);
+  }
+
+  /** Half-width of the local mannequin's name + rank, so peers clear it. */
+  function lobbyLocalHalf() {
+    const localName = hubLocalName();
+    const isAcc = hubLocalIsAccount();
+    const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
+    const rankId = resolveNametagRank(localName, isAcc) || (isAcc || isSignedInAccount() ? "vip" : null);
+    const nameW = pixTextWidth(tag) + 4;
+    const badgeW = rankId ? rankBadgeWidth(rankId, true) + 2 : 0;
+    const lvW = pixTextWidth(String(careerLevel)) + 6;
+    return Math.ceil(Math.max(badgeW + nameW, lvW) / 2);
+  }
+
   /**
-   * Lobby line beside the local mannequin — even spacing, same depth, no stack.
+   * Lobby line beside the local mannequin — same depth, spaced by nametag width.
    * Skin + cosmetics on body; compact name + mode above each peer.
    */
   function drawLobbyPeerLine(stageCx, previewY, stageLeft, previewRight) {
@@ -15518,19 +15599,40 @@
       return;
     }
 
-    // Clear center for YOU; peers stand in left/right wings at nearly the same depth
-    const centerGap = 22;
+    // A few pixels of air between tag edges. Short names still keep a modest step.
+    const tagGap = 8;
+    const minStep = 44;
     const pad = 8;
     const leftEdge = stageLeft + pad;
     const rightEdge = previewRight - pad;
-    const leftWingW = Math.max(0, stageCx - centerGap - leftEdge);
-    const rightWingW = Math.max(0, rightEdge - (stageCx + centerGap));
-    const pitch = 30;
-    const leftSlots = Math.max(0, Math.min(4, (leftWingW / pitch) | 0));
-    const rightSlots = Math.max(0, Math.min(4, (rightWingW / pitch) | 0));
-    const maxShow = leftSlots + rightSlots;
-    const show = Math.min(lobbyPeers.length, maxShow);
-    if (show <= 0) {
+    const localHalf = lobbyLocalHalf();
+    const left = [];
+    const right = [];
+
+    function tryPlace(list, peer, side) {
+      if (list.length >= 4) return false;
+      const half = lobbyPeerHalf(peer);
+      const prev = list.length ? list[list.length - 1] : null;
+      const prevDist = prev ? prev.dist : 0;
+      const inner = prev ? prev.dist + prev.half : localHalf;
+      const dist = Math.max(prevDist + minStep, inner + tagGap + half);
+      const fx = stageCx + side * dist;
+      if (fx - half < leftEdge || fx + half > rightEdge) return false;
+      list.push({ peer, side, dist, half, fx: fx | 0 });
+      return true;
+    }
+
+    for (let i = 0; i < lobbyPeers.length; i++) {
+      const peer = lobbyPeers[i];
+      const wantLeft = i % 2 === 0;
+      const placed = wantLeft
+        ? tryPlace(left, peer, -1) || tryPlace(right, peer, 1)
+        : tryPlace(right, peer, 1) || tryPlace(left, peer, -1);
+      if (!placed) break;
+    }
+
+    const slots = left.concat(right);
+    if (!slots.length) {
       drawPixTextSm(
         lobbyPeerTotal + " ONLINE",
         stageCx,
@@ -15541,33 +15643,14 @@
       return;
     }
 
-    // Build stable slots: nearest-left, nearest-right, next-left, …
-    const slots = [];
-    let li = 0;
-    let ri = 0;
-    for (let i = 0; i < show; i++) {
-      const wantLeft = i % 2 === 0;
-      if (wantLeft && li < leftSlots) {
-        slots.push({ peer: lobbyPeers[i], side: -1, rank: li });
-        li++;
-      } else if (ri < rightSlots) {
-        slots.push({ peer: lobbyPeers[i], side: 1, rank: ri });
-        ri++;
-      } else if (li < leftSlots) {
-        slots.push({ peer: lobbyPeers[i], side: -1, rank: li });
-        li++;
-      }
-    }
-
     // Draw outer → inner so nearer peers sit cleanly in front of farther ones
-    slots.sort((a, b) => b.rank - a.rank);
+    slots.sort((a, b) => b.dist - a.dist);
 
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
       const peer = s.peer;
-      const fx = (stageCx + s.side * (centerGap + 6 + s.rank * pitch)) | 0;
+      const fx = s.fx;
       const fy = previewY - 1;
-      if (fx < leftEdge || fx > rightEdge) continue;
 
       ctx.save();
       ctx.globalAlpha = 0.9;
@@ -15589,8 +15672,8 @@
       drawPixTextSm(mode, fx, nameY + 10, "#8a6a42", "center");
     }
 
-    if (lobbyPeerTotal > show) {
-      drawPixTextSm("+" + (lobbyPeerTotal - show), stageCx, previewY - 48, "#8a6a42", "center");
+    if (lobbyPeerTotal > slots.length) {
+      drawPixTextSm("+" + (lobbyPeerTotal - slots.length), stageCx, previewY - 48, "#8a6a42", "center");
     }
   }
 
@@ -16285,10 +16368,11 @@
     ink = ctx;
     ctx.globalAlpha = 1;
     const rankId = resolveNametagRank(name, isAccount);
+    // Rank is smaller than the name on characters; lists keep full/board sizing.
     const nameW = pixTextWidth(label) + 4;
-    const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
+    const badgeW = rankId ? rankBadgeWidth(rankId, true) + 2 : 0;
     let tagX = (sx + 4 - (badgeW + nameW) / 2) | 0;
-    if (rankId) tagX += drawRankBadge(rankId, tagX, tagY - 1) + 2;
+    if (rankId) tagX += drawRankBadge(rankId, tagX, tagY, { small: true }) + 2;
     // Always draw the nametag chip (menu + player), accounts and guests alike.
     drawNameTag(label, tagX, tagY, maxLen);
     ink = prevInk;
@@ -17005,6 +17089,46 @@
     const api = lbApi();
     if (api && api.CATEGORIES[id]) return api.CATEGORIES[id].label;
     return String(id || "").toUpperCase();
+  }
+
+  function speedGroupCats(group) {
+    const g = SPEED_GROUPS[group == null ? srGroup : group];
+    return g && g.cats && g.cats.length ? g.cats : SPEED_GROUPS[0].cats;
+  }
+
+  /** Highlighted run on the category screen; the active run everywhere else. */
+  function categoryMenuCat() {
+    if (uiScreen === "categories") {
+      const cats = speedGroupCats();
+      const i = Math.max(0, Math.min(srCursor | 0, cats.length - 1));
+      return cats[i];
+    }
+    return srCat || SPEED_ORDER[0];
+  }
+
+  function focusSpeedCategory(id) {
+    let g = 0;
+    let idx = 0;
+    for (let i = 0; i < SPEED_GROUPS.length; i++) {
+      const at = SPEED_GROUPS[i].cats.indexOf(id);
+      if (at >= 0) {
+        g = i;
+        idx = at;
+        break;
+      }
+    }
+    srGroup = g;
+    srCursor = idx;
+    return SPEED_GROUPS[g].cats[idx];
+  }
+
+  function setSpeedGroup(i) {
+    const n = SPEED_GROUPS.length;
+    const next = ((i % n) + n) % n;
+    if (next === srGroup) return;
+    srGroup = next;
+    srCursor = 0;
+    refreshSpeedBoard(speedGroupCats()[0]);
   }
 
   function formatSpeedTime(ms) {
@@ -18461,10 +18585,9 @@
     else if (i === 1) {
       playMode = "speedrun";
       uiScreen = "categories";
+      srGroup = 0;
       srCursor = 0;
-      srCatScroll = 0;
-      syncCatListScroll();
-      refreshSpeedBoard(SPEED_ORDER[0]);
+      refreshSpeedBoard(SPEED_GROUPS[0].cats[0]);
     } else if (i === 2) openDuelMenu();
     else if (i === 3) {
       uiScreen = "account";
@@ -18788,7 +18911,7 @@
     const idx = rowIndex | 0;
     if (srReplayAvail && srReplayAvail[idx]) return true;
     // Fallback: cached full payload already matches this exact board row.
-    return replayMatchesBoardRow(srBestReplay, srCat || SPEED_ORDER[srCursor], idx);
+    return replayMatchesBoardRow(srBestReplay, categoryMenuCat(), idx);
   }
 
   /** Stop playback state without returning to menus (used when swapping VID). */
@@ -18819,8 +18942,7 @@
     uiScreen = "categories";
     srRunning = false;
     srTiming = false;
-    const cat = srCat || SPEED_ORDER[srCursor] || SPEED_ORDER[0];
-    srCursor = Math.max(0, SPEED_ORDER.indexOf(cat));
+    const cat = focusSpeedCategory(srCat || SPEED_ORDER[0]);
     refreshSpeedBoard(cat);
   }
 
@@ -18833,8 +18955,9 @@
     chatOpen = false;
     guideOpen = false;
     closeIslandChat();
-    resetSpeedrunWorld();
+    pinSurvivalWorld();
     playMode = "speedrun";
+    resetSpeedrunWorld();
     uiScreen = null;
     srRunning = false;
     srTiming = false;
@@ -19442,6 +19565,7 @@
     pendingRaceSeg = null;
     srSegmentSurvival = false;
     srCat = cat;
+    pinSurvivalWorld();
     playMode = "speedrun";
     resetSpeedrunWorld();
     if (rome && rome.isSpeedCat(cat)) rome.prepareSpeed(cat);
@@ -19586,9 +19710,8 @@
     uiScreen = "categories";
     srRunning = false;
     srTiming = false;
-    srCursor = Math.max(0, SPEED_ORDER.indexOf(srCat));
-    syncCatListScroll();
-    refreshSpeedBoard(SPEED_ORDER[srCursor] || srCat);
+    const cat = focusSpeedCategory(srCat);
+    refreshSpeedBoard(cat);
   }
 
   function drawPanelBox(x, y, w, h, title) {
@@ -19682,11 +19805,11 @@
         isOnline,
         maxLen: nameMax,
       }) + 2;
-      if (isNew) tagX += drawNewTag(tagX, yy) + 2;
+      if (isNew) tagX += drawNewTag(tagX, yy - 1, { small: true }) + 2;
       const timeX = Math.max(tagX + 1, x + 100);
       drawPixText(timeStr, timeX, yy, "#5c3a21");
       {
-        const catId = srCat || SPEED_ORDER[srCursor];
+        const catId = categoryMenuCat();
         const hasVid = rowHasReplayVid(i);
         const vx = timeX + pixTextWidth(timeStr) + 4;
         const vidKey = "vid:" + (i + 1);
@@ -20130,10 +20253,7 @@
     if (item.kind === "speed") {
       playMode = "speedrun";
       uiScreen = "categories";
-      let idx = SPEED_ORDER.indexOf(item.id);
-      if (idx < 0) idx = 0;
-      srCursor = idx;
-      refreshSpeedBoard(SPEED_ORDER[idx] || SPEED_ORDER[0]);
+      refreshSpeedBoard(focusSpeedCategory(item.id));
       return;
     }
     if (item.kind === "pet") {
@@ -20508,11 +20628,11 @@
       const lvStr = String(careerLevel);
       const rankId = resolveNametagRank(localName, isAcc) || (isAcc || isSignedInAccount() ? "vip" : null);
       const nameW = pixTextWidth(tag) + 4;
-      const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
+      const badgeW = rankId ? rankBadgeWidth(rankId, true) + 2 : 0;
       const totalW = badgeW + nameW;
       let tagX = (stageCx - totalW / 2) | 0;
       drawLevelBadge(careerLevel, (stageCx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
-      if (rankId) tagX += drawRankBadge(rankId, tagX, nameY - 1) + 2;
+      if (rankId) tagX += drawRankBadge(rankId, tagX, nameY, { small: true }) + 2;
       drawNameTag(tag, tagX, nameY, tag.length);
     }
     ctx.restore();
@@ -20854,81 +20974,103 @@
     drawPixText("ARROWS  ESC MENU", (x + w / 2) | 0, y + h - 10, "#8a5a32", "center");
   }
 
-  function syncCatListScroll() {
-    const rowH = 9;
-    const curTop = (srCursor | 0) * rowH;
-    const viewH = srCatViewH > 0 ? srCatViewH : rowH * 12;
-    if (curTop < srCatScroll) srCatScroll = curTop;
-    else if (curTop + rowH > srCatScroll + viewH) srCatScroll = curTop + rowH - viewH;
-    srCatScroll = clampLockerScroll(srCatScroll, srCatScrollMax);
-  }
-
-  /** Set by drawCategorySelect so arrow sync knows the visible list height. */
-  let srCatViewH = 0;
-
   function drawCategorySelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
     ctx.globalAlpha = 0.5;
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
+    if (srGroup < 0 || srGroup >= SPEED_GROUPS.length) srGroup = 0;
+    const catsNow = speedGroupCats();
+    if (srCursor < 0 || srCursor >= catsNow.length) srCursor = 0;
     const leftW = 158;
     const boardW = 188;
-    const rowH = 9;
-    const maxVis = 12;
-    const h = Math.min(uiH - 8, 16 + maxVis * rowH + 28);
+    const maxRows = 12;
+    const tabH = 13;
+    const tabGap = 4;
+    const listPadTop = 18;
+    const foot = 16;
+    let rowH = 9;
+    let h = listPadTop + maxRows * rowH + foot;
+    let block = tabH + tabGap + h;
+    const room = uiH - 4;
+    if (block > room) {
+      const fit = ((room - tabH - tabGap - listPadTop - foot) / maxRows) | 0;
+      rowH = fit < 8 ? 8 : fit > 9 ? 9 : fit;
+      h = listPadTop + maxRows * rowH + foot;
+      block = tabH + tabGap + h;
+    }
     const totalW = leftW + boardW + 10;
     const x = ((uiW - totalW) / 2) | 0;
-    const y = Math.max(4, ((uiH - h) / 2) | 0);
-    drawPanelBox(x, y, leftW, h, "SPEEDRUN");
+    let top = ((uiH - block) / 2) | 0;
+    if (top < 2) top = 2;
+    const tabY = top;
+    const y = tabY + tabH + tabGap;
 
-    const listTop = y + 18;
-    const listBot = y + h - 16;
-    const viewH = Math.max(rowH, listBot - listTop);
-    srCatViewH = viewH;
-    const contentH = SPEED_ORDER.length * rowH;
-    srCatScrollMax = Math.max(0, contentH - viewH);
-    syncCatListScroll();
+    const groups = SPEED_GROUPS;
+    const gap = 4;
+    const tabWs = [];
+    let tabsW = 0;
+    for (let i = 0; i < groups.length; i++) {
+      const tw = pixTextWidth(groups[i].label) + 14;
+      tabWs.push(tw);
+      tabsW += tw;
+    }
+    tabsW += gap * (groups.length - 1);
+    let tx = x + (((totalW - tabsW) / 2) | 0);
+    if (tx < 2) tx = 2;
+    for (let i = 0; i < groups.length; i++) {
+      const tw = tabWs[i];
+      const on = srGroup === i;
+      const key = "srgroup:" + i;
+      const hot = !on && menuHovering(key);
+      px(tx, tabY, tw, tabH, on ? "#c9a227" : "#2b1c12");
+      px(tx + 1, tabY + 1, tw - 2, tabH - 2, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
+      drawPixText(groups[i].label, tx + ((tw / 2) | 0), tabY + 3, on ? "#2b1c12" : "#f3e2c4", "center");
+      addMenuHit(
+        key,
+        tx,
+        tabY,
+        tw,
+        tabH,
+        () => {
+          if (srGroup !== i) setSpeedGroup(i);
+        },
+        { hover: true }
+      );
+      tx += tw + gap;
+    }
 
-    const listW = leftW - 14;
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(x + 4, listTop - 2, listW + 2, viewH);
-    ctx.clip();
-    for (let i = 0; i < SPEED_ORDER.length; i++) {
-      const id = SPEED_ORDER[i];
+    drawPanelBox(x, y, leftW, h, groups[srGroup].label);
+    const cats = speedGroupCats();
+    const listTop = y + listPadTop;
+    const listW = leftW - 10;
+    const hitH = Math.max(7, rowH - 1);
+    for (let i = 0; i < cats.length; i++) {
+      const id = cats[i];
       const key = "cat:" + i;
       const sel = srCursor === i || menuHovering(key);
-      const oy = listTop + i * rowH - srCatScroll;
-      if (oy + 8 < listTop - 2 || oy > listBot) continue;
-      if (sel) px(x + 5, oy - 2, listW - 2, 8, "#e8c44a");
-      drawSpeedCatIcon(id, x + 7, oy - 1);
-      drawPixText(catLabel(id), x + 18, oy, sel ? "#2b1c12" : "#3a2414");
+      const oy = listTop + i * rowH;
+      if (sel) px(x + 5, oy - 1, listW, hitH, "#e8c44a");
+      drawSpeedCatIcon(id, x + 7, oy);
+      drawPixText(catLabel(id), x + 18, oy + 1, sel ? "#2b1c12" : "#3a2414");
       addMenuHit(
         key,
         x + 5,
-        oy - 2,
-        listW - 2,
-        8,
+        oy - 1,
+        listW,
+        hitH,
         () => {
           srCursor = i;
-          beginSpeedCategory(SPEED_ORDER[i]);
+          beginSpeedCategory(cats[i]);
         },
         { hover: true }
       );
     }
-    ctx.restore();
-
-    if (srCatScrollMax > 0) {
-      const barX = x + leftW - 7;
-      drawLockerScrollBar(barX, listTop - 2, viewH, srCatScroll, srCatScrollMax);
-      srCatBarBounds = { x: barX - 2, y: listTop - 2, w: 6, h: viewH };
-    } else {
-      srCatBarBounds = null;
-    }
 
     drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
-    addMenuHit("cat:esc", x + 5, y + h - 12, 70, 10, () => backToModeMenu(), { hover: true });
+    addMenuHit("cat:esc", x + 5, y + h - 12, 52, 10, () => backToModeMenu(), { hover: true });
+    drawPixText("AD SWITCH", x + leftW - 8, y + h - 10, "#8a5a32", "right");
     const bx = x + leftW + 10;
     drawPanelBox(bx, y, boardW, h, "TOP 10");
     drawBoardList(bx + 8, y + 20, 10);
@@ -22307,17 +22449,19 @@
         backToModeMenu();
         return true;
       }
+      const cats = speedGroupCats();
+      if (k === "arrowleft" || k === "a") setSpeedGroup(srGroup - 1);
+      if (k === "arrowright" || k === "d") setSpeedGroup(srGroup + 1);
+      if (k >= "1" && k <= "5") setSpeedGroup(k.charCodeAt(0) - 49);
       if (k === "arrowup" || k === "w") {
-        srCursor = (srCursor + SPEED_ORDER.length - 1) % SPEED_ORDER.length;
-        syncCatListScroll();
-        refreshSpeedBoard(SPEED_ORDER[srCursor]);
+        srCursor = (srCursor + cats.length - 1) % cats.length;
+        refreshSpeedBoard(cats[srCursor]);
       }
       if (k === "arrowdown" || k === "s") {
-        srCursor = (srCursor + 1) % SPEED_ORDER.length;
-        syncCatListScroll();
-        refreshSpeedBoard(SPEED_ORDER[srCursor]);
+        srCursor = (srCursor + 1) % cats.length;
+        refreshSpeedBoard(cats[srCursor]);
       }
-      if (k === "enter" || k === " ") beginSpeedCategory(SPEED_ORDER[srCursor]);
+      if (k === "enter" || k === " ") beginSpeedCategory(cats[srCursor] || cats[0]);
       return true;
     }
     if (uiScreen === "ready") {
@@ -22395,6 +22539,18 @@
       questMaskRuns: questMaskRuns | 0,
       questDone: Object.assign({}, questDone || {}),
       questClaimed: Object.assign({}, questClaimed || {}),
+      rankMvp: !!rankMvp,
+      rankMedia: {
+        youtuber: !!(rankMedia && rankMedia.youtuber),
+        tiktok: !!(rankMedia && rankMedia.tiktok),
+        twitch: !!(rankMedia && rankMedia.twitch),
+      },
+      career: {
+        xp: careerXp | 0,
+        level: careerLevel | 0,
+        backfilled: !!careerBackfilled,
+        backfillVer: careerBackfillVer | 0,
+      },
     };
   }
 
@@ -22438,6 +22594,13 @@
       if (snap.rankMedia.youtuber) rankMedia.youtuber = true;
       if (snap.rankMedia.tiktok) rankMedia.tiktok = true;
       if (snap.rankMedia.twitch) rankMedia.twitch = true;
+    }
+    if (snap.career && typeof snap.career === "object" && (snap.career.xp | 0) > (careerXp | 0)) {
+      careerXp = snap.career.xp | 0;
+      careerLevel = careerLevelFromXp(careerXp);
+      if (snap.career.backfilled) careerBackfilled = true;
+      careerBackfillVer = Math.max(careerBackfillVer | 0, snap.career.backfillVer | 0);
+      writeCareerLocal();
     }
     ensureLaunchSkins();
     syncQuestOwnershipFlags();
@@ -22483,9 +22646,23 @@
     );
   }
 
+  /** A fresh or speedrun-reset island must not replace a further-along one. */
+  function worldRegresses(next, prev) {
+    if (!prev || !Array.isArray(prev.slots)) return false;
+    if (!next || !Array.isArray(next.slots)) return true;
+    if ((next.level | 0) < (prev.level | 0)) return true;
+    if ((next.level | 0) === (prev.level | 0) && (next.xp | 0) < (prev.xp | 0)) return true;
+    if (prev.templeMaskTaken && !next.templeMaskTaken) return true;
+    if (prev.sunkenTaken && !next.sunkenTaken) return true;
+    if (prev.boat && !next.boat) return true;
+    return false;
+  }
+
   function pickBetterWorld(a, b) {
     if (!a) return b || null;
     if (!b) return a;
+    if (worldRegresses(a, b)) return b;
+    if (worldRegresses(b, a)) return a;
     const ta = a.savedAt | 0;
     const tb = b.savedAt | 0;
     if (ta !== tb) return ta > tb ? a : b;
@@ -22502,14 +22679,34 @@
   }
 
   function peekWorldForCloud() {
+    let live = null;
     if (playMode === "normal") {
       try {
-        return buildLiveWorldData();
+        live = buildLiveWorldData();
       } catch (e) {
-        return readStoredWorld(SAVE_KEY);
+        live = null;
       }
     }
-    return readStoredWorld(SAVE_KEY);
+    const uid = signedInUserId();
+    return pickBetterWorld(
+      pickBetterWorld(live, readStoredWorld(SAVE_KEY)),
+      uid ? readStoredWorld(accountWorldKey(uid)) : null
+    );
+  }
+
+  /** Write the survival island before a speedrun or replay wipes the live player. */
+  function pinSurvivalWorld() {
+    if (playMode !== "normal") return;
+    try {
+      const data = buildLiveWorldData();
+      const uid = signedInUserId();
+      const prev = pickBetterWorld(
+        readStoredWorld(SAVE_KEY),
+        uid ? readStoredWorld(accountWorldKey(uid)) : null
+      );
+      if (prev && worldRegresses(data, prev)) return;
+      writeStoredWorld(data, uid || undefined);
+    } catch (e) {}
   }
 
   function buildLiveWorldData() {
@@ -22578,9 +22775,13 @@
     if (!api || !uid) return;
     const data = peekWorldForCloud();
     if (!data || !Array.isArray(data.slots)) return;
-    writeStoredWorld(data, uid);
-    if (immediate && api.syncWorldSave) api.syncWorldSave(data).catch(() => {});
-    else if (api.syncWorldSaveSoon) api.syncWorldSaveSoon(data);
+    const cloud = api.getCachedCloudWorld ? api.getCachedCloudWorld() : null;
+    const best = pickBetterWorld(data, cloud);
+    if (!best || !Array.isArray(best.slots)) return;
+    writeStoredWorld(best, uid);
+    if (playMode === "normal" && worldRegresses(data, best)) loadGame();
+    if (immediate && api.syncWorldSave) api.syncWorldSave(best).catch(() => {});
+    else if (api.syncWorldSaveSoon) api.syncWorldSaveSoon(best);
   }
 
   function considerCloudWorld(cloudWorld) {
@@ -22589,13 +22790,16 @@
     const local = pickBetterWorld(readStoredWorld(SAVE_KEY), uid ? readStoredWorld(accountWorldKey(uid)) : null);
     const best = pickBetterWorld(local, cloudWorld);
     if (!best) return false;
-    const cloudWins =
-      best === cloudWorld &&
-      (!local ||
-        (cloudWorld.savedAt | 0) > (local.savedAt | 0) ||
-        worldProgressScore(cloudWorld) > worldProgressScore(local));
     writeStoredWorld(best, uid || undefined);
-    if (cloudWins && playMode === "normal") loadGame();
+    if (playMode === "normal") {
+      let live = null;
+      try {
+        live = buildLiveWorldData();
+      } catch (e) {
+        live = null;
+      }
+      if (!live || worldRegresses(live, best)) loadGame();
+    }
     return true;
   }
 
@@ -22639,10 +22843,20 @@
     try {
       if (playMode === "normal") {
         const data = buildLiveWorldData();
-        writeStoredWorld(data, signedInUserId() || undefined);
-        flushWorldToAccount(false);
+        const uid = signedInUserId();
+        const prev = pickBetterWorld(
+          readStoredWorld(SAVE_KEY),
+          uid ? readStoredWorld(accountWorldKey(uid)) : null
+        );
+        if (prev && worldRegresses(data, prev)) {
+          writeStoredWorld(prev, uid || undefined);
+          loadGame();
+        } else {
+          writeStoredWorld(data, uid || undefined);
+          flushWorldToAccount(false);
+        }
       } else {
-        // Keep account cloud mirror warm even from menus.
+        // Menus and speedruns keep the pinned island, never the reset player.
         flushWorldToAccount(false);
       }
       saveLockerProfile();
@@ -23068,9 +23282,10 @@
       menuHoverKey = next;
       if (hit && hit.key.indexOf("cat:") === 0 && hit.key !== "cat:esc") {
         const idx = parseInt(hit.key.split(":")[1], 10);
-        if (!isNaN(idx) && SPEED_ORDER[idx] && srCursor !== idx && uiScreen === "categories") {
+        const cats = speedGroupCats();
+        if (!isNaN(idx) && cats[idx] && srCursor !== idx && uiScreen === "categories") {
           srCursor = idx;
-          refreshSpeedBoard(SPEED_ORDER[idx]);
+          refreshSpeedBoard(cats[idx]);
         }
       }
       if (hit && hit.key.indexOf("mode:") === 0 && uiScreen === "mode") {
@@ -23207,20 +23422,6 @@
         pointerUi.down = true;
         return;
       }
-    }
-    if (
-      uiScreen === "categories" &&
-      srCatBarBounds &&
-      srCatScrollMax > 0 &&
-      p.x >= srCatBarBounds.x &&
-      p.x < srCatBarBounds.x + srCatBarBounds.w &&
-      p.y >= srCatBarBounds.y &&
-      p.y < srCatBarBounds.y + srCatBarBounds.h
-    ) {
-      e.preventDefault();
-      const t = (p.y - srCatBarBounds.y) / Math.max(1, srCatBarBounds.h);
-      srCatScroll = clampLockerScroll((srCatScrollMax * t) | 0, srCatScrollMax);
-      return;
     }
     const hit = hitMenuAt(p.x, p.y);
     if (hit && typeof hit.onClick === "function") {

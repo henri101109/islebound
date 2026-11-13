@@ -1701,18 +1701,81 @@
     }
   }
 
+  function unionIdList(a, b) {
+    const seen = {};
+    const out = [];
+    const src = [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []);
+    for (let i = 0; i < src.length; i++) {
+      const id = src[i];
+      if (!id || seen[id]) continue;
+      seen[id] = 1;
+      out.push(id);
+    }
+    return out;
+  }
+
+  /** Fresh / reset island (lower level or xp) must not replace the account world. */
+  function worldRegresses(next, prev) {
+    if (!prev || !Array.isArray(prev.slots)) return false;
+    if (!next || !Array.isArray(next.slots)) return true;
+    if ((next.level | 0) < (prev.level | 0)) return true;
+    if ((next.level | 0) === (prev.level | 0) && (next.xp | 0) < (prev.xp | 0)) return true;
+    if (prev.templeMaskTaken && !next.templeMaskTaken) return true;
+    if (prev.sunkenTaken && !next.sunkenTaken) return true;
+    if (prev.boat && !next.boat) return true;
+    return false;
+  }
+
+  function pickBetterWorld(a, b) {
+    if (!a || !Array.isArray(a.slots)) return b && Array.isArray(b.slots) ? b : null;
+    if (!b || !Array.isArray(b.slots)) return a;
+    if (worldRegresses(a, b)) return b;
+    if (worldRegresses(b, a)) return a;
+    return (a.savedAt | 0) >= (b.savedAt | 0) ? a : b;
+  }
+
+  /** Merge so a partial upload cannot drop unlocks, rank, or the island. */
+  function mergeLockerForCloud(prev, next) {
+    const a = prev && typeof prev === "object" ? prev : {};
+    const b = next && typeof next === "object" ? next : {};
+    const out = Object.assign({}, a, b);
+    out.ownedCosmetics = unionIdList(a.ownedCosmetics, b.ownedCosmetics);
+    out.ownedSkins = unionIdList(a.ownedSkins, b.ownedSkins);
+    out.ownedPets = unionIdList(a.ownedPets, b.ownedPets);
+    out.questDone = Object.assign({}, a.questDone || {}, b.questDone || {});
+    out.questClaimed = Object.assign({}, a.questClaimed || {}, b.questClaimed || {});
+    const ax = a.career && (a.career.xp | 0);
+    const bx = b.career && (b.career.xp | 0);
+    if ((ax | 0) > 0 || (bx | 0) > 0) out.career = (ax | 0) >= (bx | 0) ? a.career : b.career;
+    if (a.rankMvp || b.rankMvp) out.rankMvp = true;
+    const am = a.rankMedia || {};
+    const bm = b.rankMedia || {};
+    out.rankMedia = {
+      youtuber: !!(am.youtuber || bm.youtuber),
+      tiktok: !!(am.tiktok || bm.tiktok),
+      twitch: !!(am.twitch || bm.twitch),
+    };
+    const world = pickBetterWorld(a._world, b._world);
+    if (world) out._world = world;
+    else delete out._world;
+    return out;
+  }
+
   /** Push locker blob to profiles.locker (debounced via syncLockerSoon). */
   async function syncLocker(locker) {
     if (!session || !session.user || !configured() || !lockerCloudAvailable) {
       return { ok: false, local: true };
     }
     if (!locker || typeof locker !== "object") return { ok: false, error: "bad locker" };
+    const merged = mergeLockerForCloud(lastLockerCloud, locker);
+    const world = pickBetterWorld(lastWorldCloud, merged._world);
+    if (world) merged._world = world;
     const body = {
-      locker: locker,
+      locker: merged,
       updated_at: new Date().toISOString(),
     };
-    if (worldSaveCloudAvailable && locker._world && typeof locker._world === "object") {
-      body.world_save = locker._world;
+    if (worldSaveCloudAvailable && world) {
+      body.world_save = world;
     }
     try {
       let res = await fetch(restBase() + "/" + PROFILES + "?id=eq." + encodeURIComponent(session.user.id), {
@@ -1745,8 +1808,8 @@
         if (lockerColumnMissing(detail2)) lockerCloudAvailable = false;
         return { ok: false, error: detail2, local: true };
       }
-      lastLockerCloud = locker;
-      if (locker._world) lastWorldCloud = locker._world;
+      lastLockerCloud = merged;
+      if (world) lastWorldCloud = world;
       return { ok: true };
     } catch (e) {
       return { ok: false, error: "network", local: true };
@@ -1780,10 +1843,10 @@
   async function syncWorldSave(world) {
     if (!session || !session.user || !configured()) return { ok: false, local: true };
     if (!world || typeof world !== "object") return { ok: false, error: "bad world" };
-    lastWorldCloud = world;
+    const kept = pickBetterWorld(world, lastWorldCloud) || world;
     const base =
       lastLockerCloud && typeof lastLockerCloud === "object" ? Object.assign({}, lastLockerCloud) : {};
-    base._world = world;
+    base._world = kept;
     return syncLocker(base);
   }
 
