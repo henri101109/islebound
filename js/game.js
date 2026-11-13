@@ -469,6 +469,10 @@
   let duelLobby = [];
   let duelCloudOff = false;
   let duelListBeat = 0;
+  let duelSigSeen = 0;
+  let duelCloudBusy = false;
+  let duelReadyResend = 0;
+  let duelFinishResend = 0;
   const LOGO_FRAMES = 12;
   const LOGO_FRAME_MS = 150;
   const LOGO_POP_MS = 220;
@@ -503,6 +507,11 @@
   let srWasDead = false;
   let srName = "";
   let srCursor = 0;
+  /** Pixel scroll for the speedrun category list (arrows / side slider only). */
+  let srCatScroll = 0;
+  let srCatScrollMax = 0;
+  /** Clickable scrollbar track while on categories: { x, y, w, h }. */
+  let srCatBarBounds = null;
   let srFinishSel = 1;
   let srBoardRows = [];
   let srBoardNote = "";
@@ -16930,7 +16939,8 @@
       .then(async (res) => {
         if (!res.ok) {
           const detail = await res.text().catch(() => "");
-          if (res.status === 404 || detail.indexOf("duel_rooms") >= 0 || detail.indexOf("PGRST205") >= 0) {
+          // Only hard-disable when the table is truly missing — transient errors must retry.
+          if (res.status === 404 || detail.indexOf("PGRST205") >= 0) {
             duelCloudOff = true;
           }
           return null;
@@ -16946,23 +16956,56 @@
       .catch(() => null);
   }
 
-  function duelCloudPush() {
+  function duelListedFlag(room) {
+    if (!room) return false;
+    return !room.guestId && room.phase !== "done" && room.phase !== "leg" && room.phase !== "rest";
+  }
+
+  function duelCloudPush(opts) {
     if (duelCloudOff || !duelIsHost() || !duel) return;
-    const listed = !duel.guestId && duel.phase !== "done" && duel.phase !== "leg" && duel.phase !== "rest";
-    duelRest("duel_rooms?on_conflict=id", {
-      method: "POST",
-      prefer: "resolution=merge-duplicates,return=minimal",
-      body: {
-        id: duel.code,
-        host_id: duel.hostId,
-        host_name: duel.hostName || "HOST",
-        guest_id: duel.guestId || null,
-        guest_name: duel.guestName || null,
-        phase: duel.phase || "wait",
-        listed: listed,
-        payload: duel,
-        updated_at: new Date().toISOString(),
-      },
+    const clearGuest = !!(opts && opts.clearGuest);
+    const create = !!(opts && opts.create);
+    const body = {
+      phase: duel.phase || "wait",
+      host_name: duel.hostName || "HOST",
+      payload: duel,
+      updated_at: new Date().toISOString(),
+    };
+    // Never null out guest_id / flip listed=true on a routine heartbeat — that races the guest claim.
+    if (duel.guestId) {
+      body.guest_id = duel.guestId;
+      body.guest_name = duel.guestName || "GUEST";
+      body.listed = false;
+    } else if (clearGuest || create) {
+      body.guest_id = null;
+      body.guest_name = null;
+      body.listed = duelListedFlag(duel);
+    } else if (duel.phase === "done" || duel.phase === "leg" || duel.phase === "rest") {
+      body.listed = false;
+    }
+    if (create) {
+      duelRest("duel_rooms?on_conflict=id", {
+        method: "POST",
+        prefer: "resolution=merge-duplicates,return=minimal",
+        body: {
+          id: duel.code,
+          host_id: duel.hostId,
+          host_name: body.host_name,
+          guest_id: null,
+          guest_name: null,
+          phase: body.phase,
+          listed: true,
+          payload: duel,
+          signal: null,
+          updated_at: body.updated_at,
+        },
+      });
+      return;
+    }
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
+      method: "PATCH",
+      prefer: "return=minimal",
+      body: body,
     });
   }
 
@@ -16979,8 +17022,29 @@
     duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
       method: "PATCH",
       prefer: "return=minimal",
-      body: { signal: msg },
+      body: { signal: msg, updated_at: new Date().toISOString() },
     });
+  }
+
+  function duelCloudReleaseClaim(code) {
+    if (duelCloudOff || !code || !duelSelfId) return;
+    duelRest(
+      "duel_rooms?id=eq." +
+        encodeURIComponent(code) +
+        "&guest_id=eq." +
+        encodeURIComponent(duelSelfId),
+      {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: {
+          guest_id: null,
+          guest_name: null,
+          listed: true,
+          signal: { type: "leave", from: duelSelfId, code: code, t: Date.now() },
+          updated_at: new Date().toISOString(),
+        },
+      }
+    );
   }
 
   function duelNoteListing(room) {
@@ -17124,12 +17188,16 @@
     duelJoinPending = "";
     duelStatus = "";
     duelTypingCode = false;
+    duelSigSeen = 0;
+    duelReadyResend = 0;
+    duelFinishResend = 0;
     uiScreen = "duel_room";
     playMode = null;
     srCursor = 0;
     srRunning = false;
     srTiming = false;
-    duelBroadcast();
+    duelSend("room", { room: duel });
+    duelCloudPush({ create: true });
   }
 
   function duelJoin(code) {
@@ -17138,7 +17206,7 @@
       .replace(/[^A-Z0-9]/g, "")
       .slice(0, 4);
     if (c.length !== 4) {
-      duelStatus = "4 LETTERS";
+      duelStatus = "BAD ROOM";
       return;
     }
     duelEnsureId();
@@ -17146,13 +17214,75 @@
     duel = null;
     duelJoinPending = c;
     duelJoinAt = Date.now();
+    duelGuestBeat = 0;
     duelStatus = "JOINING...";
+    duelLocalReady = false;
+    duelLegLocked = false;
+    duelStartedToken = -1;
     duelSend("join", { code: c, name: duelMyName() });
     duelCloudJoin(c, duelMyName());
   }
 
+  function duelRoomFromRow(row, guestName) {
+    if (!row) return null;
+    const base = row.payload && typeof row.payload === "object" ? row.payload : {};
+    const room = {
+      code: row.id || base.code || "",
+      hostId: base.hostId || row.host_id || "",
+      guestId: base.guestId || row.guest_id || null,
+      hostName: base.hostName || row.host_name || "HOST",
+      guestName: base.guestName || row.guest_name || "",
+      phase: base.phase || row.phase || "wait",
+      size: base.size | 0,
+      cats: Array.isArray(base.cats) ? base.cats.slice() : [],
+      leg: base.leg | 0,
+      token: base.token | 0,
+      results: Array.isArray(base.results) ? base.results.slice() : [],
+      finishes: base.finishes && typeof base.finishes === "object" ? Object.assign({}, base.finishes) : {},
+      ready: base.ready && typeof base.ready === "object" ? Object.assign({}, base.ready) : {},
+      restUntil: base.restUntil | 0,
+      note: base.note || "",
+    };
+    if (guestName) {
+      room.guestId = duelSelfId;
+      room.guestName = guestName;
+    } else if (row.guest_id) {
+      room.guestId = row.guest_id;
+      room.guestName = row.guest_name || room.guestName || "GUEST";
+    }
+    return room;
+  }
+
+  function duelEnterAsGuest(room) {
+    if (!room || !room.hostId || room.hostId === duelSelfId) return;
+    room.guestId = duelSelfId;
+    if (!room.guestName) room.guestName = duelMyName();
+    duel = room;
+    duelJoinPending = "";
+    duelStatus = "";
+    duelLocalReady = !!(room.ready && room.ready[duelSelfId]);
+    playMode = null;
+    srRunning = false;
+    srTiming = false;
+    if (room.phase === "wait" || room.phase === "pick" || room.phase === "arm") {
+      uiScreen = "duel_room";
+      srCursor = 0;
+    } else if (room.phase === "leg" && room.token !== duelStartedToken) {
+      duelStartedToken = room.token;
+      duelLegLocked = false;
+      beginSpeedCategory((room.cats && room.cats[room.leg]) || SPEED_ORDER[0]);
+    } else if (room.phase === "rest" || room.phase === "done") {
+      playMode = "speedrun";
+      uiScreen = "duel_card";
+    } else {
+      uiScreen = "duel_room";
+    }
+  }
+
   function duelCloudJoin(code, name) {
-    if (duelCloudOff || !code) return;
+    if (duelCloudOff || !code || duelCloudBusy) return;
+    duelCloudBusy = true;
+    const joinSig = { type: "join", from: duelSelfId, code: code, name: name, t: Date.now() };
     duelRest("duel_rooms?id=eq." + encodeURIComponent(code) + "&guest_id=is.null", {
       method: "PATCH",
       prefer: "return=representation",
@@ -17160,26 +17290,59 @@
         guest_id: duelSelfId,
         guest_name: name,
         listed: false,
-        signal: { type: "join", from: duelSelfId, code: code, name: name, t: Date.now() },
+        signal: joinSig,
+        updated_at: new Date().toISOString(),
       },
-    }).then((rows) => {
-      if (duelCloudOff || duel || !rows) return;
-      if (!rows.length) {
-        if (duelJoinPending === code) {
-          duelStatus = "ROOM FULL";
-          duelJoinPending = "";
+    })
+      .then((rows) => {
+        duelCloudBusy = false;
+        if (duelCloudOff || duel || duelJoinPending !== code) return;
+        if (!rows) return; // transient — keep trying
+        if (!rows.length) {
+          // Either missing or already taken — inspect the row.
+          duelRest(
+            "duel_rooms?id=eq." +
+              encodeURIComponent(code) +
+              "&select=id,host_id,host_name,guest_id,guest_name,phase,payload"
+          ).then((check) => {
+            if (duel || duelJoinPending !== code) return;
+            const row = check && check[0];
+            if (!row) {
+              duelStatus = "NO ROOM";
+              duelJoinPending = "";
+              return;
+            }
+            if (row.guest_id && row.guest_id !== duelSelfId) {
+              duelStatus = "ROOM FULL";
+              duelJoinPending = "";
+              return;
+            }
+            if (row.guest_id === duelSelfId || (row.payload && row.payload.guestId === duelSelfId)) {
+              duelEnterAsGuest(duelRoomFromRow(row, name));
+              return;
+            }
+            // Still open somehow — retry next tick.
+          });
+          return;
         }
-        return;
-      }
-      if (rows[0].payload) duelApplyRoom(rows[0].payload);
-    });
+        // Claim landed. Enter immediately even if payload still has guestId:null.
+        duelEnterAsGuest(duelRoomFromRow(rows[0], name));
+      })
+      .catch(() => {
+        duelCloudBusy = false;
+      });
   }
 
   function duelLeaveToHome() {
     if (duel) {
       duelSend("leave", { code: duel.code });
       if (duelIsHost()) duelCloudDrop(duel.code);
-      else duelCloudSignal({ type: "leave", from: duelSelfId, code: duel.code, t: Date.now() });
+      else {
+        duelCloudSignal({ type: "leave", from: duelSelfId, code: duel.code, t: Date.now() });
+        duelCloudReleaseClaim(duel.code);
+      }
+    } else if (duelJoinPending) {
+      duelCloudReleaseClaim(duelJoinPending);
     }
     duel = null;
     duelLegLocked = false;
@@ -17189,6 +17352,9 @@
     duelTypingCode = false;
     duelStatus = "";
     duelCodeInput = "";
+    duelSigSeen = 0;
+    duelReadyResend = 0;
+    duelFinishResend = 0;
     uiScreen = "duel_home";
     playMode = null;
     srRunning = false;
@@ -17322,6 +17488,7 @@
       duelTryStart();
     } else {
       duelLocalReady = true;
+      duelReadyResend = 0;
       const readyMsg = { type: "ready", from: duelSelfId, code: duel.code, t: Date.now() };
       duelSend("ready", { code: duel.code });
       duelCloudSignal(readyMsg);
@@ -17355,7 +17522,17 @@
       duelRecordFinish(duelSelfId, ms, cat);
       duelMaybeRest();
     } else {
-      const fin = { type: "finish", from: duelSelfId, code: duel.code, leg: duel.leg, token: duel.token, cat: cat, ms: ms, t: Date.now() };
+      duelFinishResend = 0;
+      const fin = {
+        type: "finish",
+        from: duelSelfId,
+        code: duel.code,
+        leg: duel.leg,
+        token: duel.token,
+        cat: cat,
+        ms: ms,
+        t: Date.now(),
+      };
       duelSend("finish", { code: duel.code, leg: duel.leg, token: duel.token, cat: cat, ms: ms });
       duelCloudSignal(fin);
     }
@@ -17373,10 +17550,23 @@
   }
 
   function duelApplyRoom(room) {
-    if (!room || room.hostId === duelSelfId) return;
+    if (!room || !room.hostId || room.hostId === duelSelfId) return;
+    const pendingMine = duelJoinPending && room.code === duelJoinPending;
+    const alreadyGuest = duel && !duelIsHost() && duel.code === room.code;
+    if (pendingMine && !room.guestId) {
+      room = Object.assign({}, room, { guestId: duelSelfId, guestName: duelMyName() });
+    }
+    if (room.guestId !== duelSelfId && !alreadyGuest) return;
+    if (!room.guestId && alreadyGuest) {
+      room = Object.assign({}, room, { guestId: duelSelfId, guestName: (duel && duel.guestName) || duelMyName() });
+    }
     if (room.guestId !== duelSelfId) return;
+    const prevPhase = duel && duel.phase;
+    const prevToken = duel && duel.token;
     duel = room;
     duelJoinPending = "";
+    duelStatus = "";
+    if (room.ready && room.ready[duelSelfId]) duelLocalReady = true;
     if (room.phase === "wait" || room.phase === "pick" || room.phase === "arm") {
       if (uiScreen !== "duel_room") {
         playMode = null;
@@ -17395,10 +17585,20 @@
       return;
     }
     if (room.phase === "rest" || room.phase === "done") {
+      // Keep a locally locked finish visible if host payload is briefly behind.
+      if (duelLegLocked && duelSelfId && (!room.finishes || !room.finishes[duelSelfId])) {
+        const wr = catBoardWrMs(srCat);
+        if (!duel.finishes) duel.finishes = {};
+        duel.finishes[duelSelfId] = { ms: srFinalMs | 0, pts: duelPoints(wr, srFinalMs), wr: wr };
+      }
       srTiming = false;
       srRunning = false;
       playMode = "speedrun";
       uiScreen = "duel_card";
+      return;
+    }
+    if (prevPhase === "leg" && room.phase === "leg" && prevToken === room.token && duelLegLocked) {
+      // still waiting on opponent
     }
   }
 
@@ -17468,14 +17668,16 @@
         duel.ready = {};
         if (mid) {
           duelStuck("OPP LEFT");
-          duelBroadcast();
+          duelSend("room", { room: duel });
+          duelCloudPush({ clearGuest: true });
         } else {
           if (duel.phase === "arm" || duel.phase === "pick") {
             duel.phase = "wait";
             duel.cats = [];
             duel.size = 0;
           }
-          duelBroadcast();
+          duelSend("room", { room: duel });
+          duelCloudPush({ clearGuest: true });
         }
       } else if (!duelIsHost() && msg.from === duel.hostId) {
         duelStuck("HOST LEFT");
@@ -17485,23 +17687,49 @@
 
   function tickDuel() {
     const now = Date.now();
-    if (duelJoinPending && !duel && duelJoinAt && now - duelJoinAt > 2500) {
-      duelStatus = "NO ROOM";
-      duelJoinPending = "";
-    } else if (duelJoinPending && !duel && now - duelGuestBeat > 400) {
-      duelGuestBeat = now;
-      duelSend("join", { code: duelJoinPending, name: duelMyName() });
+    if (duelJoinPending && !duel) {
+      if (duelJoinAt && now - duelJoinAt > 12000) {
+        duelCloudReleaseClaim(duelJoinPending);
+        duelStatus = "NO ROOM";
+        duelJoinPending = "";
+      } else if (now - duelGuestBeat > 700) {
+        duelGuestBeat = now;
+        duelSend("join", { code: duelJoinPending, name: duelMyName() });
+        duelCloudJoin(duelJoinPending, duelMyName());
+      }
     }
-    if (duel && !duelIsHost() && duel.code && now - duelGuestBeat > 1000) {
+    if (duel && !duelIsHost() && duel.code && now - duelGuestBeat > 900) {
       duelGuestBeat = now;
       duelSend("ping", { code: duel.code });
+      // Resend ready/finish until host payload acknowledges — cloud signals can overwrite.
+      if (duel.phase === "arm" && duelLocalReady && !(duel.ready && duel.ready[duelSelfId])) {
+        if (now - duelReadyResend > 900) {
+          duelReadyResend = now;
+          duelCloudSignal({ type: "ready", from: duelSelfId, code: duel.code, t: now });
+        }
+      }
+      if (duel.phase === "leg" && duelLegLocked && !(duel.finishes && duel.finishes[duelSelfId])) {
+        if (now - duelFinishResend > 900) {
+          duelFinishResend = now;
+          duelCloudSignal({
+            type: "finish",
+            from: duelSelfId,
+            code: duel.code,
+            leg: duel.leg,
+            token: duel.token,
+            cat: srCat,
+            ms: srFinalMs | 0,
+            t: now,
+          });
+        }
+      }
     }
-    if (now - duelListBeat > 1000) {
+    if (now - duelListBeat > 800) {
       duelListBeat = now;
-      duelLobby = duelLobby.filter((r) => now - r.seen < 8000);
+      duelLobby = duelLobby.filter((r) => now - r.seen < 10000);
       if (uiScreen === "duel_home") duelCloudList();
       if (duel && duelIsHost()) duelCloudPull();
-      else if (duel && !duelIsHost()) duelCloudWatch();
+      else if ((duel && !duelIsHost()) || duelJoinPending) duelCloudWatch();
     }
     if (!duel || !duelIsHost()) return;
     if (duel.phase === "rest" && duel.restUntil && now >= duel.restUntil) {
@@ -17516,18 +17744,20 @@
 
   function duelCloudList() {
     if (duelCloudOff) return;
-    const cutoff = new Date(Date.now() - 15000).toISOString();
+    const cutoff = new Date(Date.now() - 20000).toISOString();
     duelRest(
       "duel_rooms?listed=eq.true&guest_id=is.null&updated_at=gt." +
         encodeURIComponent(cutoff) +
-        "&select=id,host_id,host_name,phase,payload&order=updated_at.desc&limit=12"
+        "&select=id,host_id,host_name,phase,payload,updated_at&order=updated_at.desc&limit=12"
     ).then((rows) => {
       if (!rows || !rows.length) return;
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const room = row.payload && row.payload.hostId ? row.payload : null;
-        if (room) duelNoteListing(room);
-        else if (row.host_id && row.host_id !== duelSelfId) {
+        if (room) {
+          if (!room.code) room.code = row.id;
+          duelNoteListing(room);
+        } else if (row.host_id && row.host_id !== duelSelfId) {
           duelNoteListing({
             code: row.id,
             hostId: row.host_id,
@@ -17543,9 +17773,28 @@
 
   function duelCloudPull() {
     if (duelCloudOff || !duelIsHost() || !duel) return;
-    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code) + "&select=signal").then((rows) => {
-      const sig = rows && rows[0] && rows[0].signal;
+    duelRest(
+      "duel_rooms?id=eq." +
+        encodeURIComponent(duel.code) +
+        "&select=signal,guest_id,guest_name"
+    ).then((rows) => {
+      const row = rows && rows[0];
+      if (!row) return;
+      // Absorb a guest claim even if the signal row was overwritten or cleared.
+      if (row.guest_id && !duel.guestId && row.guest_id !== duelSelfId) {
+        duelOnNet({
+          type: "join",
+          from: row.guest_id,
+          code: duel.code,
+          name: row.guest_name || "GUEST",
+          t: Date.now(),
+        });
+      }
+      const sig = row.signal;
       if (!sig || !sig.type) return;
+      const sigT = sig.t | 0;
+      if (sigT && sigT <= duelSigSeen) return;
+      if (sigT) duelSigSeen = sigT;
       duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
         method: "PATCH",
         prefer: "return=minimal",
@@ -17556,10 +17805,33 @@
   }
 
   function duelCloudWatch() {
-    if (duelCloudOff || !duel || duelIsHost()) return;
-    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code) + "&select=payload").then((rows) => {
-      const room = rows && rows[0] && rows[0].payload;
-      if (room && room.hostId) duelApplyRoom(room);
+    if (duelCloudOff) return;
+    const code = (duel && duel.code) || duelJoinPending;
+    if (!code) return;
+    if (duel && duelIsHost()) return;
+    duelRest(
+      "duel_rooms?id=eq." +
+        encodeURIComponent(code) +
+        "&select=id,host_id,host_name,guest_id,guest_name,phase,payload"
+    ).then((rows) => {
+      if (!rows || !rows.length) {
+        if (duel && !duelIsHost()) duelStuck("HOST LEFT");
+        return;
+      }
+      const room = duelRoomFromRow(rows[0]);
+      if (!room) return;
+      if (duelJoinPending === code && !duel) {
+        if (rows[0].guest_id === duelSelfId || room.guestId === duelSelfId) {
+          duelEnterAsGuest(room);
+          return;
+        }
+        if (rows[0].guest_id && rows[0].guest_id !== duelSelfId) {
+          duelStatus = "ROOM FULL";
+          duelJoinPending = "";
+        }
+        return;
+      }
+      if (room.hostId) duelApplyRoom(room);
     });
   }
 
@@ -17644,7 +17916,9 @@
       duelCreate();
     }, { hover: true });
     drawPixText("ROOMS", x + 12, y + 38, "#5c3a21");
-    if (!rooms.length) {
+    if (duelCloudOff) {
+      drawPixText("ONLINE OFF", (x + w / 2) | 0, y + 52, "#8a3038", "center");
+    } else if (!rooms.length) {
       drawPixText("NO OPEN ROOMS", (x + w / 2) | 0, y + 52, "#8a5a32", "center");
     } else {
       const maxStart = Math.max(0, rooms.length - 6);
@@ -17678,7 +17952,7 @@
     if (!duel) return;
     const picking = duel.phase === "pick" && duelIsHost();
     const w = picking ? 250 : 230;
-    const h = picking ? Math.min(uiH - 8, 168) : duel.phase === "arm" ? 210 : 156;
+    const h = picking ? Math.min(uiH - 8, 180) : duel.phase === "arm" ? 224 : 168;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, duel.hostName || "DUEL");
@@ -17756,8 +18030,23 @@
       }
     }
     if (duelStatus) {
-      drawPixText(duelStatus, (x + w / 2) | 0, y + (duel.phase === "arm" ? h - 58 : h - 12), "#8a3038", "center");
+      drawPixText(duelStatus, (x + w / 2) | 0, y + (duel.phase === "arm" ? h - 58 : h - 28), "#8a3038", "center");
     }
+    const leaveY = y + h - 14;
+    const leaveSel = menuHovering("duel:leave");
+    if (leaveSel) px(x + 12, leaveY - 2, 70, 11, "#e8c44a");
+    drawPixText("LEAVE", x + 16, leaveY, leaveSel ? "#2b1c12" : "#5c3a21");
+    addMenuHit(
+      "duel:leave",
+      x + 12,
+      leaveY - 2,
+      70,
+      11,
+      () => {
+        duelLeaveToHome();
+      },
+      { hover: true }
+    );
   }
 
   function drawDuelCard() {
@@ -17913,6 +18202,8 @@
       playMode = "speedrun";
       uiScreen = "categories";
       srCursor = 0;
+      srCatScroll = 0;
+      syncCatListScroll();
       refreshSpeedBoard(SPEED_ORDER[0]);
     } else if (i === 2) openDuelMenu();
     else if (i === 3) {
@@ -19022,6 +19313,7 @@
     srRunning = false;
     srTiming = false;
     srCursor = Math.max(0, SPEED_ORDER.indexOf(srCat));
+    syncCatListScroll();
     refreshSpeedBoard(SPEED_ORDER[srCursor] || srCat);
   }
 
@@ -20279,6 +20571,18 @@
     drawPixText("ARROWS  ESC MENU", (x + w / 2) | 0, y + h - 10, "#8a5a32", "center");
   }
 
+  function syncCatListScroll() {
+    const rowH = 9;
+    const curTop = (srCursor | 0) * rowH;
+    const viewH = srCatViewH > 0 ? srCatViewH : rowH * 12;
+    if (curTop < srCatScroll) srCatScroll = curTop;
+    else if (curTop + rowH > srCatScroll + viewH) srCatScroll = curTop + rowH - viewH;
+    srCatScroll = clampLockerScroll(srCatScroll, srCatScrollMax);
+  }
+
+  /** Set by drawCategorySelect so arrow sync knows the visible list height. */
+  let srCatViewH = 0;
+
   function drawCategorySelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -20287,24 +20591,59 @@
     ctx.globalAlpha = 1;
     const leftW = 158;
     const boardW = 188;
-    const h = Math.min(uiH - 8, 16 + SPEED_ORDER.length * 9 + 28);
+    const rowH = 9;
+    const maxVis = 12;
+    const h = Math.min(uiH - 8, 16 + maxVis * rowH + 28);
     const totalW = leftW + boardW + 10;
     const x = ((uiW - totalW) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, leftW, h, "SPEEDRUN");
+
+    const listTop = y + 18;
+    const listBot = y + h - 16;
+    const viewH = Math.max(rowH, listBot - listTop);
+    srCatViewH = viewH;
+    const contentH = SPEED_ORDER.length * rowH;
+    srCatScrollMax = Math.max(0, contentH - viewH);
+    syncCatListScroll();
+
+    const listW = leftW - 14;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + 4, listTop - 2, listW + 2, viewH);
+    ctx.clip();
     for (let i = 0; i < SPEED_ORDER.length; i++) {
       const id = SPEED_ORDER[i];
       const key = "cat:" + i;
       const sel = srCursor === i || menuHovering(key);
-      const oy = y + 18 + i * 9;
-      if (sel) px(x + 5, oy - 2, leftW - 10, 8, "#e8c44a");
+      const oy = listTop + i * rowH - srCatScroll;
+      if (oy + 8 < listTop - 2 || oy > listBot) continue;
+      if (sel) px(x + 5, oy - 2, listW - 2, 8, "#e8c44a");
       drawSpeedCatIcon(id, x + 7, oy - 1);
       drawPixText(catLabel(id), x + 18, oy, sel ? "#2b1c12" : "#3a2414");
-      addMenuHit(key, x + 5, oy - 2, leftW - 10, 8, () => {
-        srCursor = i;
-        beginSpeedCategory(SPEED_ORDER[i]);
-      }, { hover: true });
+      addMenuHit(
+        key,
+        x + 5,
+        oy - 2,
+        listW - 2,
+        8,
+        () => {
+          srCursor = i;
+          beginSpeedCategory(SPEED_ORDER[i]);
+        },
+        { hover: true }
+      );
     }
+    ctx.restore();
+
+    if (srCatScrollMax > 0) {
+      const barX = x + leftW - 7;
+      drawLockerScrollBar(barX, listTop - 2, viewH, srCatScroll, srCatScrollMax);
+      srCatBarBounds = { x: barX - 2, y: listTop - 2, w: 6, h: viewH };
+    } else {
+      srCatBarBounds = null;
+    }
+
     drawPixText("ESC MENU", x + 8, y + h - 10, "#5c3a21");
     addMenuHit("cat:esc", x + 5, y + h - 12, 70, 10, () => backToModeMenu(), { hover: true });
     const bx = x + leftW + 10;
@@ -21538,10 +21877,12 @@
       }
       if (k === "arrowup" || k === "w") {
         srCursor = (srCursor + SPEED_ORDER.length - 1) % SPEED_ORDER.length;
+        syncCatListScroll();
         refreshSpeedBoard(SPEED_ORDER[srCursor]);
       }
       if (k === "arrowdown" || k === "s") {
         srCursor = (srCursor + 1) % SPEED_ORDER.length;
+        syncCatListScroll();
         refreshSpeedBoard(SPEED_ORDER[srCursor]);
       }
       if (k === "enter" || k === " ") beginSpeedCategory(SPEED_ORDER[srCursor]);
@@ -22289,6 +22630,20 @@
         pointerUi.down = true;
         return;
       }
+    }
+    if (
+      uiScreen === "categories" &&
+      srCatBarBounds &&
+      srCatScrollMax > 0 &&
+      p.x >= srCatBarBounds.x &&
+      p.x < srCatBarBounds.x + srCatBarBounds.w &&
+      p.y >= srCatBarBounds.y &&
+      p.y < srCatBarBounds.y + srCatBarBounds.h
+    ) {
+      e.preventDefault();
+      const t = (p.y - srCatBarBounds.y) / Math.max(1, srCatBarBounds.h);
+      srCatScroll = clampLockerScroll((srCatScrollMax * t) | 0, srCatScrollMax);
+      return;
     }
     const hit = hitMenuAt(p.x, p.y);
     if (hit && typeof hit.onClick === "function") {
