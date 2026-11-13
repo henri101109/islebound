@@ -1123,6 +1123,67 @@
   let profileResults = [];
   let profileFocus = null;
   let profileField = 0;
+  /** Ranks hub tab: "ranks" | "media". */
+  let ranksTab = "ranks";
+  /** Purchased / granted social ranks (persisted in locker). */
+  let rankMvp = false;
+  let rankMedia = { youtuber: false, tiktok: false, twitch: false };
+  const RANK_DEFS = {
+    owner: {
+      id: "owner",
+      label: "OWNER",
+      tab: "ranks",
+      fill: "#c9a227",
+      edge: "#6a5020",
+      face: "#fff4c8",
+      blurb: "HENRI ONLY",
+    },
+    mvp: {
+      id: "mvp",
+      label: "MVP",
+      tab: "ranks",
+      fill: "#2a9a8a",
+      edge: "#0e4a42",
+      face: "#e8fff8",
+      blurb: "$4.99  SUPPORT THE GAME",
+    },
+    vip: {
+      id: "vip",
+      label: "VIP",
+      tab: "ranks",
+      fill: "#8a2420",
+      edge: "#3a1010",
+      face: "#ffd8d0",
+      blurb: "CREATE AN ACCOUNT",
+    },
+    youtuber: {
+      id: "youtuber",
+      label: "YOUTUBER",
+      tab: "media",
+      fill: "#c4302b",
+      edge: "#4a1010",
+      face: "#ffe8e4",
+      blurb: "YT LONG 1K  /  SHORT 30K",
+    },
+    tiktok: {
+      id: "tiktok",
+      label: "TIKTOK",
+      tab: "media",
+      fill: "#1a1a1a",
+      edge: "#000000",
+      face: "#f0f0f0",
+      blurb: "TIKTOK OVER 20K VIEWS",
+    },
+    twitch: {
+      id: "twitch",
+      label: "TWITCH",
+      tab: "media",
+      fill: "#6441a5",
+      edge: "#2a1848",
+      face: "#efe8ff",
+      blurb: "STREAM 20+ VIEWERS",
+    },
+  };
   /** null = bag slot heldSlot; face/back select disabled in-game (locker only). */
   let cosSelect = null;
   let cosTip = "";
@@ -3730,14 +3791,23 @@
       questMaskRuns: questMaskRuns | 0,
       questDone: questDone || {},
       questClaimed: questClaimed || {},
+      rankMvp: !!rankMvp,
+      rankMedia: {
+        youtuber: !!(rankMedia && rankMedia.youtuber),
+        tiktok: !!(rankMedia && rankMedia.tiktok),
+        twitch: !!(rankMedia && rankMedia.twitch),
+      },
     };
     try {
       localStorage.setItem(LOCKER_PROFILE_KEY, JSON.stringify(snap));
     } catch (e) {}
-    // Account sync so cosmetics survive browser clears / other devices.
+    // Account sync so cosmetics + world survive browser clears / logout / other devices.
     const api = lbApi();
     if (api && api.isSignedIn && api.isSignedIn() && api.syncLockerSoon) {
-      api.syncLockerSoon(snap);
+      const cloudSnap = Object.assign({}, snap);
+      const world = typeof peekWorldForCloud === "function" ? peekWorldForCloud() : null;
+      if (world && Array.isArray(world.slots)) cloudSnap._world = world;
+      api.syncLockerSoon(cloudSnap);
     }
   }
 
@@ -3745,6 +3815,7 @@
   function mergeCloudLocker(locker) {
     if (!locker || typeof locker !== "object") return false;
     applyLockerSnapshot(locker);
+    if (locker._world && typeof locker._world === "object") considerCloudWorld(locker._world);
     saveLockerProfile();
     return true;
   }
@@ -3754,12 +3825,16 @@
     if (!api || !api.isSignedIn || !api.isSignedIn()) return;
     const cached = api.getCachedCloudLocker && api.getCachedCloudLocker();
     if (cached) mergeCloudLocker(cached);
+    const cachedWorld = api.getCachedCloudWorld && api.getCachedCloudWorld();
+    if (cachedWorld) considerCloudWorld(cachedWorld);
     if (!api.fetchLocker) return;
     api.fetchLocker().then((res) => {
       if (res && res.locker) mergeCloudLocker(res.locker);
+      else if (res && res.world) considerCloudWorld(res.world);
       syncLexYoungFromHistory();
-      // Push local (now merged) up so cloud catches any local-only unlocks.
+      // Push local (now merged) up so cloud catches any local-only unlocks / world.
       saveLockerProfile();
+      flushWorldToAccount(true);
     });
   }
 
@@ -3964,6 +4039,118 @@
     if (!equippedPet && ownsPet("egypt_cat")) equipPet("egypt_cat");
     else if (!equippedPet && ownsPet("blue_crab")) equipPet("blue_crab");
     else if (changed) saveLockerProfile();
+  }
+
+  function isSignedInAccount() {
+    const api = lbApi();
+    return !!(api && api.isSignedIn && api.isSignedIn());
+  }
+
+  function hasRank(id) {
+    if (id === "owner") return isHenriAccount();
+    if (id === "mvp") return !!rankMvp;
+    if (id === "vip") return isSignedInAccount();
+    if (id === "youtuber") return !!(rankMedia && rankMedia.youtuber);
+    if (id === "tiktok") return !!(rankMedia && rankMedia.tiktok);
+    if (id === "twitch") return !!(rankMedia && rankMedia.twitch);
+    return false;
+  }
+
+  /** Best social rank for the local player (for nametags). Media takes priority after owner/mvp/vip. */
+  function primaryRankId() {
+    if (hasRank("owner")) return "owner";
+    if (hasRank("mvp")) return "mvp";
+    if (hasRank("youtuber")) return "youtuber";
+    if (hasRank("tiktok")) return "tiktok";
+    if (hasRank("twitch")) return "twitch";
+    if (hasRank("vip")) return "vip";
+    return null;
+  }
+
+  function grantMvpRank() {
+    if (rankMvp) return false;
+    if (!isSignedInAccount()) return false;
+    rankMvp = true;
+    saveLockerProfile();
+    return true;
+  }
+
+  function setMediaRank(id, on) {
+    if (id !== "youtuber" && id !== "tiktok" && id !== "twitch") return false;
+    if (!rankMedia) rankMedia = { youtuber: false, tiktok: false, twitch: false };
+    rankMedia[id] = !!on;
+    saveLockerProfile();
+    return true;
+  }
+
+  function drawRankIcon(id, x, y, bg) {
+    const def = RANK_DEFS[id];
+    const edge = def ? def.edge : "#3a2414";
+    const fill = bg || (def ? def.fill : "#5c3a21");
+    px(x, y, 11, 11, edge);
+    px(x + 1, y + 1, 9, 9, fill);
+    if (id === "owner") {
+      px(x + 3, y + 2, 1, 1, "#fff4c8");
+      px(x + 5, y + 1, 1, 1, "#fff4c8");
+      px(x + 7, y + 2, 1, 1, "#fff4c8");
+      px(x + 2, y + 3, 7, 2, "#ffe27a");
+      px(x + 3, y + 5, 5, 3, "#c9a227");
+      px(x + 2, y + 8, 7, 1, "#6a5020");
+    } else if (id === "mvp") {
+      px(x + 5, y + 2, 1, 1, "#e8fff8");
+      px(x + 4, y + 3, 3, 1, "#e8fff8");
+      px(x + 3, y + 4, 5, 1, "#a8ffe8");
+      px(x + 2, y + 5, 7, 2, "#0e4a42");
+      px(x + 4, y + 7, 3, 2, "#e8fff8");
+    } else if (id === "vip") {
+      px(x + 4, y + 2, 3, 2, "#ffd8d0");
+      px(x + 3, y + 4, 5, 1, "#ffd8d0");
+      px(x + 5, y + 5, 1, 3, "#ffd8d0");
+      px(x + 3, y + 8, 5, 1, "#ffd8d0");
+    } else if (id === "youtuber") {
+      px(x + 2, y + 3, 7, 5, "#ffe8e4");
+      px(x + 4, y + 4, 1, 3, "#c4302b");
+      px(x + 5, y + 5, 2, 1, "#c4302b");
+    } else if (id === "tiktok") {
+      px(x + 4, y + 2, 2, 6, "#69c9d0");
+      px(x + 5, y + 2, 2, 6, "#ee1d52");
+      px(x + 3, y + 7, 3, 2, "#f0f0f0");
+      px(x + 6, y + 6, 2, 2, "#f0f0f0");
+    } else if (id === "twitch") {
+      px(x + 3, y + 2, 5, 6, "#efe8ff");
+      px(x + 4, y + 3, 1, 2, "#6441a5");
+      px(x + 6, y + 3, 1, 2, "#6441a5");
+      px(x + 3, y + 8, 2, 1, "#efe8ff");
+    }
+  }
+
+  /** Minecraft-style rank capsule: icon square + colored label. Returns width. */
+  function drawRankBadge(id, x, y, opts) {
+    const def = RANK_DEFS[id];
+    if (!def) return 0;
+    const o = opts || {};
+    const dim = !!o.dim;
+    const label = def.label;
+    const tw = pixTextWidth(label);
+    const iw = 11;
+    const h = 11;
+    const w = iw + 2 + tw + 4;
+    const edge = dim ? "#3a2414" : def.edge;
+    const fill = dim ? "#5c4030" : def.fill;
+    const face = dim ? "#8a6a48" : def.face;
+    px(x, y, w, h, edge);
+    px(x + 1, y + 1, w - 2, h - 2, fill);
+    drawRankIcon(id, x, y, fill);
+    px(x + iw, y + 1, 1, h - 2, edge);
+    drawPixText(label, x + iw + 3, y + 2, face);
+    return w;
+  }
+
+  /** Compact nametag chip for the player's primary rank. Returns width. */
+  function drawPrimaryRankChip(x, y) {
+    const id = primaryRankId();
+    if (!id) return 0;
+    return drawRankBadge(id, x, y) + 2;
   }
 
   function prepareWeeklySpinState() {
@@ -4343,6 +4530,8 @@
     questMaskRuns = 0;
     questDone = {};
     questClaimed = {};
+    rankMvp = false;
+    rankMedia = { youtuber: false, tiktok: false, twitch: false };
     if (data && typeof data === "object") {
       if (Array.isArray(data.ownedCosmetics)) {
         for (let i = 0; i < data.ownedCosmetics.length; i++) {
@@ -4372,6 +4561,14 @@
       questMaskRuns = data.questMaskRuns | 0;
       if (data.questDone && typeof data.questDone === "object") questDone = data.questDone;
       if (data.questClaimed && typeof data.questClaimed === "object") questClaimed = data.questClaimed;
+      rankMvp = !!data.rankMvp;
+      if (data.rankMedia && typeof data.rankMedia === "object") {
+        rankMedia = {
+          youtuber: !!data.rankMedia.youtuber,
+          tiktok: !!data.rankMedia.tiktok,
+          twitch: !!data.rankMedia.twitch,
+        };
+      }
     }
     // Launch skins are free for everyone locally.
     ensureLaunchSkins();
@@ -8144,6 +8341,19 @@
     let cx = x;
     if (isOnline) cx += drawOnlineDot(cx, y);
     if (showLv > 0) cx += drawLevelBadge(showLv, cx, y) + 2;
+    // Social rank chip — owner by name; local MVP/media; VIP for any account.
+    const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
+    const isMe =
+      me &&
+      String(name || "").toUpperCase() === String(me).toUpperCase();
+    let rankId = null;
+    if (isOwnerName(name)) rankId = "owner";
+    else if (isMe && hasRank("mvp")) rankId = "mvp";
+    else if (isMe && hasRank("youtuber")) rankId = "youtuber";
+    else if (isMe && hasRank("tiktok")) rankId = "tiktok";
+    else if (isMe && hasRank("twitch")) rankId = "twitch";
+    else if (isAcc) rankId = "vip";
+    if (rankId) cx += drawRankBadge(rankId, cx, y - 1) + 2;
     if (isAcc) cx += drawNameTag(name, cx, y, maxLen);
     else cx += drawClassicBoardName(name, cx, y, maxLen);
     return cx - x;
@@ -15143,6 +15353,7 @@
       uiScreen === "account" ||
       uiScreen === "nm_boards" ||
       uiScreen === "profiles" ||
+      uiScreen === "ranks" ||
       uiScreen === "walkthrough" ||
       uiScreen === "quests" ||
       uiScreen === "logo" ||
@@ -16034,6 +16245,12 @@
    * Hub hangout nametag above a sprite. Accounts → gold/wood chip;
    * guests → classic pixel text on a dark pad so it stays readable on the plaza.
    */
+  function rankBadgeWidth(id) {
+    const def = RANK_DEFS[id];
+    if (!def) return 0;
+    return 11 + 2 + pixTextWidth(def.label) + 4;
+  }
+
   function drawHubNametagAbove(sx, sy, name, isAccount) {
     const raw = String(name || "GUEST").trim() || "GUEST";
     const maxLen = isAccount ? 8 : 10;
@@ -16042,9 +16259,17 @@
     const prevInk = ink;
     ink = ctx;
     ctx.globalAlpha = 1;
+    const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
+    const isMe = me && String(name || "").toUpperCase() === String(me).toUpperCase();
+    let rankId = null;
+    if (isOwnerName(name)) rankId = "owner";
+    else if (isMe) rankId = primaryRankId();
+    else if (isAccount) rankId = "vip";
     if (isAccount) {
-      const tw = pixTextWidth(label) + 4;
-      const tagX = (sx + 4 - tw / 2) | 0;
+      const nameW = pixTextWidth(label) + 4;
+      const badgeW = rankId ? rankBadgeWidth(rankId) + 2 : 0;
+      let tagX = (sx + 4 - (badgeW + nameW) / 2) | 0;
+      if (rankId) tagX += drawRankBadge(rankId, tagX, tagY - 1) + 2;
       drawNameTag(label, tagX, tagY, maxLen);
     } else {
       const tw = pixTextWidth(label);
@@ -16776,6 +17001,7 @@
       uiScreen === "account" ||
       uiScreen === "nm_boards" ||
       uiScreen === "profiles" ||
+      uiScreen === "ranks" ||
       uiScreen === "walkthrough" ||
       uiScreen === "spin" ||
       uiScreen === "quests" ||
@@ -17812,20 +18038,27 @@
     duelRest(
       "duel_rooms?id=eq." +
         encodeURIComponent(code) +
-        "&select=id,host_id,host_name,guest_id,guest_name,phase,payload"
+        "&select=id,host_id,host_name,guest_id,guest_name,phase,payload,updated_at"
     ).then((rows) => {
       if (!rows || !rows.length) {
         if (duel && !duelIsHost()) duelStuck("HOST LEFT");
         return;
       }
-      const room = duelRoomFromRow(rows[0]);
+      const row = rows[0];
+      const updated = row.updated_at ? Date.parse(row.updated_at) : 0;
+      if (duel && !duelIsHost() && updated && Date.now() - updated > 8000) {
+        duelStuck("HOST LEFT");
+        duelCloudReleaseClaim(code);
+        return;
+      }
+      const room = duelRoomFromRow(row);
       if (!room) return;
       if (duelJoinPending === code && !duel) {
-        if (rows[0].guest_id === duelSelfId || room.guestId === duelSelfId) {
+        if (row.guest_id === duelSelfId || room.guestId === duelSelfId) {
           duelEnterAsGuest(room);
           return;
         }
-        if (rows[0].guest_id && rows[0].guest_id !== duelSelfId) {
+        if (row.guest_id && row.guest_id !== duelSelfId) {
           duelStatus = "ROOM FULL";
           duelJoinPending = "";
         }
@@ -19204,6 +19437,14 @@
   function enterNormalMode() {
     playMode = "normal";
     uiScreen = null;
+    // Prefer account-keyed local backup when signed in (survives logout/login on this device).
+    try {
+      const uid = signedInUserId();
+      if (uid) {
+        const best = pickBetterWorld(readStoredWorld(SAVE_KEY), readStoredWorld(accountWorldKey(uid)));
+        if (best) writeStoredWorld(best, uid);
+      }
+    } catch (e) {}
     loadGame();
     // Respect daily claim after load
     try {
@@ -19270,6 +19511,12 @@
       else if (walkKind === "hub") restoreCursor = MODE_PLAY.length + 2;
       else restoreCursor = MODE_PLAY.length;
     } else if (playMode === "hub") restoreCursor = 2;
+    // Persist survival before leaving normal — logout/menu must never drop the world.
+    if (playMode === "normal") {
+      try {
+        saveGame();
+      } catch (e) {}
+    }
     playMode = null;
     uiScreen = "mode";
     srCursor = restoreCursor;
@@ -20155,17 +20402,19 @@
     const topBandH = 32;
     px(0, 0, uiW, topBandH, "#0a1520");
 
-    // Corner chips — measure first so right edge never clips
+    // Corner chips — left: REWARDS + STATS; right: PROFILES + RANKS + ACCOUNT
     const chipH = 16;
+    const rewardsW = pixTextWidth("REWARDS") + 10;
     const statsW = pixTextWidth("STATS") + 10;
+    const ranksW = pixTextWidth("RANKS") + 10;
     const profW = pixTextWidth("PROFILES") + 10;
     const accW = pixTextWidth("ACCOUNT") + 10;
     const rightGap = 6;
     const accX = uiW - pad - accW;
-    const profX = accX - rightGap - profW;
-    const statsX = profX - rightGap - statsW;
+    const ranksX = accX - rightGap - ranksW;
+    const profX = ranksX - rightGap - profW;
     drawHubChip("REWARDS", pad, topY, "hub:rewards", () => openRewardsMenu("quests"));
-    drawHubChip("STATS", statsX, topY, "hub:stats", () => {
+    drawHubChip("STATS", pad + rewardsW + rightGap, topY, "hub:stats", () => {
       uiScreen = "nm_boards";
       statsMode = "survival";
       nmCursor = 0;
@@ -20178,6 +20427,11 @@
       profileFocus = null;
       profileField = 0;
       profileResults = searchLocalProfiles("");
+      srCursor = 0;
+    });
+    drawHubChip("RANKS", ranksX, topY, "hub:ranks", () => {
+      uiScreen = "ranks";
+      ranksTab = "ranks";
       srCursor = 0;
     });
     drawHubChip("ACCOUNT", accX, topY, "hub:account", () => {
@@ -20766,6 +21020,7 @@
           srCursor = i;
           if (i === 0) setChatNotifsEnabled(!chatNotifsEnabled);
           else if (i === 1) {
+            prepareAccountSignOut();
             api.signOut();
             guestNameLocked = false;
             authStatus = "SIGNED OUT";
@@ -21160,6 +21415,137 @@
     addMenuHit("prof:esc", x + 8, y + h - 14, 70, 10, () => backToModeMenu(), { hover: true });
   }
 
+  function drawRanksTabSwitchers(x, y, w) {
+    const tabs = [
+      { id: "ranks", label: "RANKS" },
+      { id: "media", label: "MEDIA RANKS" },
+    ];
+    const gap = 3;
+    const tw = ((w - 12 - gap) / 2) | 0;
+    for (let i = 0; i < tabs.length; i++) {
+      const t = tabs[i];
+      const tx = x + 6 + i * (tw + gap);
+      const on = ranksTab === t.id;
+      const hot = !on && menuHovering("rtab:" + t.id);
+      px(tx, y, tw, 11, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
+      drawPixTextSm(t.label, tx + ((tw / 2) | 0), y + 3, on ? "#2b1c12" : "#c4a574", "center");
+      addMenuHit(
+        "rtab:" + t.id,
+        tx,
+        y,
+        tw,
+        11,
+        () => {
+          ranksTab = t.id;
+        },
+        { hover: true }
+      );
+    }
+  }
+
+  function drawRanksScreen() {
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    ctx.globalAlpha = 0.55;
+    px(0, 0, uiW, uiH, "#0b1a22");
+    ctx.globalAlpha = 1;
+    const w = 268;
+    const h = Math.min(uiH - 8, 188);
+    const x = ((uiW - w) / 2) | 0;
+    const y = Math.max(2, ((uiH - h) / 2) | 0);
+    drawPanelBox(x, y, w, h, "PLAYER RANKS");
+    drawRanksTabSwitchers(x, y + 18, w);
+
+    const ids =
+      ranksTab === "media"
+        ? ["youtuber", "tiktok", "twitch"]
+        : ["owner", "mvp", "vip"];
+    const listTop = y + 36;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const def = RANK_DEFS[id];
+      const owned = hasRank(id);
+      const rowY = listTop + i * 38;
+      px(x + 8, rowY, w - 16, 32, owned ? "#3a2a14" : "#2b1c12");
+      px(x + 9, rowY + 1, w - 18, 30, owned ? "#5c4030" : "#3a2414");
+      drawRankBadge(id, x + 14, rowY + 5, { dim: !owned });
+      drawPixTextSm(def.blurb, x + 14, rowY + 20, owned ? "#c4a574" : "#8a6a48");
+      const statusX = x + w - 78;
+      if (owned) {
+        drawPixText("OWNED", statusX, rowY + 12, "#e8c44a");
+      } else if (id === "mvp") {
+        const signed = isSignedInAccount();
+        const key = "rank:buy:mvp";
+        const hot = menuHovering(key);
+        px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#2a9a8a");
+        drawPixTextSm(signed ? "BUY $4.99" : "SIGN IN", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#e8fff8", "center");
+        addMenuHit(
+          key,
+          statusX - 4,
+          rowY + 8,
+          66,
+          12,
+          () => {
+            if (!isSignedInAccount()) {
+              uiScreen = "account";
+              authMode = "menu";
+              authStatus = "";
+              srCursor = 0;
+              return;
+            }
+            grantMvpRank();
+          },
+          { hover: true }
+        );
+      } else if (id === "vip") {
+        const key = "rank:vip:signin";
+        const hot = menuHovering(key);
+        px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#8a2420");
+        drawPixTextSm("SIGN IN", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#ffd8d0", "center");
+        addMenuHit(
+          key,
+          statusX - 4,
+          rowY + 8,
+          66,
+          12,
+          () => {
+            uiScreen = "account";
+            authMode = "menu";
+            authStatus = "";
+            srCursor = 0;
+          },
+          { hover: true }
+        );
+      } else if (id === "owner") {
+        drawPixTextSm("LOCKED", statusX + 8, rowY + 12, "#8a6a48");
+      } else {
+        // Media ranks — claim note; Henri can self-grant for testing.
+        if (isHenriAccount()) {
+          const key = "rank:grant:" + id;
+          const hot = menuHovering(key);
+          px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#6441a5");
+          drawPixTextSm("GRANT", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#efe8ff", "center");
+          addMenuHit(
+            key,
+            statusX - 4,
+            rowY + 8,
+            66,
+            12,
+            () => {
+              setMediaRank(id, true);
+            },
+            { hover: true }
+          );
+        } else {
+          drawPixTextSm("MSG HENRI", statusX + 2, rowY + 12, "#8a6a48");
+        }
+      }
+    }
+
+    drawPixText("ESC MENU", x + 10, y + h - 12, "#5c3a21");
+    addMenuHit("rank:esc", x + 8, y + h - 14, 70, 10, () => backToModeMenu(), { hover: true });
+  }
+
   function weeklyPrizeBand(id) {
     // Rarity bands in parchment palette (common tan / uncommon gold / rare crimson)
     if (id === "beta_crown") return { fill: "#6a3030", edge: "#c43a48", face: "#8a4040" };
@@ -21391,6 +21777,7 @@
     else if (uiScreen === "account") drawAccountScreen();
     else if (uiScreen === "nm_boards") drawNmBoardScreen();
     else if (uiScreen === "profiles") drawProfilesScreen();
+    else if (uiScreen === "ranks") drawRanksScreen();
     else if (uiScreen === "walkthrough") drawWalkthrough();
     else if (uiScreen === "spin") drawSpinScreen();
     else if (uiScreen === "quests") drawQuestScreen();
@@ -21717,6 +22104,7 @@
           return true;
         }
         if ((k === "enter" || k === " ") && srCursor === 1) {
+          prepareAccountSignOut();
           api.signOut();
           guestNameLocked = false;
           authStatus = "SIGNED OUT";
@@ -21824,6 +22212,21 @@
         nmCursor = (nmCursor + 1) % order.length;
         nmBoardKind = order[nmCursor];
         refreshNmBoard(nmBoardKind);
+      }
+      return true;
+    }
+    if (uiScreen === "ranks") {
+      if (k === "escape" || k === "backspace") {
+        backToModeMenu();
+        return true;
+      }
+      if (k === "arrowleft" || k === "a") {
+        ranksTab = ranksTab === "media" ? "ranks" : "media";
+        return true;
+      }
+      if (k === "arrowright" || k === "d") {
+        ranksTab = ranksTab === "ranks" ? "media" : "ranks";
+        return true;
       }
       return true;
     }
@@ -22000,74 +22403,219 @@
     if (snap.questClaimed && typeof snap.questClaimed === "object") {
       for (const k in snap.questClaimed) if (snap.questClaimed[k]) questClaimed[k] = true;
     }
+    if (snap.rankMvp) rankMvp = true;
+    if (snap.rankMedia && typeof snap.rankMedia === "object") {
+      if (!rankMedia) rankMedia = { youtuber: false, tiktok: false, twitch: false };
+      if (snap.rankMedia.youtuber) rankMedia.youtuber = true;
+      if (snap.rankMedia.tiktok) rankMedia.tiktok = true;
+      if (snap.rankMedia.twitch) rankMedia.twitch = true;
+    }
     ensureLaunchSkins();
     syncQuestOwnershipFlags();
   }
 
-  function saveGame() {
-    if (playMode !== "normal") {
-      saveLockerProfile();
-      return;
-    }
+  function accountWorldKey(userId) {
+    return SAVE_KEY + ":u:" + String(userId || "");
+  }
+
+  function signedInUserId() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return "";
+    const u = api.currentUser && api.currentUser();
+    return u && u.id ? String(u.id) : "";
+  }
+
+  function readStoredWorld(key) {
     try {
-      const slots = [];
-      for (let i = 0; i < inventory.length; i++) {
-        const s = inventory[i];
-        // Cosmetics never live in the bag — strip if any slipped in
-        if (s && isCosmeticId(s.id)) {
-          grantCosmetic(s.id);
-          slots.push(null);
-          continue;
-        }
-        slots.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
-      }
-      const bagOut = [];
-      for (let i = 0; i < satchel.length; i++) {
-        const s = satchel[i];
-        if (s && isCosmeticId(s.id)) {
-          grantCosmetic(s.id);
-          bagOut.push(null);
-          continue;
-        }
-        bagOut.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
-      }
-      const data = {
-        slots,
-        heldSlot,
-        satchel: bagOut,
-        coins: player.coins | 0,
-        xp: player.xp | 0,
-        level: player.level | 0,
-        hp: player.hp | 0,
-        x: player.x,
-        y: player.y,
-        facing: player.facing,
-        aboard: !!player.aboard,
-        scene,
-        cloak: cloakOn,
-        cosmetics: { face: cosmetics.face, back: cosmetics.back },
-        locker: lockerSnapshot(),
-        pet: petWorld
-          ? {
-              id: petWorld.id,
-              x: petWorld.x,
-              y: petWorld.y,
-              scene: petWorld.scene,
-              sitting: !!petWorld.sitting,
-              face: petWorld.face,
-            }
-          : null,
-        templeMaskTaken: !!templeMaskTaken,
-        sunkenTaken: !!sunkenTaken,
-        divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
-        dailyClaimedUtc: dailyClaimedUtc || "",
-        rome: rome ? rome.persist() : null,
-        boat: ownedBoat
-          ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
-          : null,
-        mountedRod: mountedRod && isRodId(mountedRod.id) ? { id: mountedRod.id, count: 1 } : null,
-      };
+      const data = JSON.parse(localStorage.getItem(key || SAVE_KEY) || "");
+      if (!data || !Array.isArray(data.slots)) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function worldProgressScore(data) {
+    if (!data || !Array.isArray(data.slots)) return -1;
+    let items = 0;
+    const lists = [data.slots, data.satchel || []];
+    for (let li = 0; li < lists.length; li++) {
+      const list = lists[li];
+      for (let i = 0; i < list.length; i++) if (list[i] && list[i].id) items++;
+    }
+    return (
+      (data.coins | 0) +
+      items * 25 +
+      (data.level | 0) * 10 +
+      (data.templeMaskTaken ? 80 : 0) +
+      (data.sunkenTaken ? 80 : 0) +
+      (data.boat ? 40 : 0) +
+      ((data.savedAt | 0) > 0 ? 1 : 0)
+    );
+  }
+
+  function pickBetterWorld(a, b) {
+    if (!a) return b || null;
+    if (!b) return a;
+    const ta = a.savedAt | 0;
+    const tb = b.savedAt | 0;
+    if (ta !== tb) return ta > tb ? a : b;
+    return worldProgressScore(a) >= worldProgressScore(b) ? a : b;
+  }
+
+  function writeStoredWorld(data, userId) {
+    if (!data || !Array.isArray(data.slots)) return;
+    if (!data.savedAt) data.savedAt = Date.now();
+    try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      if (userId) localStorage.setItem(accountWorldKey(userId), JSON.stringify(data));
+    } catch (e) {}
+  }
+
+  function peekWorldForCloud() {
+    if (playMode === "normal") {
+      try {
+        return buildLiveWorldData();
+      } catch (e) {
+        return readStoredWorld(SAVE_KEY);
+      }
+    }
+    return readStoredWorld(SAVE_KEY);
+  }
+
+  function buildLiveWorldData() {
+    const slots = [];
+    for (let i = 0; i < inventory.length; i++) {
+      const s = inventory[i];
+      if (s && isCosmeticId(s.id)) {
+        grantCosmetic(s.id);
+        slots.push(null);
+        continue;
+      }
+      slots.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
+    }
+    const bagOut = [];
+    for (let i = 0; i < satchel.length; i++) {
+      const s = satchel[i];
+      if (s && isCosmeticId(s.id)) {
+        grantCosmetic(s.id);
+        bagOut.push(null);
+        continue;
+      }
+      bagOut.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
+    }
+    return {
+      slots,
+      heldSlot,
+      satchel: bagOut,
+      coins: player.coins | 0,
+      xp: player.xp | 0,
+      level: player.level | 0,
+      hp: player.hp | 0,
+      x: player.x,
+      y: player.y,
+      facing: player.facing,
+      aboard: !!player.aboard,
+      scene,
+      cloak: cloakOn,
+      cosmetics: { face: cosmetics.face, back: cosmetics.back },
+      locker: lockerSnapshot(),
+      pet: petWorld
+        ? {
+            id: petWorld.id,
+            x: petWorld.x,
+            y: petWorld.y,
+            scene: petWorld.scene,
+            sitting: !!petWorld.sitting,
+            face: petWorld.face,
+          }
+        : null,
+      templeMaskTaken: !!templeMaskTaken,
+      sunkenTaken: !!sunkenTaken,
+      divePhase: divePhase === "down" || divePhase === "rising" ? "down" : "docked",
+      dailyClaimedUtc: dailyClaimedUtc || "",
+      rome: rome ? rome.persist() : null,
+      boat: ownedBoat
+        ? { x: ownedBoat.x, y: ownedBoat.y, face: ownedBoat.face || 1, landed: !!ownedBoat.landed }
+        : null,
+      mountedRod: mountedRod && isRodId(mountedRod.id) ? { id: mountedRod.id, count: 1 } : null,
+      savedAt: Date.now(),
+    };
+  }
+
+  function flushWorldToAccount(immediate) {
+    const api = lbApi();
+    const uid = signedInUserId();
+    if (!api || !uid) return;
+    const data = peekWorldForCloud();
+    if (!data || !Array.isArray(data.slots)) return;
+    writeStoredWorld(data, uid);
+    if (immediate && api.syncWorldSave) api.syncWorldSave(data).catch(() => {});
+    else if (api.syncWorldSaveSoon) api.syncWorldSaveSoon(data);
+  }
+
+  function considerCloudWorld(cloudWorld) {
+    if (!cloudWorld || !Array.isArray(cloudWorld.slots)) return false;
+    const uid = signedInUserId();
+    const local = pickBetterWorld(readStoredWorld(SAVE_KEY), uid ? readStoredWorld(accountWorldKey(uid)) : null);
+    const best = pickBetterWorld(local, cloudWorld);
+    if (!best) return false;
+    const cloudWins =
+      best === cloudWorld &&
+      (!local ||
+        (cloudWorld.savedAt | 0) > (local.savedAt | 0) ||
+        worldProgressScore(cloudWorld) > worldProgressScore(local));
+    writeStoredWorld(best, uid || undefined);
+    if (cloudWins && playMode === "normal") loadGame();
+    return true;
+  }
+
+  function restoreAccountWorld() {
+    const api = lbApi();
+    const uid = signedInUserId();
+    if (!api || !uid) return;
+    const localDevice = readStoredWorld(SAVE_KEY);
+    const localAcct = readStoredWorld(accountWorldKey(uid));
+    let best = pickBetterWorld(localDevice, localAcct);
+    if (best) writeStoredWorld(best, uid);
+    const cached = api.getCachedCloudWorld && api.getCachedCloudWorld();
+    if (cached) considerCloudWorld(cached);
+    if (api.fetchWorldSave) {
+      api.fetchWorldSave().then((res) => {
+        if (res && res.world) considerCloudWorld(res.world);
+        flushWorldToAccount(false);
+      });
+    } else {
+      flushWorldToAccount(false);
+    }
+  }
+
+  function prepareAccountSignOut() {
+    // Flush everything while session is still valid — never delete local worlds.
+    try {
+      if (playMode === "normal") {
+        const data = buildLiveWorldData();
+        writeStoredWorld(data, signedInUserId());
+      } else {
+        const uid = signedInUserId();
+        const data = readStoredWorld(SAVE_KEY);
+        if (data) writeStoredWorld(data, uid || undefined);
+      }
+      saveLockerProfile();
+      flushWorldToAccount(true);
+    } catch (e) {}
+  }
+
+  function saveGame() {
+    try {
+      if (playMode === "normal") {
+        const data = buildLiveWorldData();
+        writeStoredWorld(data, signedInUserId() || undefined);
+        flushWorldToAccount(false);
+      } else {
+        // Keep account cloud mirror warm even from menus.
+        flushWorldToAccount(false);
+      }
       saveLockerProfile();
     } catch (err) {}
   }
@@ -22784,15 +23332,76 @@
     clampCamera();
   }
 
+  function duelUnloadCleanup() {
+    if (!duel && !duelJoinPending) return;
+    const cfg = window.ISLE_LEADERBOARD || {};
+    if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY || duelCloudOff) {
+      if (duel) duelSend("leave", { code: duel.code });
+      return;
+    }
+    const base = String(cfg.SUPABASE_URL).replace(/\/$/, "") + "/rest/v1/duel_rooms";
+    const headers = {
+      apikey: cfg.SUPABASE_ANON_KEY,
+      Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    };
+    try {
+      if (duel && duelIsHost()) {
+        duelSend("leave", { code: duel.code });
+        fetch(base + "?id=eq." + encodeURIComponent(duel.code), {
+          method: "DELETE",
+          headers: headers,
+          keepalive: true,
+        }).catch(() => {});
+      } else {
+        const code = (duel && duel.code) || duelJoinPending;
+        if (duel) duelSend("leave", { code: code });
+        if (!code) return;
+        fetch(
+          base +
+            "?id=eq." +
+            encodeURIComponent(code) +
+            "&guest_id=eq." +
+            encodeURIComponent(duelSelfId || ""),
+          {
+            method: "PATCH",
+            headers: headers,
+            keepalive: true,
+            body: JSON.stringify({
+              guest_id: null,
+              guest_name: null,
+              listed: true,
+              signal: { type: "leave", from: duelSelfId, code: code, t: Date.now() },
+              updated_at: new Date().toISOString(),
+            }),
+          }
+        ).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
   window.addEventListener("resize", resizeCanvas);
   window.addEventListener("beforeunload", () => {
     saveGame();
     saveLockerProfile();
+    flushWorldToAccount(true);
+    duelUnloadCleanup();
     const api = lbApi();
     if (api && api.isSignedIn && api.isSignedIn()) {
       if (api.syncNmStatsToProfile) api.syncNmStatsToProfile();
-      if (api.syncLocker) api.syncLocker(lockerSnapshot());
+      const snap = lockerSnapshot();
+      const world = peekWorldForCloud();
+      if (world && Array.isArray(world.slots)) snap._world = world;
+      if (api.syncLocker) api.syncLocker(snap);
     }
+  });
+  window.addEventListener("pagehide", () => {
+    try {
+      saveGame();
+      flushWorldToAccount(true);
+    } catch (e) {}
+    duelUnloadCleanup();
   });
 
   function ensureRome() {
@@ -22911,13 +23520,18 @@
           if (api.isSignedIn && api.isSignedIn()) {
             srName = api.displayName() || srName;
             guestNameLocked = true;
+            restoreAccountWorld();
             pullCloudLocker();
           } else {
             guestNameLocked = false;
+            // Local survival-rpg-save + locker profile stay intact after logout.
           }
         });
       }
-      if (api.isSignedIn && api.isSignedIn()) pullCloudLocker();
+      if (api.isSignedIn && api.isSignedIn()) {
+        restoreAccountWorld();
+        pullCloudLocker();
+      }
       if (api.onChatUpdate) {
         api.onChatUpdate(() => {
           try {

@@ -51,4 +51,5 @@ create policy "Update own weekly_spins" on public.weekly_spins
 
 -- Account-bound locker blob (owned cosmetics/skins + equipped loadout).
 alter table public.profiles add column if not exists locker jsonb;
+alter table public.profiles add column if not exists world_save jsonb;
 alter table public.profiles add column if not exists updated_at timestamptz default now();

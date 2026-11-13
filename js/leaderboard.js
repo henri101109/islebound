@@ -111,6 +111,9 @@
   let lockerCloudAvailable = true;
   let lockerSyncTimer = null;
   let lastLockerCloud = null; // last locker blob pulled from profiles.locker
+  let worldSaveCloudAvailable = true;
+  let worldSaveSyncTimer = null;
+  let lastWorldCloud = null; // last world_save / locker._world blob
   let chatAvailable = true; // false if table missing / hard fail
   let chatMessages = []; // newest last
   let chatPollTimer = null;
@@ -1561,8 +1564,11 @@
   }
 
   function signOut() {
+    // Only clears the session token — never touch local world / locker storage.
     session = null;
     profile = null;
+    lastLockerCloud = null;
+    lastWorldCloud = null;
     saveSession(null);
     emitAuth();
   }
@@ -1598,7 +1604,11 @@
 
   function profileFromRow(row) {
     if (!row) return null;
-    if (row.locker && typeof row.locker === "object") lastLockerCloud = row.locker;
+    if (row.locker && typeof row.locker === "object") {
+      lastLockerCloud = row.locker;
+      if (row.locker._world && typeof row.locker._world === "object") lastWorldCloud = row.locker._world;
+    }
+    if (row.world_save && typeof row.world_save === "object") lastWorldCloud = row.world_save;
     return {
       id: row.id,
       display_name: String(row.display_name || "").toUpperCase(),
@@ -1614,6 +1624,7 @@
       nm_level_high: row.nm_level_high | 0 || 1,
       created_at: row.created_at,
       locker: row.locker && typeof row.locker === "object" ? row.locker : null,
+      world_save: row.world_save && typeof row.world_save === "object" ? row.world_save : null,
     };
   }
 
@@ -1622,35 +1633,71 @@
     return msg.indexOf("locker") >= 0 || msg.indexOf("pgrst204") >= 0;
   }
 
+  function worldSaveColumnMissing(detail) {
+    const msg = String(detail || "").toLowerCase();
+    return msg.indexOf("world_save") >= 0 || msg.indexOf("pgrst204") >= 0;
+  }
+
+  function worldFromLocker(locker) {
+    if (!locker || typeof locker !== "object") return null;
+    return locker._world && typeof locker._world === "object" ? locker._world : null;
+  }
+
   /** Pull account locker (cosmetics/skins). Soft-fails if column/table missing. */
   async function fetchLocker() {
     if (!session || !session.user || !configured() || !lockerCloudAvailable) {
-      return { ok: false, locker: lastLockerCloud };
+      return { ok: false, locker: lastLockerCloud, world: lastWorldCloud };
     }
     try {
-      const url =
+      let url =
         restBase() +
         "/" +
         PROFILES +
         "?id=eq." +
         encodeURIComponent(session.user.id) +
-        "&select=locker&limit=1";
-      const res = await fetch(url, { headers: anonHeaders() });
+        "&select=" +
+        (worldSaveCloudAvailable ? "locker,world_save" : "locker") +
+        "&limit=1";
+      let res = await fetch(url, { headers: anonHeaders() });
       if (!res.ok) {
         let err = null;
         try {
           err = await res.json();
         } catch (e) {}
         const detail = String((err && (err.message || err.code)) || res.status);
-        if (lockerColumnMissing(detail)) lockerCloudAvailable = false;
-        return { ok: false, locker: lastLockerCloud, error: detail };
+        if (worldSaveCloudAvailable && worldSaveColumnMissing(detail)) {
+          worldSaveCloudAvailable = false;
+          url =
+            restBase() +
+            "/" +
+            PROFILES +
+            "?id=eq." +
+            encodeURIComponent(session.user.id) +
+            "&select=locker&limit=1";
+          res = await fetch(url, { headers: anonHeaders() });
+        }
+      }
+      if (!res.ok) {
+        let err2 = null;
+        try {
+          err2 = await res.json();
+        } catch (e) {}
+        const detail2 = String((err2 && (err2.message || err2.code)) || res.status);
+        if (lockerColumnMissing(detail2)) lockerCloudAvailable = false;
+        return { ok: false, locker: lastLockerCloud, world: lastWorldCloud, error: detail2 };
       }
       const rows = await res.json();
-      const locker = rows && rows[0] && rows[0].locker && typeof rows[0].locker === "object" ? rows[0].locker : null;
-      if (locker) lastLockerCloud = locker;
-      return { ok: true, locker: locker || lastLockerCloud };
+      const row = rows && rows[0];
+      const locker = row && row.locker && typeof row.locker === "object" ? row.locker : null;
+      if (locker) {
+        lastLockerCloud = locker;
+        const nested = worldFromLocker(locker);
+        if (nested) lastWorldCloud = nested;
+      }
+      if (row && row.world_save && typeof row.world_save === "object") lastWorldCloud = row.world_save;
+      return { ok: true, locker: locker || lastLockerCloud, world: lastWorldCloud };
     } catch (e) {
-      return { ok: false, locker: lastLockerCloud, error: "network" };
+      return { ok: false, locker: lastLockerCloud, world: lastWorldCloud, error: "network" };
     }
   }
 
@@ -1664,22 +1711,42 @@
       locker: locker,
       updated_at: new Date().toISOString(),
     };
+    if (worldSaveCloudAvailable && locker._world && typeof locker._world === "object") {
+      body.world_save = locker._world;
+    }
     try {
-      const res = await fetch(restBase() + "/" + PROFILES + "?id=eq." + encodeURIComponent(session.user.id), {
+      let res = await fetch(restBase() + "/" + PROFILES + "?id=eq." + encodeURIComponent(session.user.id), {
         method: "PATCH",
         headers: anonHeaders("return=minimal"),
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
+      if (!res.ok && body.world_save) {
         let err = null;
         try {
           err = await res.json();
         } catch (e) {}
         const detail = String((err && (err.message || err.code)) || res.status);
-        if (lockerColumnMissing(detail)) lockerCloudAvailable = false;
-        return { ok: false, error: detail, local: true };
+        if (worldSaveColumnMissing(detail)) {
+          worldSaveCloudAvailable = false;
+          delete body.world_save;
+          res = await fetch(restBase() + "/" + PROFILES + "?id=eq." + encodeURIComponent(session.user.id), {
+            method: "PATCH",
+            headers: anonHeaders("return=minimal"),
+            body: JSON.stringify(body),
+          });
+        }
+      }
+      if (!res.ok) {
+        let err2 = null;
+        try {
+          err2 = await res.json();
+        } catch (e) {}
+        const detail2 = String((err2 && (err2.message || err2.code)) || res.status);
+        if (lockerColumnMissing(detail2)) lockerCloudAvailable = false;
+        return { ok: false, error: detail2, local: true };
       }
       lastLockerCloud = locker;
+      if (locker._world) lastWorldCloud = locker._world;
       return { ok: true };
     } catch (e) {
       return { ok: false, error: "network", local: true };
@@ -1696,6 +1763,36 @@
 
   function getCachedCloudLocker() {
     return lastLockerCloud;
+  }
+
+  function getCachedCloudWorld() {
+    return lastWorldCloud;
+  }
+
+  async function fetchWorldSave() {
+    if (!session || !session.user || !configured()) {
+      return { ok: false, world: lastWorldCloud };
+    }
+    const locked = await fetchLocker();
+    return { ok: !!locked.ok, world: locked.world || lastWorldCloud, locker: locked.locker };
+  }
+
+  async function syncWorldSave(world) {
+    if (!session || !session.user || !configured()) return { ok: false, local: true };
+    if (!world || typeof world !== "object") return { ok: false, error: "bad world" };
+    lastWorldCloud = world;
+    const base =
+      lastLockerCloud && typeof lastLockerCloud === "object" ? Object.assign({}, lastLockerCloud) : {};
+    base._world = world;
+    return syncLocker(base);
+  }
+
+  function syncWorldSaveSoon(world) {
+    if (worldSaveSyncTimer) clearTimeout(worldSaveSyncTimer);
+    worldSaveSyncTimer = setTimeout(() => {
+      worldSaveSyncTimer = null;
+      syncWorldSave(world).catch(() => {});
+    }, 900);
   }
 
   async function ensureProfile(preferredName) {
@@ -3246,6 +3343,10 @@
     syncLocker,
     syncLockerSoon,
     getCachedCloudLocker,
+    getCachedCloudWorld,
+    fetchWorldSave,
+    syncWorldSave,
+    syncWorldSaveSoon,
     startPresence,
     stopPresence,
     tickPresence,
