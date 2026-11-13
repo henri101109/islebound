@@ -526,6 +526,23 @@
       if (!stall || !stall.item) return;
       if (stall.kind === "pet") {
         if (A.speedMode && A.speedMode()) {
+          // CAT%: buy egypt cat for the run only — never saves to locker.
+          if (
+            A.speedCat &&
+            A.speedCat() === "egypt_cat" &&
+            stall.item === "egypt_cat" &&
+            A.speedLive &&
+            A.speedLive()
+          ) {
+            if (!A.spend || !A.spend(stall.price)) {
+              flash("NEED " + stall.price + " COINS");
+              return;
+            }
+            if (A.tempPet) A.tempPet(stall.item);
+            flash("BOUGHT CAT");
+            if (A.finishSpeed) A.finishSpeed();
+            return;
+          }
           flash("NOT FOR RACES");
           return;
         }

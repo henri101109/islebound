@@ -57,6 +57,12 @@
     portal_leech: { id: "portal_leech", label: "LEECH%" },
     kings_race: { id: "kings_race", label: "KINGS RACE%" },
     full_kings: { id: "full_kings", label: "FULL KINGS%" },
+    trip: { id: "trip", label: "TRIP%" },
+    egypt_cat: { id: "egypt_cat", label: "CAT%" },
+    blue_crab: { id: "blue_crab", label: "CRAB%" },
+    angler_fish: { id: "angler_fish", label: "ANGLER%" },
+    storm_fish: { id: "storm_fish", label: "STORM%" },
+    hammerhead: { id: "hammerhead", label: "HAMMER%" },
   };
 
   /** Replay validation removed — always accept. */

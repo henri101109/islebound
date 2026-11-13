@@ -52,7 +52,7 @@
     storm_fish: { name: "Storm fish", max: 8, xp: 90 },
     glow_minnow: { name: "Glow minnow", max: 24, xp: 18 },
     lantern_fish: { name: "Lantern fish", max: 16, xp: 36 },
-    crystal_carp: { name: "Crystal carp", max: 12, xp: 55 },
+    angler_fish: { name: "Angler fish", max: 12, xp: 52 },
     chest: { name: "Treasure chest", max: 1, xp: 40 },
     wand: { name: "Wand", max: 1, xp: 0 },
     sea_rod: { name: "Sea rod", max: 1, xp: 0 },
@@ -128,7 +128,7 @@
     storm_fish: 220,
     glow_minnow: 40,
     lantern_fish: 85,
-    crystal_carp: 150,
+    angler_fish: 130,
     fish_blue: 10,
     fish_gold: 15,
     fish_reef: 10,
@@ -154,11 +154,11 @@
     ["storm_fish", "STORM"],
     ["glow_minnow", "GLOW"],
     ["lantern_fish", "LANTERN"],
-    ["crystal_carp", "CRYSTAL"],
+    ["angler_fish", "ANGLER"],
   ];
   const ROD_IDS = { sea_rod: 1 };
   const SHORE_CATCH = ["cod", "trout", "salmon", "stingray", "stingray", "hammerhead"];
-  const CAVE_CATCH = ["glow_minnow", "glow_minnow", "lantern_fish", "crystal_carp"];
+  const CAVE_CATCH = ["glow_minnow", "glow_minnow", "lantern_fish", "lantern_fish"];
 
   const keys = Object.create(null);
   const WORLD_W = COLS * TILE;
@@ -238,7 +238,7 @@
     "storm_fish",
     "glow_minnow",
     "lantern_fish",
-    "crystal_carp",
+    "angler_fish",
   ];
   const walkPads = [];
   const islandSolids = [];
@@ -442,6 +442,12 @@
     "portal_leech",
     "kings_race",
     "full_kings",
+    "trip",
+    "egypt_cat",
+    "blue_crab",
+    "angler_fish",
+    "storm_fish",
+    "hammerhead",
   ];
   let playMode = null;
   /** Cold boot shows logo card; Esc from play returns straight to "mode". */
@@ -651,6 +657,10 @@
         lines: ["EEL% WATERFALL EEL", "LEECH% PORTAL LEECH", "DINGHY ON RIVER POOL", "WALK INLAND FROM DOCK"],
       },
       {
+        title: "NEW CATS",
+        lines: ["TRIP% MYSTERY POTION", "CAT% BUY EGYPT CAT", "CRAB% CATCH BLUE CRAB", "ANGLER% / STORM% / HAMMER%"],
+      },
+      {
         title: "MASK%",
         lines: ["MASK% JADE MASK", "TEMPLE MAZE, FAR END", "TOUCH THE PEDESTAL", "BAG SPACE NOT NEEDED"],
       },
@@ -788,6 +798,8 @@
   let equippedPet = null;
   /** Live companion in survival. Pets never die. */
   let petWorld = null;
+  /** Speedrun-only pet (CAT% / CRAB%) — never written to locker / save. */
+  let speedPetTemp = null;
   const PET_TP_DIST = 260;
   const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien", "jorts"];
   const QUEST_SKIN_IDS = [
@@ -849,6 +861,12 @@
     coins_100: 2.5,
     waterfall_eel: 3.6,
     portal_leech: 4.0,
+    trip: 3.2,
+    egypt_cat: 4.4,
+    blue_crab: 3.8,
+    angler_fish: 3.5,
+    storm_fish: 4.2,
+    hammerhead: 3.3,
   };
   /** Soft target times (ms) used when no board WR is cached. */
   const CAT_SOFT_WR = {
@@ -868,6 +886,12 @@
     coins_100: 190000,
     waterfall_eel: 210000,
     portal_leech: 230000,
+    trip: 180000,
+    egypt_cat: 420000,
+    blue_crab: 240000,
+    angler_fish: 200000,
+    storm_fish: 260000,
+    hammerhead: 160000,
   };
   let careerXp = 0;
   let careerLevel = 1;
@@ -1153,6 +1177,11 @@
       brew.trail.length = 0;
       shake = Math.max(shake, 8);
       cosTip = "NOTHING IS REAL";
+      if (playMode === "speedrun" && srCat === "trip" && speedrunActive() && srTiming) {
+        cosTipT = 1.2;
+        finishSpeedrun();
+        return true;
+      }
     } else return false;
     cosTipT = 2.4;
     return true;
@@ -2242,7 +2271,10 @@
       anim: rand(0, 8),
       seen: hidden ? 0 : rand(0.2, 1.8),
       squash: 1,
-      blue: playMode !== "speedrun" && Math.random() < 0.01,
+      blue:
+        playMode === "normal"
+          ? Math.random() < 0.01
+          : playMode === "speedrun" && srCat === "blue_crab" && Math.random() < 0.18,
     });
   }
 
@@ -2310,6 +2342,16 @@
       const nearPier = Math.abs(x - (pierX + 80)) < 360;
       const hidden = !nearPier && hash(i, 3) > 0.58;
       pushBeachCrab(x, s.y, i, hidden);
+    }
+    if (playMode === "speedrun" && srCat === "blue_crab" && crabs.length) {
+      let hasBlue = false;
+      for (let i = 0; i < crabs.length; i++) {
+        if (crabs[i].blue) {
+          hasBlue = true;
+          break;
+        }
+      }
+      if (!hasBlue) crabs[irand(0, crabs.length - 1)].blue = true;
     }
   }
 
@@ -2667,13 +2709,48 @@
     return best;
   }
 
+  function spawnSpeedPetTemp(id) {
+    if (!isPetId(id)) return false;
+    speedPetTemp = id;
+    const a = petFollowAnchor();
+    petWorld = {
+      id,
+      x: a.x,
+      y: a.y,
+      scene,
+      sitting: false,
+      face: player.facing < 0 ? -1 : 1,
+      anim: 0,
+      attackT: 0,
+      hop: 0,
+      lunge: 0,
+    };
+    return true;
+  }
+
+  function clearSpeedPetTemp() {
+    speedPetTemp = null;
+    if (playMode === "speedrun") petWorld = null;
+  }
+
   /** Space on land: scoop a crab underfoot into the bag. */
   function tryCatchLandCrab() {
     const idx = nearestCatchableCrab();
     if (idx < 0) return false;
     const c = crabs[idx];
-    if (c.blue && playMode === "normal" && !ownsPet("blue_crab")) {
+    if (
+      c.blue &&
+      ((playMode === "normal" && !ownsPet("blue_crab")) ||
+        (playMode === "speedrun" && srCat === "blue_crab" && speedrunActive() && srTiming))
+    ) {
       crabs.splice(idx, 1);
+      if (playMode === "speedrun") {
+        spawnSpeedPetTemp("blue_crab");
+        cosTip = "BLUE CRAB";
+        cosTipT = 1.6;
+        finishSpeedrun();
+        return true;
+      }
       grantPet("blue_crab");
       equipPet("blue_crab");
       cosTip = "BLUE CRAB";
@@ -2738,6 +2815,7 @@
   }
 
   function petsLive() {
+    if (playMode === "speedrun" && speedPetTemp && petWorld && petWorld.id === speedPetTemp) return true;
     return playMode === "normal" && equippedPet && petWorld && isPetId(petWorld.id);
   }
 
@@ -2832,6 +2910,15 @@
   }
 
   function updatePet(dt) {
+    if (playMode === "speedrun") {
+      if (!speedPetTemp || !petWorld || petWorld.id !== speedPetTemp) {
+        if (!speedPetTemp) petWorld = null;
+        return;
+      }
+      petWorld.anim += dt * 10;
+      petWorld.scene = scene;
+      return;
+    }
     if (playMode !== "normal") return;
     if (!equippedPet) {
       petWorld = null;
@@ -5262,7 +5349,14 @@
     }
     if (scene === "island" && !player.aboard && nearestCatchableCrab() >= 0) {
       const ci = nearestCatchableCrab();
-      if (ci >= 0 && crabs[ci] && crabs[ci].blue && !ownsPet("blue_crab")) return "SPACE  BLUE CRAB";
+      if (
+        ci >= 0 &&
+        crabs[ci] &&
+        crabs[ci].blue &&
+        ((playMode === "normal" && !ownsPet("blue_crab")) ||
+          (playMode === "speedrun" && srCat === "blue_crab"))
+      )
+        return "SPACE  BLUE CRAB";
       return "SPACE CATCH";
     }
     if (
@@ -6470,16 +6564,20 @@
     return playMode === "normal";
   }
 
+  function stormWeatherAllowed() {
+    return playMode === "normal" || (playMode === "speedrun" && srCat === "storm_fish");
+  }
+
   function stormActive() {
-    return playMode === "normal" && (weather.phase === "storm" || weather.phase === "cyclone");
+    return stormWeatherAllowed() && (weather.phase === "storm" || weather.phase === "cyclone");
   }
 
   function cycloneActive() {
-    return playMode === "normal" && weather.phase === "cyclone";
+    return stormWeatherAllowed() && weather.phase === "cyclone";
   }
 
   function weatherMult() {
-    if (playMode !== "normal") return 1;
+    if (!stormWeatherAllowed()) return 1;
     if (weather.phase === "cyclone") return 0.55;
     if (weather.phase === "storm") return 0.72;
     if (weather.phase === "squall") return 0.88;
@@ -6504,12 +6602,18 @@
   }
 
   function updateWeather(dt) {
-    if (playMode !== "normal") {
+    if (!stormWeatherAllowed()) {
       if (weather.phase !== "clear") setWeatherPhase("clear");
       return;
     }
     if (weather.tipT > 0) weather.tipT = Math.max(0, weather.tipT - dt);
     if (weather.flash > 0) weather.flash = Math.max(0, weather.flash - dt);
+    // STORM% keeps a locked cyclone — no clear/storm RNG.
+    if (playMode === "speedrun" && srCat === "storm_fish") {
+      if (weather.phase !== "cyclone") setWeatherPhase("cyclone");
+      if (Math.random() < dt * 0.35) weather.flash = 0.08 + Math.random() * 0.12;
+      return;
+    }
     weather.t += dt;
     if (weather.t >= weather.next) {
       const r = Math.random();
@@ -7423,7 +7527,7 @@
     const bait = held && BAIT_IDS[held] ? held : null;
     rodBaitId = bait;
     const r = Math.random() * (bait ? 0.82 : 1);
-    if (r < 0.12) return "crystal_carp";
+    if (r < 0.1) return "angler_fish";
     if (r < 0.42) return "lantern_fish";
     return pickEqual(CAVE_CATCH) || "glow_minnow";
   }
@@ -7439,10 +7543,10 @@
     if (scene !== "island" || boatThrow) return;
     if (rod.phase !== "idle" || pickupAnims.length || player.dead > 0) return;
 
-    // Foot casts — survival only, holding a rod (beach, pond wade, or walk-in caves).
+    // Foot casts — survival needs a held rod; speedrun allows barehanded for fish cats.
     if (!player.aboard) {
-      if (!survivalNeedsRod()) return;
-      if (!heldRodId()) {
+      if (playMode !== "normal" && playMode !== "speedrun") return;
+      if (survivalNeedsRod() && !heldRodId()) {
         cosTip = "HOLD A ROD";
         cosTipT = 1.4;
         return;
@@ -7451,11 +7555,15 @@
       const wadeSpot = canWadePondFish();
       const shoreSpot = canShoreFishSpot();
       if (!caveSpot && !wadeSpot && !shoreSpot) {
-        cosTip = pondFishReady
-          ? "FISH FROM SHORE OR WADE THE POND"
-          : pondCaves.length
-            ? "FISH FROM SHORE OR A CAVE"
-            : "FISH FROM SHORE";
+        if (playMode === "speedrun") {
+          cosTip = "FISH FROM SHORE / POND / CAVE";
+        } else {
+          cosTip = pondFishReady
+            ? "FISH FROM SHORE OR WADE THE POND"
+            : pondCaves.length
+              ? "FISH FROM SHORE OR A CAVE"
+              : "FISH FROM SHORE";
+        }
         cosTipT = 1.4;
         return;
       }
@@ -7651,7 +7759,7 @@
       fy,
       id === "megalodon"
         ? 16
-        : id === "portal_leech" || id === "storm_fish" || id === "crystal_carp"
+        : id === "portal_leech" || id === "storm_fish" || id === "angler_fish"
           ? 10
           : 7
     );
@@ -7687,8 +7795,9 @@
       weather.tip = "STORM FISH!";
       weather.tipT = 2.2;
     }
-    if (id === "glow_minnow" || id === "lantern_fish" || id === "crystal_carp") {
-      cosTip = id === "crystal_carp" ? "CRYSTAL CARP!" : id === "lantern_fish" ? "LANTERN FISH!" : "GLOW MINNOW!";
+    if (id === "glow_minnow" || id === "lantern_fish" || id === "angler_fish") {
+      cosTip =
+        id === "angler_fish" ? "ANGLER FISH!" : id === "lantern_fish" ? "LANTERN FISH!" : "GLOW MINNOW!";
       cosTipT = 1.8;
     }
   }
@@ -7709,7 +7818,8 @@
           : rod.kind === "wade"
             ? canWadePondFish()
             : canShoreFishSpot();
-      if (player.aboard || player.moving || !stillOk || !heldRodId()) {
+      const needHeldRod = survivalNeedsRod();
+      if (player.aboard || player.moving || !stillOk || (needHeldRod && !heldRodId())) {
         rod.phase = "idle";
         rod.catchId = null;
         rod.tugLeft = 0;
@@ -7722,9 +7832,11 @@
         rod.t = 0;
         landRodCatch();
       } else if (rod.phase === "reel" && rod.t > 0.5) {
+        const landed = rod.catchId;
         rod.phase = "idle";
         rod.catchId = null;
         rod.tugLeft = 0;
+        if (playMode === "speedrun" && landed) checkCatchSpeedEnd(landed);
       }
       return;
     }
@@ -11931,7 +12043,7 @@
     const glowCatch =
       rod.catchId === "glow_minnow" ||
       rod.catchId === "lantern_fish" ||
-      rod.catchId === "crystal_carp";
+      rod.catchId === "angler_fish";
     px(
       bobX,
       bobY,
@@ -12386,13 +12498,14 @@
       px(x + 3, y + 3, 1, 1, "#1a1814");
       return true;
     }
-    if (id === "crystal_carp") {
-      px(x, y + 2, 7, 3, "#3a78a0");
-      px(x + 5, y + 1, 3, 2, "#1a4868");
-      px(x + 1, y + 1, 4, 1, "#a8f0ff");
-      px(x + 2, y + 3, 2, 1, "#e8ffff");
-      px(x + 4, y + 3, 1, 1, "#1a1814");
-      px(x + 3, y, 1, 1, "#dff6ff");
+    if (id === "angler_fish") {
+      px(x, y + 2, 6, 3, "#243848");
+      px(x + 1, y + 1, 4, 1, "#3a5868");
+      px(x + 5, y + 1, 2, 2, "#1a2838");
+      px(x + 2, y + 3, 1, 1, "#1a1814");
+      px(x + 4, y, 1, 2, "#4a6878");
+      px(x + 5, y - 1, 1, 1, "#ffe08a");
+      px(x + 6, y - 2, 1, 1, "#fff8d0");
       return true;
     }
     if (
@@ -12502,7 +12615,7 @@
     if (id === "storm_fish") return { body: "#3a5878", tail: "#1a3048", hi: "#a8d8ff" };
     if (id === "glow_minnow") return { body: "#2a6878", tail: "#1a4858", hi: "#7ff0ea" };
     if (id === "lantern_fish") return { body: "#1a4058", tail: "#0e2838", hi: "#5ee8d0" };
-    if (id === "crystal_carp") return { body: "#3a78a0", tail: "#1a4868", hi: "#a8f0ff" };
+    if (id === "angler_fish") return { body: "#243848", tail: "#1a2838", hi: "#ffe08a" };
     if (id === "blowfish") return { body: "#e8c878", tail: "#c9a048", hi: "#f4dca0" };
     if (id === "waterfall_eel") return { body: "#1a4844", tail: "#0e302c", hi: "#c8ffe8" };
     if (id === "portal_leech") return { body: "#3a1a58", tail: "#2a1040", hi: "#c878ff" };
@@ -16346,7 +16459,7 @@
   }
 
   function drawStormOverlay() {
-    if (playMode !== "normal" || weather.phase === "clear") return;
+    if (!stormWeatherAllowed() || weather.phase === "clear") return;
     if (scene !== "island" && scene !== "fish" && scene !== "shop" && scene !== "cabin") return;
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -18404,6 +18517,9 @@
     else if (srCat === "shark_cloak" && id === "shark" && cloakOn && rod.phase === "idle") finishSpeedrun();
     else if (srCat === "waterfall_eel" && id === "waterfall_eel") finishSpeedrun();
     else if (srCat === "portal_leech" && id === "portal_leech") finishSpeedrun();
+    else if (srCat === "angler_fish" && id === "angler_fish") finishSpeedrun();
+    else if (srCat === "storm_fish" && id === "storm_fish") finishSpeedrun();
+    else if (srCat === "hammerhead" && id === "hammerhead") finishSpeedrun();
   }
 
   function checkBoatSpeedEnd() {
@@ -18631,9 +18747,11 @@
     ownedBoat = null;
     boatThrow = null;
     mountedRod = null;
-    setWeatherPhase("clear");
-    weather.tip = "";
-    weather.tipT = 0;
+    clearSpeedPetTemp();
+    setWeatherPhase(srCat === "storm_fish" ? "cyclone" : "clear");
+    weather.tip = srCat === "storm_fish" ? "CYCLONE" : "";
+    weather.tipT = srCat === "storm_fish" ? 2.0 : 0;
+    placeBeachCrabs();
     if (serpent) {
       serpent = null;
       resumeDayClock();
@@ -20789,9 +20907,25 @@
       id === "blowfish" ||
       id === "megalodon" ||
       id === "waterfall_eel" ||
-      id === "portal_leech"
+      id === "portal_leech" ||
+      id === "angler_fish" ||
+      id === "storm_fish" ||
+      id === "hammerhead"
     ) {
       drawTinyCatch(id, x, y);
+      return;
+    }
+    if (id === "trip") {
+      px(x + 2, y, 4, 2, "#d0d8e0");
+      px(x + 1, y + 2, 6, 5, "#e85ad4");
+      px(x + 2, y + 3, 4, 3, "#ff9ad4");
+      return;
+    }
+    if (id === "egypt_cat" || id === "blue_crab") {
+      ink.save();
+      ink.translate(x + 4, y + 5);
+      drawPetSprite(id, true, 1, 0, 0, time * 4);
+      ink.restore();
       return;
     }
     if (id === "shark_cloak") {
@@ -22356,6 +22490,7 @@
         else if (equippedPet === id) spawnPetWorld(true);
         return true;
       },
+      tempPet: (id) => spawnSpeedPetTemp(id),
       ownsPet: (id) => ownsPet(id),
       grantCrown: () => {
         grantCosmetic("king_crown");
