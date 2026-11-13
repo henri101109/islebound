@@ -801,7 +801,7 @@
   /** Speedrun-only pet (CAT% / CRAB%) — never written to locker / save. */
   let speedPetTemp = null;
   const PET_TP_DIST = 260;
-  const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien", "jorts"];
+  const LAUNCH_SKIN_IDS = ["classic", "jakob", "fisherman_joe", "beta_alien"];
   const QUEST_SKIN_IDS = [
     "usain_bolt",
     "among_us_red",
@@ -810,7 +810,9 @@
     "flash",
     "lex_young",
   ];
-  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS);
+  /** Secret / vendor skins — owned only via special buys, never auto-granted. */
+  const SHOP_SKIN_IDS = ["jorts"];
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS, SHOP_SKIN_IDS);
   /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
   const SKIN_LOCKED_BACK = {
     jakob: "norway_flag",
@@ -1007,13 +1009,6 @@
    * Local curated lists for now.
    */
   const WHATS_NEW = [
-    {
-      kind: "skin",
-      id: "jorts",
-      title: "JORTS KID",
-      blurb: "NEW SKIN",
-      detail: "FREE FOR ALL",
-    },
     {
       kind: "pet",
       id: "egypt_cat",
@@ -22492,6 +22487,13 @@
       },
       tempPet: (id) => spawnSpeedPetTemp(id),
       ownsPet: (id) => ownsPet(id),
+      tripping: () => brew.trip > 0,
+      ownsSkin: (id) => ownsSkin(id),
+      grantSkin: (id) => {
+        const ok = grantSkin(id);
+        if (ok || ownsSkin(id)) equipSkin(id);
+        return ok || ownsSkin(id);
+      },
       grantCrown: () => {
         grantCosmetic("king_crown");
         equipCosmetic("king_crown");

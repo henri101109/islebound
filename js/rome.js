@@ -522,8 +522,39 @@
       return A.getScene() === "rome" && (phase === "city" || phase === "crowned");
     }
 
+    function dealerVisible(d) {
+      if (!d) return false;
+      if (d.tripOnly) return !!(A.tripping && A.tripping());
+      return true;
+    }
+
     function buy(stall) {
       if (!stall || !stall.item) return;
+      if (stall.kind === "skin") {
+        if (stall.tripOnly && !(A.tripping && A.tripping())) {
+          flash("...");
+          return;
+        }
+        if (A.speedMode && A.speedMode()) {
+          flash("NOT FOR RACES");
+          return;
+        }
+        if (A.ownsSkin && A.ownsSkin(stall.item)) {
+          flash("ALREADY OWN");
+          return;
+        }
+        if (!A.spend || !A.spend(stall.price)) {
+          flash("NEED " + stall.price + " COINS");
+          return;
+        }
+        if (!A.grantSkin || !A.grantSkin(stall.item)) {
+          if (A.refund) A.refund(stall.price);
+          flash("CAN'T TRADE");
+          return;
+        }
+        flash("BOUGHT " + stall.label);
+        return;
+      }
       if (stall.kind === "pet") {
         if (A.speedMode && A.speedMode()) {
           // CAT%: buy egypt cat for the run only — never saves to locker.
@@ -599,6 +630,7 @@
       let bestD = 42;
       for (let i = 0; i < city.dealers.length; i++) {
         const d = city.dealers[i];
+        if (!dealerVisible(d)) continue;
         const dist = Math.hypot(f.x - (d.x + 4), f.y - (d.y + 12));
         if (dist < bestD) {
           bestD = dist;
@@ -1151,7 +1183,9 @@
       for (let i = 0; i < city.blocks.length; i++) drawBlock(cam, city.blocks[i], i);
       drawPalaceFace(cam);
       for (let i = 0; i < city.stalls.length; i++) drawStall(cam, city.stalls[i], t);
-      for (let i = 0; i < city.dealers.length; i++) drawDealer(cam, city.dealers[i], t);
+      for (let i = 0; i < city.dealers.length; i++) {
+        if (dealerVisible(city.dealers[i])) drawDealer(cam, city.dealers[i], t);
+      }
       drawPortalPad(cam, t);
       for (let i = 0; i < city.people.length; i++) {
         const n = city.people[i];
@@ -1251,26 +1285,34 @@
       const g = A.ctx();
       const x = (d.x - cam.x) | 0;
       const y = (d.y - cam.y) | 0;
-      const bob = (Math.sin(t * 2 + d.x) * 0.5) | 0;
-      const fill =
-        d.item === "potion_mystery"
+      const trip = !!d.tripOnly;
+      const bob = (Math.sin(t * (trip ? 5.5 : 2) + d.x) * (trip ? 1.2 : 0.5)) | 0;
+      const fill = trip
+        ? ["#e85ad4", "#44e0c0", "#ffe14a", "#7a4bff"][((t * 7) | 0) % 4]
+        : d.item === "potion_mystery"
           ? ["#e85ad4", "#44e0c0", "#ffe14a", "#7a4bff"][((t * 4) | 0) % 4]
           : d.fill;
+      const robe = trip ? fill : d.robe;
       A.pxi(g, x - 3, y - 4 + bob, 16, 2, "#120c10");
-      drawPerson(g, x, y + bob, d.robe, d.face, (t * 3) | 0, false);
+      drawPerson(g, x, y + bob, robe, d.face, (t * (trip ? 9 : 3)) | 0, false);
       A.pxi(g, x + 1, y - 2 + bob, 6, 3, "#120c10");
       A.pxi(g, x + 2, y + bob, 4, 2, "#120c10");
       const bx = d.face < 0 ? x - 4 : x + 8;
-      A.pxi(g, bx, y + 5 + bob, 3, 5, "#d0d8e0");
+      A.pxi(g, bx, y + 5 + bob, 3, 5, trip ? "#2a1810" : "#d0d8e0");
       A.pxi(g, bx + 1, y + 7 + bob, 1, 2, fill);
-      const lamp = Math.sin(t * 9 + d.x) > 0 ? "#e8c44a" : "#a06028";
-      const mx = (d.mouth - cam.x) | 0;
-      const my = (d.mouthY - cam.y) | 0;
-      A.pxi(g, mx, my, 2, 3, "#3a2414");
-      A.pxi(g, mx, my - 2, 2, 2, lamp);
+      if (!trip) {
+        const lamp = Math.sin(t * 9 + d.x) > 0 ? "#e8c44a" : "#a06028";
+        const mx = (d.mouth - cam.x) | 0;
+        const my = (d.mouthY - cam.y) | 0;
+        A.pxi(g, mx, my, 2, 3, "#3a2414");
+        A.pxi(g, mx, my - 2, 2, 2, lamp);
+      } else {
+        // Soft trail so they read as a trip hallucination.
+        A.pxi(g, x - 2, y + 10 + bob, 12, 1, fill);
+      }
       const f = feet();
       if (Math.hypot(f.x - (d.x + 4), f.y - (d.y + 12)) < 72) {
-        A.drawPixText(d.line, x + 4, y - 12 + bob, "#f3e2c4", "center");
+        A.drawPixText(d.line, x + 4, y - 12 + bob, trip ? fill : "#f3e2c4", "center");
       }
     }
 
@@ -2102,6 +2144,22 @@
     // the avenue reaches it. The solid skips this rect.
     const palaceDoor = { x: STREET_X + STREET_W / 2 - 30, y: palaceFace.y + palaceFace.h - 36, w: 60, h: 48 };
     const palaceSolid = { x: palaceFace.x, y: palaceFace.y, w: palaceFace.w, h: palaceFace.h };
+    // Mystery-trip only — stands by the palace steps, never advertised.
+    dealers.push({
+      x: palaceDoor.x - 22,
+      y: palaceDoor.y + 44,
+      face: 1,
+      mouth: palaceDoor.x - 8,
+      mouthY: palaceDoor.y + 52,
+      item: "jorts",
+      kind: "skin",
+      tripOnly: true,
+      label: "JORTS",
+      price: 1942,
+      fill: "#e85ad4",
+      robe: "#2a1024",
+      line: "HEY KID",
+    });
     return {
       blocks: blocks,
       alleys: alleys,
