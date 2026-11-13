@@ -2013,6 +2013,7 @@
       { side: 0, gap: 2, brew: 2 },
       { side: 0, gap: 3, pet: true },
       { side: 1, gap: 4, brew: 3 },
+      { side: 1, gap: 2, rod: true },
     ];
     const catGoods = {
       item: "egypt_cat",
@@ -2023,10 +2024,18 @@
       robe: "#c45a48",
       line: "CAT OF THE TEMPLE",
     };
+    const rodGoods = {
+      item: "sea_rod",
+      label: "SEA ROD",
+      price: 45,
+      fill: "#8a5a32",
+      robe: "#2a4058",
+      line: "HOOKS FOR THE DEEP",
+    };
     const dealers = [];
     for (let i = 0; i < spots.length; i++) {
       const s = spots[i];
-      const g = s.pet ? catGoods : brews[s.brew];
+      const g = s.pet ? catGoods : s.rod ? rodGoods : brews[s.brew];
       const gy = gaps[s.gap];
       const left = s.side === 0;
       dealers.push({
