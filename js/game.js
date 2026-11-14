@@ -20526,6 +20526,18 @@
     }
   }
 
+  function sitePage(file) {
+    const path = window.location.pathname || "/";
+    const slash = path.lastIndexOf("/");
+    const last = slash >= 0 ? path.slice(slash + 1) : path;
+    const dir = path.endsWith("/")
+      ? path
+      : last.indexOf(".") >= 0
+        ? path.slice(0, slash + 1)
+        : path + "/";
+    return window.location.origin + dir + file;
+  }
+
   function drawModeSelect() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -20549,7 +20561,7 @@
     const topBandH = 32;
     px(0, 0, uiW, topBandH, "#0a1520");
 
-    // Corner chips — left: REWARDS + STATS; right: PROFILES + RANKS + ACCOUNT
+    // Corner chips — left: REWARDS + STATS + WIKI; right: PROFILES + RANKS + ACCOUNT
     const chipH = 16;
     const rewardsW = pixTextWidth("REWARDS") + 10;
     const statsW = pixTextWidth("STATS") + 10;
@@ -20567,6 +20579,9 @@
       nmCursor = 0;
       nmBoardKind = "playtime";
       refreshNmBoard(nmBoardKind);
+    });
+    drawHubChip("WIKI", pad + rewardsW + statsW + rightGap * 2, topY, "hub:wiki", () => {
+      window.location.href = sitePage("wiki.html");
     });
     drawHubChip("PROFILES", profX, topY, "hub:profiles", () => {
       uiScreen = "profiles";

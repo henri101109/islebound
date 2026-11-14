@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Islebound Wiki</title>
+    <style>
+      :root {
+        --sea: #0b1a22;
+        --sea-2: #122838;
+        --ink: #2b1c12;
+        --ink-soft: #5c3a21;
+        --parchment: #e7d3a8;
+        --parchment-2: #c4a574;
+        --gold: #e8c44a;
+        --gold-deep: #c9a227;
+        --wood: #3a2414;
+        --cream: #f3e2c4;
+        --line: #8a5a32;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(1200px 500px at 50% -10%, #1a4660 0%, transparent 55%),
+          var(--sea);
+        color: var(--cream);
+        font-family: Palatino, "Palatino Linotype", "Iowan Old Style", Georgia, serif;
+        line-height: 1.55;
+      }
+      a { color: var(--gold); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 18px;
+        background: #0a1520;
+        border-bottom: 3px solid var(--gold-deep);
+      }
+      .brand {
+        font-family: "Courier New", ui-monospace, monospace;
+        letter-spacing: 0.18em;
+        font-size: 14px;
+        color: var(--cream);
+      }
+      .brand span { color: var(--gold); }
+      .back {
+        flex: 0 0 auto;
+        white-space: nowrap;
+        font-family: "Courier New", ui-monospace, monospace;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+        background: var(--wood);
+        color: var(--cream);
+        border: 2px solid var(--gold-deep);
+        padding: 6px 10px;
+      }
+      .back:hover { background: var(--gold); color: var(--ink); text-decoration: none; }
+      .wrap {
+        display: grid;
+        grid-template-columns: 210px minmax(0, 760px);
+        gap: 28px;
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 28px 20px 80px;
+      }
+      nav {
+        position: sticky;
+        top: 64px;
+        align-self: start;
+        max-height: calc(100vh - 84px);
+        overflow: auto;
+        padding-right: 8px;
+      }
+      nav a {
+        display: block;
+        font-family: "Courier New", ui-monospace, monospace;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: var(--parchment-2);
+        padding: 5px 0;
+      }
+      nav a:hover { color: var(--gold); text-decoration: none; }
+      article h1 {
+        font-family: "Courier New", ui-monospace, monospace;
+        font-weight: normal;
+        letter-spacing: 0.12em;
+        font-size: 22px;
+        margin: 0 0 8px;
+        color: var(--gold);
+      }
+      .lede { color: var(--parchment); margin-top: 0; }
+      section {
+        scroll-margin-top: 72px;
+        background: linear-gradient(180deg, #f0ddb6 0%, var(--parchment) 40%, #d7bc8c 100%);
+        color: var(--ink);
+        border: 3px solid var(--wood);
+        box-shadow: 0 0 0 1px var(--gold-deep), 0 10px 0 rgba(0, 0, 0, 0.25);
+        padding: 18px 20px 8px;
+        margin: 22px 0;
+      }
+      h2 {
+        font-family: "Courier New", ui-monospace, monospace;
+        font-weight: normal;
+        letter-spacing: 0.14em;
+        font-size: 15px;
+        margin: 0 0 10px;
+        padding-bottom: 6px;
+        border-bottom: 2px solid var(--gold-deep);
+        color: var(--wood);
+      }
+      h3 {
+        font-family: "Courier New", ui-monospace, monospace;
+        font-weight: normal;
+        letter-spacing: 0.06em;
+        font-size: 13px;
+        margin: 16px 0 6px;
+        color: var(--ink-soft);
+      }
+      p, li { font-size: 16px; }
+      ul { padding-left: 18px; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        margin: 8px 0 14px;
+      }
+      th, td {
+        text-align: left;
+        padding: 5px 6px;
+        border-bottom: 1px solid rgba(58, 36, 20, 0.25);
+        vertical-align: top;
+      }
+      th {
+        font-family: "Courier New", ui-monospace, monospace;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        color: var(--ink-soft);
+      }
+      .note {
+        background: rgba(58, 36, 20, 0.08);
+        border-left: 3px solid var(--gold-deep);
+        padding: 8px 10px;
+        margin: 8px 0 14px;
+      }
+      kbd {
+        font-family: "Courier New", ui-monospace, monospace;
+        background: var(--wood);
+        color: var(--cream);
+        padding: 0 5px;
+        border-radius: 2px;
+        font-size: 13px;
+      }
+      @media (max-width: 800px) {
+        .wrap { grid-template-columns: 1fr; padding-top: 16px; }
+        nav { position: static; max-height: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">ISLEBOUND <span>WIKI</span></div>
+      <a class="back" id="wiki-back" href="index.html">BACK</a>
+    </header>
+    <div class="wrap">
+      <nav>
+        <a href="#start">Start</a>
+        <a href="#controls">Controls</a>
+        <a href="#island">The island</a>
+        <a href="#body">Body and death</a>
+        <a href="#bag">Bag and satchel</a>
+        <a href="#coins">Coins</a>
+        <a href="#boats">Boats</a>
+        <a href="#fishing">Fishing</a>
+        <a href="#catalog">Catch catalog</a>
+        <a href="#weather">Weather</a>
+        <a href="#serpent">The serpent</a>
+        <a href="#temple">Temple</a>
+        <a href="#wreck">The wreck</a>
+        <a href="#rome">Rome</a>
+        <a href="#potions">Potions</a>
+        <a href="#pets">Pets</a>
+        <a href="#looks">Skins and looks</a>
+        <a href="#career">Career rank</a>
+        <a href="#quests">Quests</a>
+        <a href="#weekly">Weekly rewards</a>
+        <a href="#people">Accounts and people</a>
+        <a href="#speedrun">Speedrun</a>
+        <a href="#boards">Boards and replays</a>
+        <a href="#save">Saving</a>
+      </nav>
+      <article>
+        <h1>ISLEBOUND</h1>
+        <p class="lede">
+          A fishing island you can live on, or race. Survival keeps your island.
+          Speedrun throws that island away, starts a clock, and asks for one thing.
+          The hub is only a place to stand with other people.
+        </p>
+
+        <section id="start">
+          <h2>START</h2>
+          <p>
+            The title screen is the locker. Your body stands in the middle.
+            Other people who are online stand in that same line. The rail on the right
+            rotates through what is new, and through the black market.
+          </p>
+          <ul>
+            <li><strong>Survival</strong> opens your island. Progress stays.</li>
+            <li><strong>Speedrun</strong> opens the category tabs. The clock starts when you move. <kbd>R</kbd> resets the run.</li>
+            <li><strong>Duels</strong> is a room where two players pick a list of categories and race them one after another.</li>
+          </ul>
+          <p>
+            <kbd>H</kbd> during play opens the short in-game walkthrough.
+            This page is the long version. <kbd>Esc</kbd> from survival or a finished run returns to the title screen.
+          </p>
+        </section>
+
+        <section id="controls">
+          <h2>CONTROLS</h2>
+          <table>
+            <thead>
+              <tr><th>Key</th><th>What it does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd></td><td>Walk. Arrows do the same.</td></tr>
+              <tr><td><kbd>Z</kbd></td><td>Hold to look farther out.</td></tr>
+              <tr><td><kbd>1</kbd>–<kbd>8</kbd></td><td>Choose a bag slot. Top row is 1–4, bottom row is 5–8.</td></tr>
+              <tr><td><kbd>Space</kbd></td><td>Use what you are holding. Also scoops a crab under your feet.</td></tr>
+              <tr><td><kbd>C</kbd> or <kbd>F</kbd></td><td>Cast the line.</td></tr>
+              <tr><td><kbd>Enter</kbd></td><td>Board or leave a boat, or drop what you are holding indoors.</td></tr>
+              <tr><td><kbd>E</kbd></td><td>Open the satchel in survival. Send an emote in the hub.</td></tr>
+              <tr><td><kbd>T</kbd></td><td>Trade with the shopkeeper, or hand a treasure chest to the cabin master.</td></tr>
+              <tr><td><kbd>P</kbd></td><td>Sit or stand your pet.</td></tr>
+              <tr><td><kbd>Tab</kbd></td><td>Open island chat.</td></tr>
+              <tr><td><kbd>H</kbd></td><td>Open or close the short guide.</td></tr>
+              <tr><td><kbd>R</kbd></td><td>Reset a speedrun that is already running.</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Leave play and return to the title screen.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            On the speedrun category screen, <kbd>A</kbd> and <kbd>D</kbd> (or the left and right arrows) change the group.
+            <kbd>1</kbd> through <kbd>5</kbd> jump to a group. Up and down move inside the list.
+          </p>
+        </section>
+
+        <section id="island">
+          <h2>THE ISLAND</h2>
+          <p>
+            You wake by the dock. Dry ground is walked at full speed. Standing in the sea
+            slows you and, if you stay under, starts to drown you. The wadable pond inland
+            only wets your feet. It does not drown you.
+          </p>
+          <h3>Dock and shop</h3>
+          <p>
+            The harbor shop sells the skiff for <strong>10 coins</strong>. If you cannot pay, the keeper says so.
+            Stand near the keeper and press <kbd>T</kbd> while holding a gem or a crystal.
+            The shop pays 5 for a gem and 25 for a crystal.
+          </p>
+          <h3>Beach</h3>
+          <p>
+            Crabs live on dry sand. Walk over one and press <kbd>Space</kbd> to scoop it.
+            Most crabs go in the bag as food. A blue crab is a pet, and it is rare.
+            In survival, each beach crab has a 1% chance to be blue. Scooping a blue one
+            you do not already own grants the pet and equips it.
+          </p>
+          <h3>Shore wash</h3>
+          <p>
+            The tide leaves loot on the sand and takes it back. Shells, gems, crystals, and
+            jellyfish wash in on a cycle. Walk into them to pick them up. If your bag is full,
+            the spare stack can go to the satchel.
+          </p>
+          <h3>Inland</h3>
+          <p>
+            West of the dock, deep in the trees, is the temple. A river runs inland to a pool
+            with a dinghy. Cliff mouths along that water are caves you can fish from on foot.
+            Farther out, a wreck sits under the water.
+          </p>
+        </section>
+
+        <section id="body">
+          <h2>BODY AND DEATH</h2>
+          <p>
+            You have <strong>7 hearts</strong>. Dry walking speed is 165. In the sea it drops to 70.
+            After you have been under for 1.6 seconds, you lose a heart every 0.85 seconds.
+            At 0 hearts you are dead for 1.4 seconds, then you wake at the spawn with full hearts,
+            off any boat. A boat, the pond, and the sky draught keep you from drowning.
+          </p>
+          <p>
+            Survival loot no longer raises a level. The number people see on you is your
+            <a href="#career">career rank</a>, and that only moves when you finish speedruns.
+          </p>
+        </section>
+
+        <section id="bag">
+          <h2>BAG AND SATCHEL</h2>
+          <p>
+            The bag is eight slots, chosen with <kbd>1</kbd> through <kbd>8</kbd>. Stacks have a maximum.
+            Cosmetics that land in the bag are learned by the locker. They are equipped from the title screen, not from the island.
+          </p>
+          <p>
+            The satchel is a second eight slots. Press <kbd>E</kbd> in survival to open it.
+            Drag between the bag and the satchel. The <kbd>E</kbd> hint sits to the left of the bag even when your hands are empty.
+          </p>
+          <p>
+            Indoors, <kbd>Enter</kbd> drops whatever you are holding.
+          </p>
+        </section>
+
+        <section id="coins">
+          <h2>COINS</h2>
+          <p>
+            Coins are the island’s money. You earn them by selling to a keeper, by opening a treasure chest
+            with the cabin master, and by a few special finds. The dock shop buys stones. The fishing cabin buys fish.
+            Rome’s street sells food, and its alleys sell draughts, the sea rod, and the Egypt cat.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Buyer</th><th>Pays</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Dock shop</td><td>Gem 5, crystal 25</td></tr>
+              <tr><td>Fishing cabin</td><td>The catch list below. Hold the fish and press <kbd>T</kbd>.</td></tr>
+            </tbody>
+          </table>
+          <p>
+            A treasure chest in the bag does nothing until you find a treasure master.
+            Bring it to the cabin and press <kbd>T</kbd>. A classic opening pays somewhere between 100 and 500 coins.
+          </p>
+        </section>
+
+        <section id="boats">
+          <h2>BOATS</h2>
+          <h3>Skiff</h3>
+          <p>
+            Buy it at the dock for 10 coins, then walk onto it. <kbd>Enter</kbd> boards and leaves.
+            Leaving puts you back on the T-head of the dock. The boat must be sitting still before you can cast.
+            You can cast from the skiff with empty hands. A sea rod mounted on the boat is only a perk:
+            bites come sooner (the wait is multiplied by 0.82) and the rare and legendary bands are a little fatter.
+          </p>
+          <h3>Dinghy</h3>
+          <p>
+            The river pool inland has a dinghy. It is the boat for the pond.
+            Eel, leech, and a lot of blowfish live there. <kbd>Enter</kbd> on the dinghy hops you back to the dock’s T-head.
+          </p>
+        </section>
+
+        <section id="fishing">
+          <h2>FISHING</h2>
+          <p>
+            Press <kbd>C</kbd> or <kbd>F</kbd> to cast. You cannot cast while the serpent is up, or while a pickup animation is still playing.
+          </p>
+          <h3>Where you can cast</h3>
+          <ul>
+            <li><strong>Skiff.</strong> Barehanded is allowed. The boat has to be still. Ocean casts wait about 13.5 seconds before the bite window, longer in bad weather.</li>
+            <li><strong>Dinghy.</strong> The pond. Shorter wait, about 3 to 7 seconds.</li>
+            <li><strong>Shore.</strong> Stand on the sand with your feet at the water. In survival you must be holding a rod. Speedrun fish categories let you cast barehanded.</li>
+            <li><strong>Pond wade.</strong> Stand in the inland pool.</li>
+            <li><strong>Cave.</strong> Stand in a cliff mouth on the pond. Glow fish and the angler live here.</li>
+          </ul>
+          <h3>Ocean odds and distance</h3>
+          <p>
+            From the skiff, how far you are from the dock changes the tier, not which fish inside a tier.
+            Every fish in a tier is equally likely.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Distance from dock</th><th>Bite</th><th>Legendary</th><th>Rare</th><th>The rest</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Within 2 tiles</td><td>86%</td><td>None</td><td>24%</td><td>Common</td></tr>
+              <tr><td>About 4 tiles</td><td>36%</td><td>1.2%</td><td>7%</td><td>Common</td></tr>
+              <tr><td>12 tiles or more</td><td>62%</td><td>58%</td><td>18%</td><td>Common</td></tr>
+            </tbody>
+          </table>
+          <p>
+            Between 4 and 12 tiles the odds slide from the near table to the far table.
+            Commons are cod, trout, salmon, and jellyfish.
+            Rares are crab, mini shark, and green jellyfish.
+            Legendaries are shark, white jellyfish, and treasure chest.
+          </p>
+          <h3>Bait in your hand</h3>
+          <p>
+            Holding cod, trout, salmon, jellyfish, or a crab while you cast is good bait.
+            It raises the legendary band by a quarter and the rare band by half, and it makes super-legendaries 10% more likely.
+            The bait is used up when the catch resolves.
+          </p>
+          <p>
+            Holding a <strong>Heart of the Sea</strong> on an ocean cast guarantees a blowfish. The heart is not used up.
+            Holding a shark is a 50% chance of a megalodon. A mini shark is 25%.
+            The shark is only eaten if the megalodon actually bites.
+          </p>
+          <h3>Super-legendaries</h3>
+          <p>
+            After the normal roll, each of these is rolled on its own. If more than one hits, one of the hits is picked at random.
+          </p>
+          <ul>
+            <li>Gold jellyfish, 1 in 200</li>
+            <li>Blowfish, 1 in 250</li>
+            <li>Rainbow jellyfish, 1 in 300</li>
+            <li>Megalodon, 1 in 500</li>
+          </ul>
+          <h3>Other waters</h3>
+          <p>
+            The pond, before a storm override: 10% portal leech, 12% waterfall eel, 25% blowfish, otherwise an even split of cod, trout, and salmon.
+          </p>
+          <p>
+            The shore: 12% hammerhead, then stingray until 40%, otherwise a mix of cod, trout, salmon, stingray, and hammerhead.
+            Good bait tightens that roll.
+          </p>
+          <p>
+            A cave: 10% angler, then lantern fish until 42%, otherwise glow minnows and lantern fish.
+          </p>
+          <p>
+            A mounted sea rod on the boat multiplies legendary odds by 1.2, rare odds by 1.25, and bite chance by 1.08.
+          </p>
+        </section>
+
+        <section id="catalog">
+          <h2>CATCH CATALOG</h2>
+          <p>
+            Pickup XP is the old survival number stored on the item. Career rank does not use it.
+            The coin column is what the fishing cabin pays.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Catch</th><th>Stack</th><th>Coins</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Blue fish, reef fish, cod</td><td>24</td><td>10</td></tr>
+              <tr><td>Gold fish, trout, salmon</td><td>24</td><td>15</td></tr>
+              <tr><td>Jellyfish</td><td>24</td><td>20</td></tr>
+              <tr><td>Crab</td><td>24</td><td>25</td></tr>
+              <tr><td>Mini shark</td><td>24</td><td>30</td></tr>
+              <tr><td>Green jellyfish, glow minnow</td><td>24</td><td>40</td></tr>
+              <tr><td>Stingray</td><td>16</td><td>55</td></tr>
+              <tr><td>Shark</td><td>24</td><td>75</td></tr>
+              <tr><td>White jellyfish</td><td>24</td><td>80</td></tr>
+              <tr><td>Lantern fish</td><td>16</td><td>85</td></tr>
+              <tr><td>Waterfall eel, hammerhead</td><td>24 / 12</td><td>95</td></tr>
+              <tr><td>Gold jellyfish</td><td>24</td><td>120</td></tr>
+              <tr><td>Angler</td><td>12</td><td>130</td></tr>
+              <tr><td>Blowfish</td><td>24</td><td>140</td></tr>
+              <tr><td>Rainbow jellyfish</td><td>24</td><td>160</td></tr>
+              <tr><td>Portal leech</td><td>16</td><td>180</td></tr>
+              <tr><td>Storm fish</td><td>8</td><td>220</td></tr>
+              <tr><td>Megalodon</td><td>8</td><td>250</td></tr>
+            </tbody>
+          </table>
+          <p>
+            A blowfish throws hearts over your head for about two seconds. In Blowfish% the clock waits through that, plus one more second, before the run ends.
+            A portal leech glows and asks what it might be for.
+          </p>
+        </section>
+
+        <section id="weather">
+          <h2>WEATHER</h2>
+          <p>
+            Storms exist in survival, and in Storm%. Everywhere else the sky stays clear.
+            Clear weather lasts a long time, somewhere between 6 and 15 minutes.
+            When it breaks, it is usually another clear stretch. Sometimes a short squall.
+            A real storm is uncommon, and a cyclone after a storm is rare.
+          </p>
+          <p>
+            Squall, storm, and cyclone each last only a few seconds to half a minute.
+            While a cyclone is up, every cast has a 14% chance to be a storm fish before the normal table runs.
+            Storms also stretch the wait before a bite: a little in a squall, more in a storm, most in a cyclone.
+            Storm% locks the sky on a cyclone for the whole run.
+          </p>
+        </section>
+
+        <section id="serpent">
+          <h2>THE SERPENT</h2>
+          <p>
+            Hold a sea shell and press <kbd>Space</kbd> while you are on your own skiff, more than eight tiles from the dock, and not in the dead of night.
+            The serpent has 5 hearts and a body of 9 segments. The day clock pauses while it is here.
+            You cannot cast. Steer the boat to dodge. When it breaches, strike with the wand.
+            A cloak on your back confuses it.
+          </p>
+          <p>
+            There is a 45 second cooldown after a summon. Beating it drops a Heart of the Sea.
+            That heart is the end of Serpent%, and it is also the bait that forces a blowfish on later ocean casts.
+          </p>
+        </section>
+
+        <section id="temple">
+          <h2>TEMPLE</h2>
+          <p>
+            The temple is west of the dock, inland, in the trees. Inside is a large maze with no traps.
+            The jade mask sits on a pedestal at the far end. Touching that pedestal is the whole of Mask%.
+            You do not need an empty bag slot for the run to count.
+          </p>
+          <p>
+            In survival the mask is a face cosmetic. Equipping it throws jade and gold sparks around you.
+            It is also worth a small burst of the old item XP the first time it is picked up.
+          </p>
+        </section>
+
+        <section id="wreck">
+          <h2>THE WRECK</h2>
+          <p>
+            Under the water there is a dive. Sharks in the lower rooms will shove you back toward the sub
+            if you touch them. In the wreck itself an octopus pushes you if you stand too close and you are not walking away.
+            The sunken chest at the end can be taken once. It is a single item, separate from the beach treasure chest.
+          </p>
+        </section>
+
+        <section id="rome">
+          <h2>ROME</h2>
+          <p>
+            A portal in the river ruins opens onto a city. The avenue runs north to a palace.
+            People in the street talk about the king, the races, olives, and the gate.
+            The portal home sits at the south end of the avenue.
+          </p>
+          <h3>Street stalls</h3>
+          <p>Olives are 4 coins, bread is 3, wine is 8. They stack in the bag and are mostly food and color.</p>
+          <h3>Alley dealers</h3>
+          <p>The alleys are not marked on a sign. The dealers stand in the gaps between the blocks.</p>
+          <ul>
+            <li>Tar draught, 6 coins</li>
+            <li>Mend draught, 8 coins</li>
+            <li>Sky draught, 14 coins</li>
+            <li>Mystery draught, 10 coins</li>
+            <li>Sea rod, 45 coins</li>
+            <li>Egypt cat, 950 coins</li>
+          </ul>
+          <p>
+            By the palace steps, and only while a mystery draught is still in you, a dealer sells the Jorts skin for <strong>1942 coins</strong>.
+            He does not advertise. If you already own a skin or a pet, he will not sell it again.
+          </p>
+          <h3>The 1500 meters</h3>
+          <p>
+            The king’s racing line is exactly 1500 meters. At a dry walk of 165, a perfect line is 3 minutes and 29.89 seconds.
+            An animal pocket sits on the course. The clock pauses while that gate is shut and starts again when it opens,
+            so waiting at a closed gate does not cost you the pause.
+            Winning the race grants the Crown of the Kingdom. It is not sold anywhere.
+          </p>
+          <p>
+            Kings Race% starts you on that line. Full Kings% starts you on a fresh island.
+            You have to reach the portal yourself, then walk the city. Any finish of the line counts for the race category.
+          </p>
+        </section>
+
+        <section id="potions">
+          <h2>POTIONS</h2>
+          <p>
+            Press <kbd>Space</kbd> while a draught is selected. The four Rome draughts last <strong>60 seconds</strong>.
+          </p>
+          <ul>
+            <li><strong>Red potion.</strong> Heals 3 hearts at once. It is not one of the timed draughts.</li>
+            <li><strong>Tar draught.</strong> Your legs drag. Movement smears behind you until it lets go.</li>
+            <li><strong>Mend draught.</strong> One heart immediately, then another heart every 6 seconds while it lasts, up to 7.</li>
+            <li><strong>Sky draught.</strong> You leave the ground, on the island or in Rome. Water stops drowning you. When it ends, the game pulls you back onto ground you can stand on.</li>
+            <li><strong>Mystery draught.</strong> The world stops being reliable. Drinking it ends Trip%. It is also the only way the Jorts dealer will talk to you.</li>
+          </ul>
+        </section>
+
+        <section id="pets">
+          <h2>PETS</h2>
+          <p>
+            Pets are equipped in the locker, on the Pets tab. In survival the equipped pet follows you.
+            It never dies. If you get more than 260 pixels away it warps back to you.
+            <kbd>P</kbd> tells it to sit. A speedrun pet, from Cat% or Crab%, exists only for that run. It is not written into your locker.
+          </p>
+          <ul>
+            <li><strong>Blue crab.</strong> No vendor. In survival, 1% of beach crabs are blue. Scoop one you do not own.</li>
+            <li><strong>Egypt cat.</strong> 950 coins from the alley dealer in Rome. Faster than the crab when it follows.</li>
+          </ul>
+        </section>
+
+        <section id="looks">
+          <h2>SKINS AND LOOKS</h2>
+          <p>
+            The locker is the title screen. Skins, gear, and pets are separate tabs.
+            Drag a face or a back piece onto the sockets, or click a skin to wear it.
+            Jakob always wears the Norway flag on his back. Bolt always wears the Jamaica flag.
+            Those backs cannot be taken off while that skin is on.
+          </p>
+          <h3>Skins you start with</h3>
+          <p>Classic, Jakob, Joe, and the alien. Anyone who already had a save when skins arrived received this set once.</p>
+          <h3>Skins you earn</h3>
+          <p>Bolt, Crew, Homer, Indy, Flash, and Lex. Each one is a quest in Rewards. See that section for the exact time.</p>
+          <h3>A skin you buy</h3>
+          <p>Jorts, 1942 coins, palace steps, mystery draught only.</p>
+          <h3>Face and back</h3>
+          <ul>
+            <li>Jade mask, from the temple</li>
+            <li>Straw hat, crown, and beta crown, from the weekly reel</li>
+            <li>Cloak, worn on the back. <kbd>Space</kbd> turns it on and off. This is what Invis Shark% asks for.</li>
+            <li>Ember cape, from the world</li>
+            <li>Job App cloak, for finishing Invis Shark%</li>
+            <li>American cloak, for making an account</li>
+            <li>Jellyfish cape, for a fast White Jelly%</li>
+            <li>Crown of the Kingdom, for winning the race</li>
+          </ul>
+        </section>
+
+        <section id="career">
+          <h2>CAREER RANK</h2>
+          <p>
+            Career rank is the level under your name. It moves only when a speedrun finishes.
+            A faster run, a new personal best, a submitted time, and a world record all pay more.
+            The category itself has a weight, so a leech run is worth more than a death run even at the same pace.
+            The curve is steep on purpose. Level 1 to 20 is bronze, 21 to 35 is silver, 36 to 55 is gold,
+            56 to 75 is diamond, and 76 and up is champion. The number can keep climbing past 76. The display stops at 200.
+          </p>
+          <p>
+            Roughly, a finish pays a small base times the category weight times how you compared to the current world record.
+            Submitting adds about three quarters again. A personal best adds another chunk. A world record adds a larger one.
+            Survival fishing does not add career XP.
+          </p>
+        </section>
+
+        <section id="quests">
+          <h2>QUESTS</h2>
+          <p>
+            Rewards, on the title screen, has three tabs: quests, the weekly reel, and levels.
+            A finished quest is claimed there. The rewards are skins and capes, not island loot.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Quest</th><th>Ask</th><th>Reward</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Sub 3:35 race</td><td>Kings Race% under 3:35</td><td>Lex skin</td></tr>
+              <tr><td>Sub 9.58 death</td><td>Death% under 9.58 seconds</td><td>Bolt skin</td></tr>
+              <tr><td>Sub 45s blowfish</td><td>Blowfish% under 45 seconds</td><td>Crew skin</td></tr>
+              <tr><td>Sub 1:30 mega</td><td>Megalodon% under 1:30</td><td>Homer skin</td></tr>
+              <tr><td>5 mask runs</td><td>Finish Mask% five times</td><td>Indy skin</td></tr>
+              <tr><td>Sub 8 boat</td><td>Boat% under 8 seconds</td><td>Flash skin</td></tr>
+              <tr><td>Invis shark</td><td>Finish Invis Shark% once</td><td>Job App cape</td></tr>
+              <tr><td>Make account</td><td>Sign in or create an account</td><td>American cape</td></tr>
+              <tr><td>Sub 35s jelly</td><td>White Jelly% under 35 seconds</td><td>Jellyfish cape</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="weekly">
+          <h2>WEEKLY REWARDS</h2>
+          <p>
+            An account is required. Each week you get three free spins. The result is chosen before the reel moves.
+            Half the time it is the straw hat, 30% the crown, 20% the beta crown.
+            When the three are gone, the button says next week.
+          </p>
+        </section>
+
+        <section id="people">
+          <h2>ACCOUNTS, RANKS, AND PEOPLE</h2>
+          <h3>Names</h3>
+          <p>
+            A board name is 3 to 12 characters, letters and numbers. Accounts wear a gold name.
+            Guests wear the plain one. The same person is folded together when the names are aliases of each other,
+            so a short name and a longer one can share a row.
+          </p>
+          <h3>Why an account</h3>
+          <p>
+            An account keeps your locker and your island on the server, so a cleared browser does not wipe you.
+            It also grants the VIP tag, unlocks the weekly reel, and is how media tags get attached to you.
+            Guests can still play, finish runs, and type a name on the result screen.
+          </p>
+          <h3>Tags</h3>
+          <ul>
+            <li><strong>Owner.</strong> Henri only.</li>
+            <li><strong>VIP.</strong> Any account.</li>
+            <li><strong>MVP.</strong> A support purchase, marked at $4.99.</li>
+            <li><strong>YouTuber.</strong> A long video at 1,000, or a short at 30,000.</li>
+            <li><strong>TikTok.</strong> Over 20,000 views.</li>
+            <li><strong>Twitch.</strong> A stream with 20 or more viewers.</li>
+          </ul>
+          <h3>Hub</h3>
+          <p>
+            The hub is a shared plaza. You see whoever is online, with their name, their look, and their tag.
+            <kbd>E</kbd> sends an emote. <kbd>Tab</kbd> is chat. The door or <kbd>Esc</kbd> leaves.
+            Chat messages are short, and you cannot send them faster than about one every second and a half.
+          </p>
+          <h3>Profiles</h3>
+          <p>
+            Profiles on the title screen searches people who have played on this boards setup.
+            A green dot means they were seen recently.
+          </p>
+        </section>
+
+        <section id="speedrun">
+          <h2>SPEEDRUN</h2>
+          <p>
+            Pick a category. The world is a fresh island. The clock starts when you move.
+            <kbd>R</kbd> resets. When the goal happens, the time locks. You can type a name and post it.
+            A replay may be stored with that run. <kbd>Esc</kbd> from the result can return to the categories or the title screen.
+          </p>
+          <p>
+            The list is five tabs. Nothing scrolls. <kbd>A</kbd> and <kbd>D</kbd> switch tabs. Up and down move the highlight.
+            The board on the right is the top 10 for whatever is highlighted. <strong>VID</strong> plays that row’s replay.
+          </p>
+
+          <h3>Catch</h3>
+          <p>The run ends when that thing is in hand, or, for the chest, when it opens.</p>
+          <ul>
+            <li><strong>Shark%.</strong> Catch a shark.</li>
+            <li><strong>White Jelly%.</strong> Catch a white jellyfish.</li>
+            <li><strong>Chest%.</strong> Open the treasure chest.</li>
+            <li><strong>Invis Shark%.</strong> Catch a shark while the cloak is on and the rod is idle.</li>
+            <li><strong>Blowfish%.</strong> Catch a blowfish. The clock includes the heart effect and one extra second.</li>
+            <li><strong>Megalodon%.</strong> Catch a megalodon.</li>
+            <li><strong>Eel%.</strong> Catch a waterfall eel. The dinghy on the inland pool is the usual boat.</li>
+            <li><strong>Leech%.</strong> Catch a portal leech, from that same pond.</li>
+            <li><strong>Crab%.</strong> Scoop a blue crab off the beach. In this category the beach is much more likely to have one, and if none rolled, one is forced.</li>
+            <li><strong>Angler%.</strong> Catch an angler from a cave mouth.</li>
+            <li><strong>Storm%.</strong> Catch a storm fish. The sky is locked on a cyclone.</li>
+            <li><strong>Hammer%.</strong> Catch a hammerhead from the shore.</li>
+          </ul>
+
+          <h3>Stat</h3>
+          <ul>
+            <li><strong>10 Coins%, 25 Coins%, 100 Coins%.</strong> Reach that many coins.</li>
+            <li><strong>Death%.</strong> Drown. The run ends when you wake up from the death, not when the first heart drops.</li>
+            <li><strong>Full Inv%.</strong> Fill all eight bag slots with real items. A cosmetic in a slot does not count.</li>
+            <li><strong>Boat%.</strong> Buy the skiff and get on it.</li>
+          </ul>
+
+          <h3>Adventure</h3>
+          <ul>
+            <li><strong>Mask%.</strong> Reach the jade pedestal at the end of the temple maze.</li>
+            <li><strong>Serpent%.</strong> Take the Heart of the Sea off the serpent.</li>
+          </ul>
+
+          <h3>Race</h3>
+          <ul>
+            <li><strong>Kings Race%.</strong> You start on the 1500 meter line. Finish it.</li>
+            <li><strong>Full Kings%.</strong> Start on the island, reach Rome yourself, and walk the city through the race.</li>
+          </ul>
+
+          <h3>Dimension</h3>
+          <ul>
+            <li><strong>Cat%.</strong> Buy the Egypt cat from the Rome alley. The run’s cat is temporary.</li>
+            <li><strong>Trip%.</strong> Drink a mystery draught.</li>
+          </ul>
+        </section>
+
+        <section id="boards">
+          <h2>BOARDS AND REPLAYS</h2>
+          <p>
+            Each category has a top 10, fastest first. Your result screen shows the time, whether it was a personal best,
+            and a place to type a name if you are not already locked to an account name.
+            Posting sends the time. A replay of the run can be saved with it.
+          </p>
+          <p>
+            On the category screen, a row with a replay shows <strong>VID</strong>. Clicking it spectates that exact run.
+            <kbd>Esc</kbd> cuts the replay and puts you back on the board.
+          </p>
+          <p>
+            Stats, on the title screen, has two sides. Survival tracks playtime, level, sharks, chests, and your highest coin count.
+            Speedrun tracks playtime, runs, and your personal bests.
+          </p>
+        </section>
+
+        <section id="save">
+          <h2>SAVING</h2>
+          <p>
+            Survival writes the island on its own, about every second and a half, and again when you leave.
+            The locker (skins, pets, quests, career) is saved with it.
+            If you are signed in, that copy is also sent to your account, so another browser can pick it up.
+          </p>
+          <p>
+            A newer save does not always win. A fresh island, a speedrun, or a replay is not allowed to replace
+            an island that is further along. Level, experience, the jade mask, the sunken chest, and the boat
+            are the things that count as progress. If the live island would go backwards, the further one is kept
+            and loaded instead.
+          </p>
+          <p>
+            Speedrun pets and speedrun loadouts are not written into the locker.
+          </p>
+        </section>
+      </article>
+    </div>
+    <script>
+      (function () {
+        var path = location.pathname || "/";
+        var slash = path.lastIndexOf("/");
+        var last = slash >= 0 ? path.slice(slash + 1) : path;
+        var dir = path.endsWith("/")
+          ? path
+          : last.indexOf(".") >= 0
+            ? path.slice(0, slash + 1)
+            : path + "/";
+        var back = document.getElementById("wiki-back");
+        if (back) back.href = location.origin + dir + "index.html";
+      })();
+    </script>
+  </body>
+</html>
