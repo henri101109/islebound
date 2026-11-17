@@ -299,6 +299,35 @@
       return phase === "talk" || phase === "sleep" || phase === "ceremony";
     }
 
+    function onCourse() {
+      if (speedRome()) return false;
+      const sc = A.getScene();
+      return sc === "race" || sc === "barracks";
+    }
+
+    function leavingCourse() {
+      return onCourse() && (phase === "city" || phase === "crowned");
+    }
+
+    function cityExitSave() {
+      if (!leavingCourse()) return null;
+      return { x: (city.spawn.x - 4) | 0, y: (city.spawn.y - 8) | 0 };
+    }
+
+    function leaveToCity() {
+      if (speedRome() || !onCourse()) return false;
+      script = null;
+      eliminated = false;
+      finishLock = false;
+      pauseRace = false;
+      raceT = 0;
+      runDead = false;
+      loseReason = "";
+      phase = crowned ? "crowned" : "city";
+      A.fade("rome", { x: city.spawn.x - 4, y: city.spawn.y - 8 });
+      return true;
+    }
+
     function moveMul() {
       if (A.getScene() === "rome") {
         const f = feet();
@@ -1090,6 +1119,10 @@
         A.px(uiW - tw - 14, 6, tw + 8, 13, "#3a2414");
         A.drawPixText(label, uiW - tw - 10, 9, "#f3e2c4");
       }
+      if (!speedRome() && (phase === "staged" || phase === "racing" || phase === "lost" || phase === "ceremony")) {
+        A.px(6, 52, 62, 12, "#3a2414");
+        A.drawPixText("ESC LEAVE", 10, 55, "#f3e2c4");
+      }
     }
 
     function drawEmpire(uiW, uiH) {
@@ -1673,6 +1706,10 @@
       prompt: prompt,
       onKey: onKey,
       blocksMove: blocksMove,
+      onCourse: onCourse,
+      leavingCourse: leavingCourse,
+      leaveToCity: leaveToCity,
+      cityExitSave: cityExitSave,
       moveMul: moveMul,
       prepareSpeed: prepareSpeed,
       isSpeedCat: isSpeedCat,

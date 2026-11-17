@@ -19336,6 +19336,19 @@
     beginSpeedCategory(srCat);
   }
 
+  function exitSurvivalRace(andMenu) {
+    srSegmentSurvival = false;
+    pendingRaceSeg = null;
+    uiScreen = null;
+    srFinalMs = 0;
+    srRunning = false;
+    srTiming = false;
+    playMode = "normal";
+    if (rome && rome.leaveToCity) rome.leaveToCity();
+    if (andMenu) backToModeMenu();
+    else saveGame();
+  }
+
   function finishSpeedrun() {
     if (playMode !== "speedrun" || uiScreen === "finish" || uiScreen === "duel_card" || duelLegLocked) return;
     // Freeze timer this frame — all end hooks must land here.
@@ -21142,7 +21155,9 @@
       }, { hover: true });
     }
     const submitLabel = srSubmitted ? "POSTED" : "SUBMIT";
-    const btns = [submitLabel, "RETRY", "CATEGORIES", "MENU"];
+    const btns = srSegmentSurvival
+      ? [submitLabel, "RETRY", "LEAVE", "MENU"]
+      : [submitLabel, "RETRY", "CATEGORIES", "MENU"];
     for (let i = 0; i < btns.length; i++) {
       const key = "fin:btn:" + i;
       const sel = srFinishSel === i + 1 || menuHovering(key);
@@ -21155,8 +21170,13 @@
         if (i === 0) {
           if (!srSubmitted) submitSpeedScore();
         } else if (i === 1) retryFinishRun();
-        else if (i === 2) backToCategories();
-        else if (i === 3) backToModeMenu();
+        else if (i === 2) {
+          if (srSegmentSurvival) exitSurvivalRace(false);
+          else backToCategories();
+        } else if (i === 3) {
+          if (srSegmentSurvival) exitSurvivalRace(true);
+          else backToModeMenu();
+        }
       }, { hover: true });
     }
     if (srStatus) drawPixText(srStatus, (x + w / 2) | 0, y + 102, "#5c3a21", "center");
@@ -22507,7 +22527,8 @@
           return true;
         }
         if (k === "escape") {
-          backToCategories();
+          if (srSegmentSurvival) exitSurvivalRace(false);
+          else backToCategories();
           return true;
         }
         if (k.length === 1) {
@@ -22532,10 +22553,18 @@
         if (srFinishSel === 1) {
           if (!srSubmitted) submitSpeedScore();
         } else if (srFinishSel === 2) retryFinishRun();
-        else if (srFinishSel === 3) backToCategories();
-        else if (srFinishSel === 4) backToModeMenu();
+        else if (srFinishSel === 3) {
+          if (srSegmentSurvival) exitSurvivalRace(false);
+          else backToCategories();
+        } else if (srFinishSel === 4) {
+          if (srSegmentSurvival) exitSurvivalRace(true);
+          else backToModeMenu();
+        }
       }
-      if (k === "escape") backToCategories();
+      if (k === "escape") {
+        if (srSegmentSurvival) exitSurvivalRace(false);
+        else backToCategories();
+      }
       return true;
     }
     return false;
@@ -22745,6 +22774,7 @@
       }
       bagOut.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
     }
+    const cityExit = rome && rome.cityExitSave ? rome.cityExitSave() : null;
     return {
       slots,
       heldSlot,
@@ -22753,11 +22783,11 @@
       xp: player.xp | 0,
       level: player.level | 0,
       hp: player.hp | 0,
-      x: player.x,
-      y: player.y,
+      x: cityExit ? cityExit.x : player.x,
+      y: cityExit ? cityExit.y : player.y,
       facing: player.facing,
       aboard: !!player.aboard,
-      scene,
+      scene: cityExit ? "rome" : scene,
       cloak: cloakOn,
       cosmetics: { face: cosmetics.face, back: cosmetics.back },
       locker: lockerSnapshot(),
@@ -23235,6 +23265,19 @@
         return;
       }
       if (cabinCut.kind) return;
+      if (rome && rome.onCourse && rome.onCourse()) {
+        if (e.repeat) return;
+        if (rome.leavingCourse && rome.leavingCourse()) {
+          saveGame();
+          if (serpent) endSerpentFight("flee");
+          backToModeMenu();
+          return;
+        }
+        if (rome.leaveToCity && rome.leaveToCity()) {
+          saveGame();
+          return;
+        }
+      }
       saveGame();
       if (serpent) endSerpentFight("flee");
       backToModeMenu();
