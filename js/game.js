@@ -87,6 +87,9 @@
     roman_bread: { name: "Bread", max: 16, xp: 2 },
     roman_wine: { name: "Wine", max: 8, xp: 4 },
     king_crown: { name: "Crown of the Kingdom", label: "KING", max: 1, xp: 0, cosmetic: "face" },
+    chud_slime: { name: "Chud Slime", label: "SLIME", max: 1, xp: 0, cosmetic: "particle" },
+    homer_stench: { name: "Homer Stench", label: "STENCH", max: 1, xp: 0, cosmetic: "particle" },
+    leech_aura: { name: "Leech Aura", label: "LEECH", max: 1, xp: 0, cosmetic: "particle" },
   };
   const FISH_CATCH = ["fish_blue", "fish_gold", "fish_reef"];
   const CATCH_COMMON = ["cod", "trout", "salmon", "jelly"];
@@ -305,6 +308,7 @@
   let templeIslandExit = null;
   let vein = null;
   let rome = null;
+  let salt = null; /* SALTCROWN */
   let veinDoor = null;
   let veinIslandExit = null;
   let hubExit = null;
@@ -629,9 +633,10 @@
     cost: 0,
     spins: 3,
     prizes: [
-      { id: "straw_hat", label: "STRAW HAT", p: 0.5 },
-      { id: "crown", label: "CROWN", p: 0.3 },
-      { id: "beta_crown", label: "BETA CROWN", p: 0.2 },
+      { id: "chud_ball", label: "CHUD", kind: "skin", w: 80 },
+      { id: "chud_slime", label: "SLIME", kind: "particle", w: 40 },
+      { id: "homer_stench", label: "STENCH", kind: "particle", w: 40 },
+      { id: "leech_aura", label: "LEECH", kind: "particle", w: 10 },
     ],
   };
   let spinCursor = 0;
@@ -814,7 +819,7 @@
   const pickupAnims = [];
   let heldSlot = 0;
   /** Equipped cosmetics (ids) — locker profile, shared across modes. */
-  const cosmetics = { face: null, back: null };
+  const cosmetics = { face: null, back: null, particle: null };
   /** Owned cosmetic ids (not inventory). */
   let ownedCosmetics = [];
   /** Body skin id. */
@@ -860,9 +865,9 @@
   ];
   /** Secret / vendor skins — owned only via special buys, never auto-granted. */
   const SHOP_SKIN_IDS = ["jorts"];
-  /** Local test skins. Henri's account only — no quest, shop, drop, or rail. */
-  const HENRI_SKIN_IDS = ["chud_ball"];
-  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS, SHOP_SKIN_IDS, HENRI_SKIN_IDS);
+  /** Weekly-roll skins. Owned only from the spin, plus Henri's account grant. */
+  const WEEKLY_SKIN_IDS = ["chud_ball"];
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS, SHOP_SKIN_IDS, WEEKLY_SKIN_IDS);
   const chudBallSheet = new Image();
   chudBallSheet.src = "assets/skins/chud-ball.png";
   let chudBallScratch = null;
@@ -1057,6 +1062,7 @@
   let lockerScrollSkins = 0;
   let lockerScrollCosmetics = 0;
   let lockerScrollPets = 0;
+  let lockerScrollParticles = 0;
   /** Last locker grid clip rect + max scroll (for wheel). */
   let lockerGridBounds = null;
   /**
@@ -1064,6 +1070,41 @@
    * Local curated lists for now.
    */
   const WHATS_NEW = [
+    {
+      kind: "weekly",
+      id: "weekly_roll",
+      title: "WEEKLY ROLL",
+      blurb: "3 FREE SPINS",
+      detail: "NEW PRIZES",
+    },
+    {
+      kind: "skin",
+      id: "chud_ball",
+      title: "CHUD BALL",
+      blurb: "WEEKLY SKIN",
+      detail: "SPIN TO WIN",
+    },
+    {
+      kind: "particle",
+      id: "chud_slime",
+      title: "CHUD SLIME",
+      blurb: "PARTICLES",
+      detail: "DRIPS ANY SKIN",
+    },
+    {
+      kind: "particle",
+      id: "homer_stench",
+      title: "HOMER STENCH",
+      blurb: "PARTICLES",
+      detail: "FLIES AND SMELL",
+    },
+    {
+      kind: "particle",
+      id: "leech_aura",
+      title: "LEECH AURA",
+      blurb: "RARE DROP",
+      detail: "WEEKLY JACKPOT",
+    },
     {
       kind: "pet",
       id: "egypt_cat",
@@ -1493,7 +1534,8 @@
       scene === "floor" ||
       scene === "wreck" ||
       scene === "vein" ||
-      (rome && rome.isScene())
+      (rome && rome.isScene()) ||
+      (salt && salt.isScene()) /* SALTCROWN */
     );
   }
 
@@ -1507,6 +1549,7 @@
     if (scene === "wreck") return WRECK_W;
     if (scene === "vein" && vein) return vein.VEIN_W;
     if (rome && rome.isScene()) return rome.worldW();
+    if (salt && salt.isScene()) return salt.worldW(); /* SALTCROWN */
     return SHOP_W;
   }
 
@@ -1520,6 +1563,7 @@
     if (scene === "wreck") return WRECK_H;
     if (scene === "vein" && vein) return vein.VEIN_H;
     if (rome && rome.isScene()) return rome.worldH();
+    if (salt && salt.isScene()) return salt.worldH(); /* SALTCROWN */
     return SHOP_H;
   }
 
@@ -1891,6 +1935,7 @@
   }
 
   function isSolidPoint(px, py) {
+    if (salt && salt.isScene()) return salt.solid(px, py); /* SALTCROWN */
     if (rome && rome.isScene()) return rome.solid(px, py);
     if (scene === "shop") return !!hitPad(px, py, shopSolids);
     if (scene === "fish") return !!hitPad(px, py, fishSolids);
@@ -1921,6 +1966,7 @@
 
   function canStand(px, py) {
     if (brewFlying()) return true;
+    if (salt && salt.isScene()) return !salt.solid(px, py); /* SALTCROWN */
     if (rome && rome.isScene()) return !rome.solid(px, py);
     // Cave doorways punch through the cliff — allow entry even if a solid remnant remains.
     if (scene === "island" && pondCaveWalkAt(px, py)) return true;
@@ -3605,7 +3651,7 @@
           feetY > restShoreY(player.x + player.w - 3));
     }
 
-    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || diveTransit() || (rome && rome.blocksMove())) {
+    if (guideOpen || cabinCut.kind || uiBlocksPlay() || chatCapturesInput() || diveTransit() || (rome && rome.blocksMove()) || (salt && salt.blocksMove())) { /* SALTCROWN */
       dx = 0;
       dy = 0;
       player.moving = false;
@@ -3618,14 +3664,21 @@
       !cabinCut.kind &&
       !uiBlocksPlay() &&
       !chatCapturesInput() &&
-      !(rome && rome.blocksMove())
+      !(rome && rome.blocksMove()) &&
+      !(salt && salt.blocksMove()) /* SALTCROWN */
     ) {
       if (player.aboard && aboardKind === "dinghy" && pondBoat && scene === "island") {
         steerDinghy(dt, dx, dy);
       } else if (player.aboard && ownedBoat && scene === "island" && aboardKind !== "dinghy") {
         steerOwnedBoat(dt, dx, dy);
       } else {
-        const moveMul = brewFlying() ? 1 : rome && rome.isScene() ? rome.moveMul() : 1;
+        const moveMul = brewFlying()
+          ? 1
+          : rome && rome.isScene()
+            ? rome.moveMul()
+            : salt && salt.isScene()
+              ? salt.moveMul()
+              : 1; /* SALTCROWN */
         let brewMul = 1;
         if (brew.slow > 0) brewMul *= 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(time * 7));
         if (brewFlying()) brewMul *= scene === "race" ? 2 : 1.5;
@@ -3898,7 +3951,7 @@
   }
 
   function unequipCosmetic(kind) {
-    if (kind !== "face" && kind !== "back") return false;
+    if (kind !== "face" && kind !== "back" && kind !== "particle") return false;
     if (kind === "back" && backSlotLocked()) return false;
     const id = cosmetics[kind];
     cosmetics[kind] = null;
@@ -4092,8 +4145,8 @@
   }
 
   /**
-   * Chud Ball is a local test skin. No quest, vendor, or drop grants it.
-   * First grant this session equips it so it shows up in game immediately.
+   * Henri's account owns the weekly set: Chud Ball plus every particle.
+   * The first Chud grant this session equips the skin so it shows up immediately.
    */
   function tryGrantHenriTestSkins() {
     if (!isHenriTestAccount()) return;
@@ -4101,6 +4154,9 @@
       grantSkin("chud_ball");
       henriChudFresh = true;
     }
+    grantCosmetic("chud_slime");
+    grantCosmetic("homer_stench");
+    grantCosmetic("leech_aura");
     if (henriChudFresh && ownsSkin("chud_ball") && playerSkin !== "chud_ball") equipSkin("chud_ball");
   }
 
@@ -4493,20 +4549,21 @@
     const signed = !!(api && api.isSignedIn && api.isSignedIn());
     const left = Math.max(0, WEEKLY_SPIN.spins - spinUsed);
     const busy = spinReelBusy();
-    drawPixText(period.label, (x + w / 2) | 0, y + 34, "#5c3a21", "center");
-    drawPixText("LEFT " + left + "  FREE", (x + w / 2) | 0, y + 46, "#3a2414", "center");
-    drawSpinReelStrip(x + 14, y + 58, w - 28, 30);
+    drawPixText(period.label, (x + w / 2) | 0, y + 32, "#5c3a21", "center");
+    const spinLine = busy ? "ROLLING" : left > 0 ? "SPIN " + (spinUsed + 1) + " OF " + WEEKLY_SPIN.spins : "NEXT WEEK";
+    drawPixText(spinLine, (x + w / 2) | 0, y + 44, busy ? "#e8c44a" : "#3a2414", "center");
+    drawSpinReelStrip(x + 14, y + 56, w - 28, 36);
     let action = "SPIN";
     if (!signed) action = "SIGN IN";
-    else if (busy) action = "...";
+    else if (busy) action = "HOLD";
     else if (left <= 0) action = "NEXT WEEK";
     const spinSel = !busy && menuHovering("spin:go");
-    if (spinSel) px(x + 18, y + 96, w - 36, 11, "#e8c44a");
-    drawPixText(action, (x + w / 2) | 0, y + 98, spinSel ? "#2b1c12" : "#3a2414", "center");
+    if (spinSel) px(x + 18, y + 100, w - 36, 11, "#e8c44a");
+    drawPixText(action, (x + w / 2) | 0, y + 102, spinSel ? "#2b1c12" : "#3a2414", "center");
     addMenuHit(
       "spin:go",
       x + 18,
-      y + 96,
+      y + 100,
       w - 36,
       11,
       () => {
@@ -4523,9 +4580,11 @@
       { hover: !busy }
     );
     if (!busy && spinNote) {
-      drawPixText(String(spinNote).slice(0, 18), (x + w / 2) | 0, y + 114, "#2b1c12", "center");
+      const jack = spinNote === "JACKPOT";
+      drawPixText(String(spinNote).slice(0, 18), (x + w / 2) | 0, y + 118, jack ? "#e8c44a" : "#2b1c12", "center");
     }
-    drawPixTextSm("ACCOUNT REQUIRED TO SPIN", (x + w / 2) | 0, y + h - 28, "#5c3a21", "center");
+    drawPixTextSm("CHUD OFTEN   LEECH RARE", (x + w / 2) | 0, y + h - 40, "#5c3a21", "center");
+    drawPixTextSm("SIGN IN TO SPIN", (x + w / 2) | 0, y + h - 30, "#8a6a42", "center");
   }
 
   function drawQuestScreen() {
@@ -4537,7 +4596,7 @@
     const w = 252;
     let h = 156;
     if (questTab === "quests") h = Math.min(uiH - 10, 28 + NOV_QUESTS.length * 14 + 56);
-    else if (questTab === "weekly") h = 148;
+    else if (questTab === "weekly") h = 176;
     else h = 156;
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
@@ -4596,6 +4655,12 @@
     return equippedPet;
   }
 
+  function lockerPreviewParticle() {
+    if (lockerHover && lockerHover.type === "cosmetic" && cosmeticKindOf(lockerHover.id) === "particle") return lockerHover.id;
+    if (lockerDrag && lockerDrag.type === "cosmetic" && cosmeticKindOf(lockerDrag.id) === "particle") return lockerDrag.id;
+    return cosmetics.particle;
+  }
+
   /** Pull cosmetics out of bag/satchel into the locker collection. */
   function migrateCosmeticsFromLists(lists) {
     const moved = [];
@@ -4648,6 +4713,7 @@
       }
       if (data.face && isCosmeticId(data.face)) cosmetics.face = data.face;
       if (data.back && isCosmeticId(data.back)) cosmetics.back = data.back;
+      if (data.particle && cosmeticKindOf(data.particle) === "particle") cosmetics.particle = data.particle;
       if (data.skin && SKIN_DEFS[data.skin] && ownsSkin(data.skin)) playerSkin = data.skin;
       if (Array.isArray(data.ownedPets)) {
         for (let i = 0; i < data.ownedPets.length; i++) {
@@ -4673,6 +4739,7 @@
     ensureLaunchSkins();
     if (cosmetics.face && !ownsCosmetic(cosmetics.face)) grantCosmetic(cosmetics.face);
     if (cosmetics.back && !ownsCosmetic(cosmetics.back)) grantCosmetic(cosmetics.back);
+    if (cosmetics.particle && !ownsCosmetic(cosmetics.particle)) grantCosmetic(cosmetics.particle);
     syncQuestOwnershipFlags();
     tryGrantAmericanCloak();
     tryGrantHenriTestPets();
@@ -5334,6 +5401,7 @@
   }
 
   function survivalOwnsId(data, id) {
+    if (SKIN_DEFS[id]) return ownsSkin(id);
     if (isCosmeticId(id)) return ownsCosmetic(id);
     if (data.cosmetics && data.cosmetics.face === id) return true;
     if (data.cosmetics && data.cosmetics.back === id) return true;
@@ -5345,6 +5413,10 @@
   }
 
   function survivalGiveId(data, id) {
+    if (SKIN_DEFS[id]) {
+      grantSkin(id);
+      return true;
+    }
     if (isCosmeticId(id)) {
       grantCosmetic(id);
       if (data) {
@@ -5385,53 +5457,124 @@
     openRewardsMenu("weekly");
   }
 
+  function weeklyPrizeWeight() {
+    let total = 0;
+    for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) total += WEEKLY_SPIN.prizes[i].w;
+    return total || 1;
+  }
+
   function rollWeeklyPrize() {
-    let r = Math.random();
+    let r = Math.random() * weeklyPrizeWeight();
     for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) {
       const p = WEEKLY_SPIN.prizes[i];
-      if (r < p.p) return p;
-      r -= p.p;
+      if (r < p.w) return p;
+      r -= p.w;
     }
     return WEEKLY_SPIN.prizes[WEEKLY_SPIN.prizes.length - 1];
+  }
+
+  function weeklyPrizeById(id) {
+    for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) {
+      if (WEEKLY_SPIN.prizes[i].id === id) return WEEKLY_SPIN.prizes[i];
+    }
+    return WEEKLY_SPIN.prizes[0];
   }
 
   function spinReelBusy() {
     return !!(spinReel && performance.now() < spinReel.start + spinReel.dur);
   }
 
+  function playSpinTick(tense) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const st = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(180 + tense * 420, st);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, st);
+    g.gain.exponentialRampToValueAtTime(0.035, st + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, st + 0.05);
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+    osc.start(st);
+    osc.stop(st + 0.06);
+  }
+
+  function playSpinWin(jackpot) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const notes = jackpot ? [523, 659, 784, 1046] : [440, 554, 659];
+    for (let i = 0; i < notes.length; i++) {
+      const st = t + i * 0.07;
+      const osc = audioCtx.createOscillator();
+      osc.type = jackpot ? "square" : "triangle";
+      osc.frequency.setValueAtTime(notes[i], st);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, st);
+      g.gain.exponentialRampToValueAtTime(jackpot ? 0.07 : 0.05, st + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, st + 0.22);
+      osc.connect(g);
+      g.connect(audioCtx.destination);
+      osc.start(st);
+      osc.stop(st + 0.24);
+    }
+  }
+
   function startSpinReel(prize, owned) {
-    const cell = 30;
-    const reelW = 170;
-    const land = 22 + ((Math.random() * 6) | 0);
+    const cell = 36;
+    const reelW = 218;
+    const land = 34 + ((Math.random() * 10) | 0);
     const cells = [];
+    const leech = weeklyPrizeById("leech_aura");
+    const chud = weeklyPrizeById("chud_ball");
+    const jackpot = prize.id === "leech_aura";
     for (let i = 0; i < land + 8; i++) {
       if (i === land) cells.push(prize);
-      else cells.push(WEEKLY_SPIN.prizes[(Math.random() * WEEKLY_SPIN.prizes.length) | 0]);
+      else if (i === land - 1) cells.push(jackpot ? chud : leech);
+      else if (i === land + 1) cells.push(jackpot ? leech : chud);
+      else cells.push(rollWeeklyPrize());
     }
-    const jitter = Math.random() * 8 - 4;
+    const jitter = Math.random() * 6 - 3;
     spinNote = "";
     spinReel = {
       start: performance.now(),
-      dur: 2600,
+      dur: 4600,
       from: 0,
       to: land * cell + cell / 2 - reelW / 2 + jitter,
       cells: cells,
       cell: cell,
       reelW: reelW,
-      note: owned ? "OWNED" : prize.label,
+      note: owned ? "OWNED" : jackpot ? "JACKPOT" : prize.label,
+      jackpot: jackpot && !owned,
       done: false,
+      tickIdx: -1,
     };
   }
 
   function spinReelOffset() {
     if (!spinReel) return 0;
     const t = Math.min(1, (performance.now() - spinReel.start) / spinReel.dur);
-    const e = 1 - Math.pow(1 - t, 3);
+    let e = 1 - Math.pow(1 - t, 5);
+    if (t > 0.86 && t < 1) {
+      const u = (t - 0.86) / 0.14;
+      e += Math.sin(u * Math.PI) * 0.018 * (1 - u);
+    }
+    if (e > 1) e = 1;
+    const offset = spinReel.from + (spinReel.to - spinReel.from) * e;
+    const idx = (offset / spinReel.cell) | 0;
+    if (t < 1 && spinReel.tickIdx !== idx) {
+      spinReel.tickIdx = idx;
+      playSpinTick(t);
+    }
     if (t >= 1 && !spinReel.done) {
       spinReel.done = true;
       spinNote = spinReel.note;
+      playSpinWin(spinReel.jackpot);
+      if (spinReel.jackpot) shake = Math.max(shake, 7);
     }
-    return spinReel.from + (spinReel.to - spinReel.from) * e;
+    return offset;
   }
 
   function tryWeeklySpin() {
@@ -5690,6 +5833,10 @@
       const rp = rome.prompt();
       if (rp) return rp;
     }
+    if (salt) {
+      const sp = salt.prompt();
+      if (sp) return sp;
+    } /* SALTCROWN */
     if (vein) {
       const vp = vein.prompt();
       if (vp) return vp;
@@ -12631,7 +12778,30 @@
       px(x, y + 3, 1, 2, "#143834");
       return true;
     }
-    if (id === "portal_leech") {
+    if (id === "chud_ball") {
+      px(x, y, 8, 7, "#daff00");
+      px(x + 1, y + 1, 6, 5, "#c6e800");
+      px(x + 2, y + 2, 1, 1, "#000000");
+      px(x + 5, y + 2, 1, 1, "#000000");
+      px(x + 2, y + 4, 4, 1, "#ff0000");
+      return true;
+    }
+    if (id === "chud_slime") {
+      px(x + 2, y, 3, 2, "#daff00");
+      px(x + 1, y + 2, 2, 2, "#9adf20");
+      px(x + 4, y + 3, 1, 3, "#7ec818");
+      px(x + 3, y + 5, 3, 1, "#6aaa18");
+      return true;
+    }
+    if (id === "homer_stench") {
+      px(x + 1, y + 1, 3, 2, "#7dffa0");
+      px(x + 4, y, 2, 2, "#3ecf7a");
+      px(x, y + 3, 2, 1, "#1a120c");
+      px(x + 5, y + 4, 2, 1, "#1a120c");
+      px(x + 6, y + 3, 1, 1, "#3a2414");
+      return true;
+    }
+    if (id === "leech_aura" || id === "portal_leech") {
       px(x + 1, y + 1, 5, 4, "#3a1a58");
       px(x + 2, y, 3, 1, "#6a38a0");
       px(x, y + 2, 1, 2, "#2a1040");
@@ -13479,6 +13649,7 @@
     drawCapeCollar(backWear);
     if (playerSkin === "beta_alien") drawAlienPortalWisps(0, -8);
     if (playerSkin === "flash") drawFlashElectricity(0, -8);
+    drawEquippedParticles(cosmetics.particle);
     if (player.inWater && !player.aboard) {
       px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
     }
@@ -13596,6 +13767,51 @@
       px(-3, -11, 1, 1, "#c43a48");
       px(-1, -12, 1, 1, "#c43a48");
       px(2, -11, 1, 1, "#c43a48");
+    }
+  }
+
+  /** Weekly particle auras. Drawn at the feet pivot, so they sit on any skin. */
+  function drawEquippedParticles(id) {
+    if (id === "chud_slime") drawChudSlime();
+    else if (id === "homer_stench") drawHomerStench();
+    else if (id === "leech_aura") drawLeechAura();
+  }
+
+  function drawChudSlime() {
+    for (let i = 0; i < 4; i++) {
+      const u = (time * 0.85 + i * 0.27) % 1;
+      const x = -5 + ((i * 3) % 10);
+      const y = (-11 + u * 16) | 0;
+      px(x, y, 1, 1 + ((u * 3) | 0), u > 0.65 ? "#9adf20" : "#daff00");
+      if (u > 0.82) px(x - 1, y + 1, 3, 1, "#6aaa18");
+    }
+  }
+
+  function drawHomerStench() {
+    for (let i = 0; i < 3; i++) {
+      const u = (time * 0.4 + i * 0.33) % 1;
+      const x = (-7 + i * 5 + Math.sin(time * 2 + i) * 2) | 0;
+      const y = (-4 - u * 14) | 0;
+      px(x, y, 2, 2, "#7dffa0");
+      px(x + 2, y - 1, 1, 1, "#3ecf7a");
+    }
+    for (let i = 0; i < 2; i++) {
+      const ang = time * 5 + i * 3.1;
+      const x = (Math.cos(ang) * (7 + i)) | 0;
+      const y = (-9 + Math.sin(ang * 1.4) * 4) | 0;
+      px(x, y, 2, 1, "#1a120c");
+      px(x + 1, y - 1, 1, 1, "#3a2414");
+    }
+  }
+
+  function drawLeechAura() {
+    for (let i = 0; i < 3; i++) {
+      const ang = time * 2.4 + (i * Math.PI * 2) / 3;
+      const x = (Math.cos(ang) * 9) | 0;
+      const y = (-8 + Math.sin(ang) * 5) | 0;
+      px(x, y, 3, 2, "#3a1a58");
+      px(x + 1, y, 1, 1, "#c878ff");
+      px(x + 2, y + 1, 1, 1, "#f0d0ff");
     }
   }
 
@@ -20127,8 +20343,10 @@
     const back = lockerPreviewBack();
     const prevFace = cosmetics.face;
     const prevBack = cosmetics.back;
+    const prevPart = cosmetics.particle;
     cosmetics.face = face;
     cosmetics.back = back;
+    cosmetics.particle = lockerPreviewParticle();
     ink.save();
     ink.translate(fx, fy);
     ink.scale(2, 2);
@@ -20139,9 +20357,11 @@
     drawCapeCollar(back);
     if (skin === "beta_alien") drawAlienPortalWisps(0, -8);
     if (skin === "flash") drawFlashElectricity(0, -8);
+    drawEquippedParticles(cosmetics.particle);
     ink.restore();
     cosmetics.face = prevFace;
     cosmetics.back = prevBack;
+    cosmetics.particle = prevPart;
     const petId = lockerPreviewPet();
     if (petId) drawLobbyPet(fx - 22, fy + 2, petId, 2);
   }
@@ -20250,7 +20470,7 @@
         ? playerSkin === id
         : type === "pet"
           ? equippedPet === id
-          : cosmetics.face === id || cosmetics.back === id;
+          : cosmetics.face === id || cosmetics.back === id || cosmetics.particle === id;
     const dragging = lockerDrag && lockerDrag.id === id && lockerDrag.type === type;
     const hot =
       !dragging &&
@@ -20400,7 +20620,20 @@
 
   function openWhatsNewItem(item) {
     if (!item) return;
+    if (item.kind === "weekly") {
+      openRewardsMenu("weekly");
+      return;
+    }
+    if (item.kind === "particle") {
+      lockerTab = "particles";
+      if (ownsCosmetic(item.id)) equipCosmetic(item.id);
+      return;
+    }
     if (item.kind === "skin") {
+      if (item.id === "chud_ball" && !ownsSkin(item.id)) {
+        openRewardsMenu("weekly");
+        return;
+      }
       if (ownsSkin(item.id)) {
         equipSkin(item.id);
         lockerTab = "skins";
@@ -20449,6 +20682,8 @@
     if (kind === "pet") return "PET";
     if (kind === "face") return "FACE";
     if (kind === "item") return "ITEM";
+    if (kind === "weekly") return "ROLL";
+    if (kind === "particle") return "PART";
     return "NEW";
   }
 
@@ -20465,6 +20700,10 @@
       if (locked) drawCapeCollar(locked);
       if (item.id === "beta_alien") drawAlienPortalWisps(0, -8);
       if (item.id === "flash") drawFlashElectricity(0, -8);
+      if (item.id === "chud_ball") drawEquippedParticles("chud_slime");
+    } else if (item.kind === "particle" || item.kind === "weekly") {
+      drawPlayerBody(item.kind === "weekly" ? "chud_ball" : "classic", 0, false, false);
+      drawEquippedParticles(item.kind === "weekly" ? "chud_slime" : item.id);
     } else if (item.kind === "quest") {
       let q = null;
       for (let i = 0; i < NOV_QUESTS.length; i++) {
@@ -20860,8 +21099,9 @@
     const tabPad = 3;
     const tabInnerW = panelW - 4 - tabPad * 2;
     const tabs = [
-      { id: "skins", label: "SKINS" },
+      { id: "skins", label: "SKIN" },
       { id: "cosmetics", label: "GEAR" },
+      { id: "particles", label: "PART" },
       { id: "pets", label: "PETS" },
     ];
     const tabW = ((tabInnerW - tabGap * (tabs.length - 1)) / tabs.length) | 0;
@@ -20938,8 +21178,56 @@
         ctx.restore();
         drawLockerScrollBar(panelX + panelW - 4, gridTop, gridViewH, lockerScrollPets, maxScroll);
       }
+    } else if (lockerTab === "particles") {
+      const partList = [];
+      for (let i = 0; i < ownedCosmetics.length; i++) {
+        if (cosmeticKindOf(ownedCosmetics[i]) === "particle") partList.push(ownedCosmetics[i]);
+      }
+      const cell = 22;
+      const cellGap = 4;
+      const labelH = 8;
+      const cols = 3;
+      const rowPitch = cell + cellGap + labelH;
+      const gridInnerW = cols * cell + (cols - 1) * cellGap;
+      const gridPad = ((panelW - gridInnerW) / 2) | 0;
+      if (!partList.length) {
+        drawPixTextSm("NONE YET", panelX + ((panelW / 2) | 0), gridTop + 18, "#5c3a21", "center");
+        drawPixTextSm("WEEKLY ROLL", panelX + ((panelW / 2) | 0), gridTop + 30, "#5c3a21", "center");
+        drawPixTextSm("3 SPINS", panelX + ((panelW / 2) | 0), gridTop + 40, "#5c3a21", "center");
+      } else {
+        const rows = Math.max(1, Math.ceil(partList.length / cols));
+        const contentH = rows * rowPitch - cellGap;
+        const maxScroll = Math.max(0, contentH - gridViewH);
+        lockerScrollParticles = clampLockerScroll(lockerScrollParticles, maxScroll);
+        lockerGridBounds = {
+          x: panelX,
+          y: gridTop,
+          w: panelW,
+          h: gridViewH,
+          maxScroll,
+          tab: "particles",
+          step: rowPitch,
+        };
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(panelX + 2, gridTop, panelW - 4, gridViewH);
+        ctx.clip();
+        for (let i = 0; i < partList.length; i++) {
+          const col = i % cols;
+          const row = (i / cols) | 0;
+          const ix = panelX + gridPad + col * (cell + cellGap);
+          const iy = gridTop - lockerScrollParticles + row * rowPitch;
+          if (iy + cell + labelH < gridTop || iy > gridBot) continue;
+          drawLockerStripItem(ix, iy, partList[i], "cosmetic", { w: cell, h: cell, label: true });
+        }
+        ctx.restore();
+        drawLockerScrollBar(panelX + panelW - 4, gridTop, gridViewH, lockerScrollParticles, maxScroll);
+      }
     } else if (lockerTab === "cosmetics") {
-      const cosList = ownedCosmetics.slice();
+      const cosList = [];
+      for (let i = 0; i < ownedCosmetics.length; i++) {
+        if (cosmeticKindOf(ownedCosmetics[i]) !== "particle") cosList.push(ownedCosmetics[i]);
+      }
       const cell = 22;
       const cellGap = 4;
       const labelH = 8;
@@ -21915,7 +22203,9 @@
   }
 
   function weeklyPrizeBand(id) {
-    // Rarity bands in parchment palette (common tan / uncommon gold / rare crimson)
+    if (id === "leech_aura") return { fill: "#3a1860", edge: "#c878ff", face: "#5a2890" };
+    if (id === "chud_slime" || id === "homer_stench") return { fill: "#6a5020", edge: "#c9a227", face: "#8a6a28" };
+    if (id === "chud_ball") return { fill: "#3a4a10", edge: "#daff00", face: "#5a6a18" };
     if (id === "beta_crown") return { fill: "#6a3030", edge: "#c43a48", face: "#8a4040" };
     if (id === "crown") return { fill: "#6a5020", edge: "#c9a227", face: "#8a6a28" };
     return { fill: "#5c4030", edge: "#a07448", face: "#7a5a38" };
@@ -22112,18 +22402,30 @@
         drawSpinPrizeTile(tx, ry + 1, cell - 2, rh - 2, cells[i]);
       }
     } else {
-      const gap = 42;
-      const total = gap * 2 + 30;
-      let tx = rx + (((rw - total) / 2) | 0);
-      for (let i = 0; i < WEEKLY_SPIN.prizes.length; i++) {
-        drawSpinPrizeTile(tx, ry + 1, 30, rh - 2, WEEKLY_SPIN.prizes[i]);
-        tx += gap;
+      const cell = 36;
+      const n = WEEKLY_SPIN.prizes.length;
+      const span = n * cell;
+      const offset = (time * 26) % span;
+      const first = Math.floor(offset / cell) - 1;
+      const last = first + ((rw / cell) | 0) + 3;
+      for (let i = first; i <= last; i++) {
+        const prize = WEEKLY_SPIN.prizes[((i % n) + n) % n];
+        const tx = (rx + i * cell - offset) | 0;
+        drawSpinPrizeTile(tx, ry + 1, cell - 2, rh - 2, prize);
       }
     }
     ctx.restore();
-    px(cx - 1, y, 2, 3, "#e8c44a");
-    px(cx - 1, y + h - 3, 2, 3, "#e8c44a");
-    px(cx, ry, 1, rh, "#c9a227");
+    const bulbs = 8;
+    const pulse = !!(spinReel && !spinReel.done);
+    for (let i = 0; i < bulbs; i++) {
+      const on = pulse ? (((performance.now() / 70) | 0) + i) % 2 === 0 : i % 2 === 0;
+      const bx = x + 8 + i * (((w - 18) / (bulbs - 1)) | 0);
+      px(bx, y + 1, 2, 2, on ? (i % 3 === 0 ? "#daff00" : "#e8c44a") : "#1a120c");
+    }
+    const marker = spinReel && spinReel.done && spinReel.jackpot ? "#fff4c8" : "#e8c44a";
+    px(cx - 1, y, 2, 3, marker);
+    px(cx - 1, y + h - 3, 2, 3, marker);
+    px(cx, ry, 1, rh, spinReel && spinReel.done && spinReel.jackpot ? "#c878ff" : "#c9a227");
     px(x + 2, y + 2, 2, h - 4, "#3a2414");
     px(x + w - 4, y + 2, 2, h - 4, "#3a2414");
   }
@@ -22738,6 +23040,7 @@
     return {
       face: cosmetics.face,
       back: cosmetics.back,
+      particle: cosmetics.particle,
       skin: playerSkin,
       ownedCosmetics: ownedCosmetics.slice(),
       ownedSkins: ownedSkins.slice(),
@@ -22778,6 +23081,7 @@
     }
     if (snap.face && isCosmeticId(snap.face)) cosmetics.face = snap.face;
     if (snap.back && isCosmeticId(snap.back)) cosmetics.back = snap.back;
+    if (snap.particle && cosmeticKindOf(snap.particle) === "particle") cosmetics.particle = snap.particle;
     if (snap.skin && SKIN_DEFS[snap.skin] && ownsSkin(snap.skin)) playerSkin = snap.skin;
     if (Array.isArray(snap.ownedPets)) {
       for (let i = 0; i < snap.ownedPets.length; i++) {
@@ -23720,6 +24024,8 @@
             );
           } else if (g.tab === "pets") {
             lockerScrollPets = clampLockerScroll(lockerScrollPets + delta, g.maxScroll);
+          } else if (g.tab === "particles") {
+            lockerScrollParticles = clampLockerScroll(lockerScrollParticles + delta, g.maxScroll);
           } else {
             lockerScrollSkins = clampLockerScroll(lockerScrollSkins + delta, g.maxScroll);
           }

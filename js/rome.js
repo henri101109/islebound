@@ -85,6 +85,8 @@
 
     let phase = "city";
     let script = null;
+    let pendingLine = false;
+    let palaceCool = 0;
     let sleepT = 0;
     let ceremonyT = 0;
     let runDead = false;
@@ -301,6 +303,7 @@
     }
 
     function blocksMove() {
+      if ((phase === "talk" || phase === "lost") && !script) return false;
       return phase === "talk" || phase === "sleep" || phase === "ceremony";
     }
 
@@ -314,14 +317,40 @@
       return onCourse() && (phase === "city" || phase === "crowned");
     }
 
+    function streetSpawn() {
+      const d = city.palaceDoor;
+      // On the avenue, south of the door, so the entrance does not pull you back in.
+      return { x: (d.x + d.w / 2 - 4) | 0, y: d.y + d.h + 22 };
+    }
+
+    function inPalace() {
+      return !speedRome() && A.getScene() === "palace";
+    }
+
+    function leavingPalace() {
+      return inPalace() && !script && (phase === "city" || phase === "crowned") && A.fading && A.fading();
+    }
+
     function cityExitSave() {
+      if (inPalace()) return streetSpawn();
       if (!leavingCourse()) return null;
       return { x: (city.spawn.x - 4) | 0, y: (city.spawn.y - 8) | 0 };
+    }
+
+    function leavePalace() {
+      if (A.getScene() !== "palace") return false;
+      script = null;
+      pendingLine = false;
+      phase = crowned ? "crowned" : "city";
+      palaceCool = 0.8;
+      A.fade("rome", streetSpawn());
+      return true;
     }
 
     function leaveToCity() {
       if (speedRome() || !onCourse()) return false;
       script = null;
+      pendingLine = false;
       eliminated = false;
       finishLock = false;
       pauseRace = false;
@@ -471,10 +500,42 @@
       startCeremony();
     }
 
+    function tryStartLine() {
+      if (A.getScene() === "race") {
+        pendingLine = false;
+        return;
+      }
+      if (A.fading && A.fading()) return;
+      A.fade("race", { x: 0, y: 0 });
+      pendingLine = !(A.fading && A.fading());
+    }
+
     function goLine() {
       script = null;
       phase = "staged";
-      A.fade("race", { x: 0, y: 0 });
+      tryStartLine();
+    }
+
+    function palaceLip() {
+      const d = city.palaceDoor;
+      const faceBottom = city.palaceFace.y + city.palaceFace.h;
+      return { x: d.x, y: faceBottom - 4, w: d.w, h: d.y + d.h - (faceBottom - 4) };
+    }
+
+    function releasePalaceStuck() {
+      if (A.getScene() !== "palace") return;
+      if (A.fading && A.fading()) return;
+      if (blocksMove()) return;
+      if (!A.canMove) return;
+      const p = A.player;
+      if (A.canMove(p.x, p.y)) return;
+      const spot = { x: (PALACE_W / 2 - 4) | 0, y: 200 };
+      if (A.canMove(spot.x, spot.y)) {
+        p.x = spot.x;
+        p.y = spot.y;
+        return;
+      }
+      leavePalace();
     }
 
     function goBed(again) {
@@ -717,12 +778,13 @@
           A.fade("island", back);
           return;
         }
-        if (hits(city.palaceDoor)) {
+        if (palaceCool <= 0 && hits(palaceLip())) {
           // Stand in front of the throne so the crowned king is on screen.
+          // The lip is the street side of the door, so flying through the wall does not enter.
           A.fade("palace", { x: (PALACE_W / 2 - 4) | 0, y: 146 });
         }
-      } else if (sc === "palace" && (phase === "crowned" || crowned) && hits(palace.exit)) {
-        A.fade("rome", { x: city.palaceDoor.x + 8, y: city.palaceDoor.y + 28 });
+      } else if (sc === "palace" && hits(palace.exit)) {
+        leavePalace();
       } else if (sc === "barracks" && phase === "barracks" && hits(barracks.door)) {
         if (runDead) {
           flash("R RESETS THE RUN");
@@ -1026,6 +1088,9 @@
     function update(dt) {
       if (!isScene()) return;
       if (tipT > 0) tipT -= dt;
+      if (palaceCool > 0) palaceCool = Math.max(0, palaceCool - dt);
+      if (pendingLine) tryStartLine();
+      releasePalaceStuck();
       if (A.getScene() === "race") updateRace(dt);
       updateScript(dt);
       if (phase === "sleep") {
@@ -1088,6 +1153,10 @@
         g.globalAlpha = 0.35 + darkness * 0.6;
         A.px(0, 0, uiW, uiH, "#07060a");
         g.restore();
+      }
+      if (!speedRome() && A.getScene() === "palace") {
+        A.px(6, 14, 62, 12, "#3a2414");
+        A.drawPixText("ESC LEAVE", 10, 17, "#f3e2c4");
       }
       if (script) {
         const line = script.lines[Math.min(script.i, script.lines.length - 1)] || "";
@@ -1178,8 +1247,17 @@
         placePlayer(line.x, line.y);
         return;
       }
-      if (sc === "palace") phase = crowned ? "crowned" : "city";
-      else phase = "city";
+      if (sc === "palace") {
+        script = null;
+        pendingLine = false;
+        phase = crowned ? "crowned" : "city";
+        A.setScene("rome");
+        const spot = streetSpawn();
+        A.player.x = spot.x;
+        A.player.y = spot.y;
+        return;
+      }
+      phase = "city";
     }
 
     function debug() {
@@ -1763,6 +1841,9 @@
       blocksMove: blocksMove,
       onCourse: onCourse,
       leavingCourse: leavingCourse,
+      inPalace: inPalace,
+      leavingPalace: leavingPalace,
+      leavePalace: leavePalace,
       leaveToCity: leaveToCity,
       cityExitSave: cityExitSave,
       moveMul: moveMul,
