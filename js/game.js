@@ -1246,6 +1246,12 @@
     return brew.fly > 0 && (scene === "rome" || scene === "island");
   }
 
+  /** Pixels the body is drawn above its feet while the sky draught is up. */
+  function flyAltitude() {
+    if (!(brew.fly > 0) || player.aboard) return 0;
+    return 26 + Math.sin(time * 3.2) * 2.5;
+  }
+
   function clearBrew() {
     brew.slow = 0;
     brew.mend = 0;
@@ -1271,6 +1277,10 @@
       cosTip = "SKIN KNITS WRONG";
     } else if (id === "potion_fly") {
       brew.fly = BREW_SEC;
+      if (player.aboard) {
+        player.aboard = false;
+        aboardKind = null;
+      }
       player.inWater = false;
       player.submerged = 0;
       player.drownTick = 0;
@@ -3609,7 +3619,7 @@
         const moveMul = brewFlying() ? 1 : rome && rome.isScene() ? rome.moveMul() : 1;
         let brewMul = 1;
         if (brew.slow > 0) brewMul *= 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(time * 7));
-        if (brewFlying()) brewMul *= 1.22;
+        if (brewFlying()) brewMul *= 1.5;
         const wet = !brewFlying() && (player.inWater || wadingPond);
         const speed = (wet ? 70 : 165) * moveMul * brewMul * dt;
         if (player.moving) {
@@ -13418,14 +13428,15 @@
       ink.translate(x + 4, y + player.h - 1);
       ink.scale(face, 1);
       if (brew.fly > 0) {
-        const lift = 12 + Math.sin(time * 3.4) * 2.5;
-        px(-5, -1, 10, 2, "rgba(24, 16, 10, 0.45)");
-        px(-3, 0, 6, 1, "rgba(24, 16, 10, 0.25)");
+        const lift = flyAltitude();
+        px(-4, 0, 8, 2, "rgba(24, 16, 10, 0.32)");
+        px(-2, 1, 4, 1, "rgba(24, 16, 10, 0.18)");
         ink.translate(0, -lift);
       }
     }
 
-    const step = player.moving ? (f % 2 === 0 ? 1 : -1) : 0;
+    const airborne = brew.fly > 0 && !player.aboard;
+    const step = player.moving && !airborne ? (f % 2 === 0 ? 1 : -1) : 0;
     const gust = (player.moving && !player.aboard ? 2.55 : 0.82) * boatDamp;
     const gustSpd = player.moving && !player.aboard ? 8.4 : 2.15;
     const backWear = effectiveBack(playerSkin, cosmetics.back);
@@ -13437,12 +13448,17 @@
     if (player.inWater && !player.aboard) {
       px(-5, 0, 10, 5, "rgba(40, 90, 140, 0.28)");
     }
-    if (brew.fly > 0 && !player.aboard) {
-      const flap = Math.sin(time * 14);
-      px(-9, -11 + (flap > 0 ? 0 : 1), 3, 2, "#d6ecff");
-      px(6, -11 + (flap > 0 ? 1 : 0), 3, 2, "#d6ecff");
-      px(-11, -10, 2, 1, "#9ec8ee");
-      px(9, -10, 2, 1, "#9ec8ee");
+    if (airborne) {
+      const flap = Math.sin(time * (player.moving ? 18 : 9));
+      const wy = -13 + (flap > 0 ? -3 : 1);
+      px(-14, wy, 6, 2, "#d6ecff");
+      px(8, wy, 6, 2, "#d6ecff");
+      px(-16, wy + 1, 2, 1, "#9ec8ee");
+      px(14, wy + 1, 2, 1, "#9ec8ee");
+      if (flap > 0.15) {
+        px(-13, wy - 1, 4, 1, "#f4fbff");
+        px(9, wy - 1, 4, 1, "#f4fbff");
+      }
     }
     if (brew.slow > 0) {
       const drip = (time * 6) % 5;
@@ -14921,7 +14937,8 @@
     }
     const sx = Math.round(player.x - cpos.x);
     const sy = Math.round(player.y - cpos.y);
-    return { x: sx - 10, y: sy - 6, w: 28, h: 26 };
+    const lift = flyAltitude();
+    return { x: sx - 14, y: sy - 8 - lift, w: 36, h: 28 + lift };
   }
 
   function rodViewBox(cpos) {
@@ -16384,7 +16401,7 @@
     if (player.dead > 0) return;
     if (scene === "hub") return;
     const sx = Math.round(player.x + player.w / 2 - 4 - cpos.x);
-    const sy = Math.round(player.y - cpos.y);
+    const sy = Math.round(player.y - flyAltitude() - cpos.y);
     if (sx < -40 || sy < -40 || sx > viewW + 40 || sy > viewH + 40) return;
     drawHubNametagAbove(sx, sy, hubLocalName(), hubLocalIsAccount());
   }
