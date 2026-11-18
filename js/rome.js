@@ -105,6 +105,11 @@
     let loseReason = "";
     let animalT = 0;
     let cullAt = 0;
+    let trailX = 0;
+    let trailY = 0;
+    let trailVx = 0;
+    let trailVy = 0;
+    let trailReady = false;
 
     function speedRome() {
       if (!(A.speedMode && A.speedMode())) return false;
@@ -388,6 +393,7 @@
       cullAt = 0;
       A.player.romeSlow = 0;
       A.player.romeStun = 0;
+      trailReady = false;
       if (speedRome() && A.setSpeedPaused) A.setSpeedPaused(false);
     }
 
@@ -740,6 +746,14 @@
 
     function updateRace(dt) {
       const p = A.player;
+      if (trailReady) {
+        const idt = 1 / Math.max(0.001, dt);
+        trailVx = (p.x - trailX) * idt;
+        trailVy = (p.y - trailY) * idt;
+      }
+      trailX = p.x;
+      trailY = p.y;
+      trailReady = true;
       if (p.romeSlow > 0) p.romeSlow = Math.max(0, p.romeSlow - dt);
       if (p.romeStun > 0) p.romeStun = Math.max(0, p.romeStun - dt);
 
@@ -755,7 +769,7 @@
 
       const pf = feet();
       const pq = project(pf.x, pf.y);
-      if (!eliminated && lavaAt(pf.x, pf.y)) {
+      if (!eliminated && !p.flying && lavaAt(pf.x, pf.y)) {
         loseRace("LAVA");
         return;
       }
@@ -794,7 +808,7 @@
         if (s.t >= s.life && !s.boom) {
           s.boom = true;
           const hitR = 12;
-          if (!eliminated && Math.hypot(pf.x - s.tx, pf.y - s.ty) < hitR) {
+          if (!eliminated && !p.flying && Math.hypot(pf.x - s.tx, pf.y - s.ty) < hitR) {
             if (s.kind === "cracker") {
               p.romeStun = Math.max(p.romeStun || 0, 0.32);
               p.romeSlow = Math.max(p.romeSlow || 0, 0.45);
@@ -832,7 +846,11 @@
           rn.done = true;
           continue;
         }
-        if (rn.stun > 0) continue;
+        if (rn.stun > 0) {
+          rn.mx = 0;
+          rn.my = 0;
+          continue;
+        }
         let want = rn.want;
         // The pack takes the dry ford. Elites already run that line.
         const wet = sampleAt(Math.min(course.finishS, rn.s + 48));
@@ -882,8 +900,10 @@
         const wq = project(rn.x, rn.y);
         if (wq.s >= course.waterS0 && wq.s <= course.waterS1 && Math.abs(wq.lat) > 22) sp *= 0.62;
         if (!gateOpen && rn.s > gateS - 18) sp *= 0.15;
-        rn.x += (dx / dist) * sp * dt;
-        rn.y += (dy / dist) * sp * dt;
+        rn.mx = (dx / dist) * sp;
+        rn.my = (dy / dist) * sp;
+        rn.x += rn.mx * dt;
+        rn.y += rn.my * dt;
       }
 
       const count = aliveCount();
@@ -992,7 +1012,7 @@
           if (rn.nerve < 0.7 && d < 22) rn.out = true;
           else if (a.phase === "lunge" && d < 8) rn.out = true;
         }
-        if (!eliminated) {
+        if (!eliminated && !A.player.flying) {
           const d = Math.hypot(pf.x - a.x, pf.y - a.y);
           const kill = a.phase === "lunge" ? 11 : 7;
           if (d < kill) {
@@ -1122,6 +1142,10 @@
       if (!speedRome() && (phase === "staged" || phase === "racing" || phase === "lost" || phase === "ceremony")) {
         A.px(6, 52, 62, 12, "#3a2414");
         A.drawPixText("ESC LEAVE", 10, 55, "#f3e2c4");
+      }
+      if (A.player.flying && (phase === "racing" || phase === "staged")) {
+        A.px(6, 66, 52, 12, "#1a3048");
+        A.drawPixText("SKY 2X", 10, 69, "#d6ecff");
       }
     }
 
@@ -1463,7 +1487,38 @@
         const rn = runners[i];
         if (rn.out) continue;
         if (rn.x < cam.x - 16 || rn.y < cam.y - 16 || rn.x > cam.x + A.viewW() + 16 || rn.y > cam.y + A.viewH() + 16) continue;
-        drawPerson(g, (rn.x - 4 - cam.x) | 0, (rn.y - 12 - cam.y) | 0, rn.col, rn.tx > 0 ? 1 : -1, (A.time() * 8 + i) | 0, false);
+        if (phase === "racing") drawSpeedStreak(rn.x, rn.y + 2, rn.mx || 0, rn.my || 0, cam, "runner");
+        drawPerson(g, (rn.x - 4 - cam.x) | 0, (rn.y - 12 - cam.y) | 0, rn.col, rn.mx > 0 ? 1 : -1, (A.time() * 8 + i) | 0, false);
+      }
+      if (phase === "racing") {
+        const p = A.player;
+        const kind = p.flying ? "fly" : p.romeSlow > 0 ? "slow" : "run";
+        drawSpeedStreak(p.x + p.w / 2, p.y + p.h - 2, trailVx, trailVy, cam, kind);
+      }
+    }
+
+    function drawSpeedStreak(x, y, vx, vy, cam, kind) {
+      const spd = Math.hypot(vx || 0, vy || 0);
+      if (spd < 48) return;
+      const nx = vx / spd;
+      const ny = vy / spd;
+      const t = A.time();
+      const fly = kind === "fly";
+      const slow = kind === "slow";
+      const lift = fly ? 26 : 0;
+      const count = fly ? 7 : kind === "runner" ? 3 : 5;
+      const reach = fly ? 36 : slow ? 8 : 14;
+      const scroll = (t * (fly ? 160 : slow ? 40 : 100)) | 0;
+      const colA = fly ? "#f4fbff" : slow ? "#d2a6f0" : "#f3e6cc";
+      const colB = fly ? "#7eb6e8" : slow ? "#5a2878" : "#c4a574";
+      for (let i = 0; i < count; i++) {
+        const back = 7 + ((i * 11 + scroll) % reach);
+        const side = (i & 1 ? 1 : -1) * (2 + (i % 3));
+        const sx = x - nx * back - ny * side - cam.x;
+        const sy = y - lift - ny * back + nx * side - cam.y;
+        if (sx < -8 || sy < -8 || sx > A.viewW() + 8 || sy > A.viewH() + 8) continue;
+        const w = fly ? 5 : slow ? 2 : 3;
+        A.pxi(A.ctx(), sx | 0, sy | 0, w, 1, i & 1 ? colA : colB);
       }
     }
 

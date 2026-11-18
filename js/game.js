@@ -1243,7 +1243,7 @@
     lagY: 0,
   };
   function brewFlying() {
-    return brew.fly > 0 && (scene === "rome" || scene === "island");
+    return brew.fly > 0 && (scene === "rome" || scene === "island" || scene === "race");
   }
 
   /** Pixels the body is drawn above its feet while the sky draught is up. */
@@ -1368,6 +1368,7 @@
         cosTipT = 2;
       }
     }
+    player.flying = brewFlying();
   }
   let audioCtx = null;
   let oceanGain = null;
@@ -3619,7 +3620,7 @@
         const moveMul = brewFlying() ? 1 : rome && rome.isScene() ? rome.moveMul() : 1;
         let brewMul = 1;
         if (brew.slow > 0) brewMul *= 0.28 + 0.22 * (0.5 + 0.5 * Math.sin(time * 7));
-        if (brewFlying()) brewMul *= 1.5;
+        if (brewFlying()) brewMul *= scene === "race" ? 2 : 1.5;
         const wet = !brewFlying() && (player.inWater || wadingPond);
         const speed = (wet ? 70 : 165) * moveMul * brewMul * dt;
         if (player.moving) {
