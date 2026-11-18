@@ -835,6 +835,7 @@
     flash: { id: "flash", label: "FLASH" },
     lex_young: { id: "lex_young", label: "LEX" },
     jorts: { id: "jorts", label: "JORTS" },
+    chud_ball: { id: "chud_ball", label: "CHUD" },
   };
   const PET_DEFS = {
     blue_crab: { id: "blue_crab", label: "BLUE", name: "Blue Crab" },
@@ -859,7 +860,14 @@
   ];
   /** Secret / vendor skins — owned only via special buys, never auto-granted. */
   const SHOP_SKIN_IDS = ["jorts"];
-  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS, SHOP_SKIN_IDS);
+  /** Local test skins. Henri's account only — no quest, shop, drop, or rail. */
+  const HENRI_SKIN_IDS = ["chud_ball"];
+  const ALL_SKIN_IDS = LAUNCH_SKIN_IDS.concat(QUEST_SKIN_IDS, SHOP_SKIN_IDS, HENRI_SKIN_IDS);
+  const chudBallSheet = new Image();
+  chudBallSheet.src = "assets/skins/chud-ball.png";
+  let chudBallScratch = null;
+  /** True for the session that first received the Chud Ball test grant. */
+  let henriChudFresh = false;
   /** Back cosmetics forced by skin — not locker-equippable / not unequippable. */
   const SKIN_LOCKED_BACK = {
     jakob: "norway_flag",
@@ -3217,7 +3225,7 @@
     ink.restore();
   }
 
-  function drawLobbyPet(fx, fy, id, scale) {
+  function drawLobbyPet(fx, fy, id, scale, face) {
     if (!isPetId(id)) return;
     const s = scale == null ? 2 : scale;
     ink.save();
@@ -3225,7 +3233,7 @@
     ink.scale(s, s);
     const bob = ((Math.sin(time * 2.4) * 0.5) | 0);
     ink.translate(0, bob);
-    drawPetSprite(id, true, 1, 0, 0, time * 4);
+    drawPetSprite(id, true, face == null ? 1 : face, 0, 0, time * 4);
     ink.restore();
   }
 
@@ -4072,6 +4080,30 @@
     else if (changed) saveLockerProfile();
   }
 
+  /** Signed-in Henri, including "HENRI P" style owner names. */
+  function isHenriTestAccount() {
+    if (isHenriAccount()) return true;
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return false;
+    if (api.displayName && isOwnerName(api.displayName())) return true;
+    const user = api.currentUser && api.currentUser();
+    if (user && user.username && isOwnerName(user.username)) return true;
+    return false;
+  }
+
+  /**
+   * Chud Ball is a local test skin. No quest, vendor, or drop grants it.
+   * First grant this session equips it so it shows up in game immediately.
+   */
+  function tryGrantHenriTestSkins() {
+    if (!isHenriTestAccount()) return;
+    if (!ownsSkin("chud_ball")) {
+      grantSkin("chud_ball");
+      henriChudFresh = true;
+    }
+    if (henriChudFresh && ownsSkin("chud_ball") && playerSkin !== "chud_ball") equipSkin("chud_ball");
+  }
+
   function isSignedInAccount() {
     const api = lbApi();
     return !!(api && api.isSignedIn && api.isSignedIn());
@@ -4644,6 +4676,7 @@
     syncQuestOwnershipFlags();
     tryGrantAmericanCloak();
     tryGrantHenriTestPets();
+    tryGrantHenriTestSkins();
     syncLexYoungFromHistory();
     loadCareer();
     backfillCareerFromHistory();
@@ -13474,9 +13507,105 @@
     ink.restore();
   }
 
+  /**
+   * Chud Ball: 7 frames at 6fps, cropped to the face and drawn at skin size.
+   * The blue drip under the chin is painted out so nothing hangs below the face.
+   */
+  function drawChudBall(hurt) {
+    const sheet = chudBallSheet;
+    const ready = !!(sheet && sheet.complete && sheet.naturalWidth > 0);
+    if (!ready) {
+      px(-6, -12, 12, 12, hurt ? "#8a6a10" : "#daff00");
+      px(-3, -8, 2, 2, "#000000");
+      px(2, -8, 2, 2, "#000000");
+      px(-3, -4, 6, 2, "#ff0000");
+      drawChudFaceCosmetic();
+      return;
+    }
+    const frame = ((time * 6) | 0) % 7;
+    if (!chudBallScratch) {
+      chudBallScratch = document.createElement("canvas");
+      chudBallScratch.width = 32;
+      chudBallScratch.height = 32;
+    }
+    const g = chudBallScratch.getContext("2d", { willReadFrequently: true });
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, 32, 32);
+    g.drawImage(sheet, frame * 32, 0, 32, 32, 0, 0, 32, 32);
+    const img = g.getImageData(0, 0, 32, 32);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const y = (i / 128) | 0;
+      if (y > 22) {
+        d[i + 3] = 0;
+        continue;
+      }
+      if (d[i + 3] && d[i] === 0 && d[i + 1] === 176 && d[i + 2] === 255) {
+        d[i] = 218;
+        d[i + 1] = 255;
+        d[i + 2] = 0;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    if (hurt) {
+      g.globalCompositeOperation = "source-atop";
+      g.fillStyle = "rgba(140, 24, 32, 0.5)";
+      g.fillRect(0, 0, 32, 32);
+      g.globalCompositeOperation = "source-over";
+    }
+    const prevSmooth = ink.imageSmoothingEnabled;
+    ink.imageSmoothingEnabled = false;
+    // 29x22 art down to a normal skin footprint. Chin sits on the feet line.
+    ink.drawImage(chudBallScratch, 2, 1, 29, 22, -8, -8, 16, 12);
+    ink.imageSmoothingEnabled = prevSmooth;
+    drawChudFaceCosmetic();
+  }
+
+  /** Masks and crowns scaled to the Chud Ball face. Band sits on the hair line. */
+  function drawChudFaceCosmetic() {
+    const id = cosmetics.face;
+    if (!id) return;
+    if (id === "jade_mask") {
+      px(-5, -4, 8, 3, "#2a8a4a");
+      px(-4, -4, 6, 2, "#3ec86a");
+      px(-4, -3, 1, 1, "#0e3a20");
+      px(0, -3, 1, 1, "#0e3a20");
+      px(-2, -2, 3, 1, "#1a5a34");
+      px(-1, -4, 1, 1, "#b8f0c8");
+    } else if (id === "straw_hat") {
+      px(-6, -9, 12, 1, "#c4a06a");
+      px(-3, -11, 6, 2, "#e8c44a");
+      px(-2, -12, 4, 1, "#8a5a32");
+    } else if (id === "crown") {
+      px(-4, -11, 1, 4, "#c9a227");
+      px(-1, -12, 1, 3, "#e8c44a");
+      px(2, -11, 1, 4, "#c9a227");
+      px(-4, -8, 7, 1, "#e8c44a");
+    } else if (id === "king_crown") {
+      px(-5, -12, 1, 4, "#c9a227");
+      px(-2, -13, 1, 4, "#e8c44a");
+      px(0, -14, 1, 3, "#f4efe4");
+      px(3, -12, 1, 4, "#c9a227");
+      px(-5, -8, 9, 1, "#e8c44a");
+      px(-1, -12, 1, 1, "#8a3038");
+    } else if (id === "beta_crown") {
+      px(-4, -11, 1, 4, "#c9a227");
+      px(-1, -12, 1, 3, "#e8c44a");
+      px(2, -11, 1, 4, "#c9a227");
+      px(-4, -8, 7, 1, "#e8c44a");
+      px(-3, -11, 1, 1, "#c43a48");
+      px(-1, -12, 1, 1, "#c43a48");
+      px(2, -11, 1, 1, "#c43a48");
+    }
+  }
+
   /** Skin body at feet pivot (0,0) facing +x after scale. */
   function drawPlayerBody(skin, step, hurt, seated) {
     const s = skin || "classic";
+    if (s === "chud_ball") {
+      drawChudBall(hurt);
+      return;
+    }
     if (s === "jorts") {
       // Jorts Kid — curly hair, glasses, oversized white tee, jorts, crew socks + sandals
       const skinC = hurt ? "#8a3a3a" : "#a8724a";
@@ -15473,12 +15602,18 @@
     let skin = p.skin_id || null;
     let face = p.face_id || null;
     let back = p.back_id || null;
-    if ((!skin || !face || !back) && api && api.getCachedLoadout && p.username) {
+    let pet = p.pet_id || null;
+    if (!pet && p.pet_id === undefined && api && typeof api.getLobbyPet === "function") {
+      const looked = api.getLobbyPet(p.username);
+      if (looked) pet = looked;
+    }
+    if ((!skin || !face || !back || (pet == null && p.pet_id === undefined)) && api && api.getCachedLoadout && p.username) {
       const cached = api.getCachedLoadout(p.username);
       if (cached) {
         if (!skin && cached.skin) skin = cached.skin;
         if (!face && cached.face) face = cached.face;
         if (!back && cached.back) back = cached.back;
+        if (!pet && p.pet_id === undefined && cached.pet) pet = cached.pet;
       }
     }
     const modeLabel =
@@ -15493,6 +15628,7 @@
       skin: skin || "classic",
       face: face || null,
       back: back || null,
+      pet: isPetId(pet) ? pet : null,
       mode: String(p.mode || "menu").toLowerCase(),
       category: p.category || null,
       modeLabel: String(modeLabel || "LOBBY").toUpperCase(),
@@ -15673,6 +15809,13 @@
       ctx.save();
       ctx.globalAlpha = 0.9;
       drawLobbyPeerFigure(fx, fy, peer, 1.2);
+      if (peer.pet) {
+        const prevInk = ink;
+        ink = ctx;
+        // Outer side, facing the player, same perch as the local mannequin's pet.
+        drawLobbyPet(fx + s.side * 16, fy + 2, peer.pet, 1.2, -s.side);
+        ink = prevInk;
+      }
       ctx.restore();
 
       const name = String(peer.name || "?").slice(0, peer.isAccount ? 7 : 6);
@@ -16489,6 +16632,7 @@
       face_id: cosmetics.face || null,
       back_id: effectiveBack(playerSkin, cosmetics.back),
       skin_id: playerSkin || "classic",
+      pet_id: equippedPet || null,
     });
   }
 
@@ -22179,6 +22323,7 @@
           authPin = "";
           tryGrantAmericanCloak();
           tryGrantHenriTestPets();
+          tryGrantHenriTestSkins();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
@@ -22192,6 +22337,7 @@
           authPin = "";
           tryGrantAmericanCloak();
           tryGrantHenriTestPets();
+          tryGrantHenriTestSkins();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
@@ -22666,6 +22812,7 @@
     }
     ensureLaunchSkins();
     syncQuestOwnershipFlags();
+    tryGrantHenriTestSkins();
   }
 
   function accountWorldKey(userId) {
@@ -23296,6 +23443,19 @@
           return;
         }
       }
+      if (rome && rome.inPalace && rome.inPalace()) {
+        if (e.repeat) return;
+        if (rome.leavingPalace && rome.leavingPalace()) {
+          saveGame();
+          if (serpent) endSerpentFight("flee");
+          backToModeMenu();
+          return;
+        }
+        if (rome.leavePalace && rome.leavePalace()) {
+          saveGame();
+          return;
+        }
+      }
       saveGame();
       if (serpent) endSerpentFight("flee");
       backToModeMenu();
@@ -23731,6 +23891,7 @@
       },
       fade: (sc, spawn) => beginFade(sc, spawn),
       fading: () => !!fadeMode,
+      canMove: (x, y) => canMove(x, y),
       playBlocked: () => uiBlocksPlay() || !!guideOpen,
       islandReturn: () =>
         ruinsPortal
