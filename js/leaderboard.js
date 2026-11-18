@@ -577,32 +577,41 @@
     }
     const out = [];
     const seen = Object.create(null);
-    function pushId(id, label, source) {
+    function pushId(id, label, source, createdAt) {
       const name = normalizeIdentityName(label);
       if (!id || !name) return;
       const key = String(id);
       if (seen[key]) {
+        if (seen[key].names.indexOf(name) < 0) seen[key].names.push(name);
         if (name.length > seen[key].name.length) seen[key].name = name;
+        if (source === "account") seen[key].source = "account";
+        if (createdAt && (source === "account" || !seen[key].created_at)) seen[key].created_at = createdAt;
         return;
       }
-      const row = { id: key, name, source: source || "profile" };
+      const row = {
+        id: key,
+        name,
+        names: [name],
+        source: source || "profile",
+        created_at: createdAt || null,
+      };
       seen[key] = row;
       out.push(row);
     }
     try {
-      const pUrl = restBase() + "/" + PROFILES + "?select=id,display_name&limit=200";
+      const pUrl = restBase() + "/" + PROFILES + "?select=id,display_name,created_at&order=created_at.asc&limit=1000";
       const pRes = await fetch(pUrl, { headers: anonHeaders() });
       if (pRes.ok) {
         const rows = await pRes.json();
-        (Array.isArray(rows) ? rows : []).forEach((r) => pushId(r.id, r.display_name, "profile"));
+        (Array.isArray(rows) ? rows : []).forEach((r) => pushId(r.id, r.display_name, "profile", r.created_at || null));
       }
     } catch (e) {}
     try {
-      const aUrl = restBase() + "/" + ACCOUNTS + "?select=id,username&limit=200";
+      const aUrl = restBase() + "/" + ACCOUNTS + "?select=id,username,created_at&order=created_at.asc&limit=1000";
       const aRes = await fetch(aUrl, { headers: anonHeaders() });
       if (aRes.ok) {
         const rows = await aRes.json();
-        (Array.isArray(rows) ? rows : []).forEach((r) => pushId(r.id, r.username, "account"));
+        (Array.isArray(rows) ? rows : []).forEach((r) => pushId(r.id, r.username, "account", r.created_at || null));
       }
     } catch (e) {}
     // Also fold account names already present on boards into the pool via aliases.
@@ -1485,11 +1494,60 @@
       user: {
         id: user.id,
         username: sanitizeName(user.username, true) || user.username,
+        created_at: user.created_at || null,
       },
       at: Date.now(),
     };
     saveSession(s);
     return s;
+  }
+
+  /** Keep the account row's created_at on the session so BETA vs VIP survives refresh. */
+  async function rememberAccountCreated(fallbackIso) {
+    if (!session || !session.user || session.user.created_at) return;
+    let iso = null;
+    if (session.user.username) {
+      const found = await fetchAccountByUsername(session.user.username);
+      if (found.ok && found.account && found.account.created_at) iso = found.account.created_at;
+    }
+    if (!iso && fallbackIso) iso = fallbackIso;
+    if (!iso || !session || !session.user) return;
+    session.user.created_at = iso;
+    saveSession(session);
+  }
+
+  function accountCreatedAt() {
+    if (session && session.user && session.user.created_at) return session.user.created_at;
+    if (profile && profile.created_at) return profile.created_at;
+    return null;
+  }
+
+  /** Exact-name lookup of an account's created_at from the identity cache. */
+  function identityCreatedAt(name) {
+    const n = normalizeIdentityName(name);
+    if (!n) return null;
+    const me = displayName();
+    if (me && normalizeIdentityName(me) === n) {
+      const mine = accountCreatedAt();
+      if (mine) return mine;
+    }
+    const list = identityCache.rows || [];
+    let hit = null;
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      if (!row || !row.created_at) continue;
+      const names = row.names && row.names.length ? row.names : [row.name];
+      let match = false;
+      for (let j = 0; j < names.length; j++) {
+        if (normalizeIdentityName(names[j]) === n) {
+          match = true;
+          break;
+        }
+      }
+      if (!match) continue;
+      if (!hit || row.source === "account") hit = row;
+    }
+    return hit ? hit.created_at : null;
   }
 
   async function signUp(username, pin) {
@@ -1527,8 +1585,15 @@
         } catch (e) {}
         return { ok: false, error: detail };
       }
+      let createdAt = null;
+      try {
+        const created = await res.json();
+        const row = Array.isArray(created) ? created[0] : created;
+        if (row && row.created_at) createdAt = row.created_at;
+      } catch (e) {}
+      if (!createdAt) createdAt = new Date().toISOString();
       setLastName(name);
-      applyLocalSession({ id, username: name });
+      applyLocalSession({ id, username: name, created_at: createdAt });
       await ensureProfile(name);
       emitAuth();
       return { ok: true, session, profile };
@@ -1557,7 +1622,7 @@
     const expect = await hashPin(code, acc.pin_salt);
     if (expect !== acc.pin_hash) return { ok: false, error: "wrong pin" };
     setLastName(sanitizeName(acc.username, true) || name);
-    applyLocalSession({ id: acc.id, username: acc.username });
+    applyLocalSession({ id: acc.id, username: acc.username, created_at: acc.created_at || null });
     await ensureProfile(acc.username);
     emitAuth();
     return { ok: true, session, profile };
@@ -1872,6 +1937,7 @@
         if (rows && rows[0]) {
           profile = profileFromRow(rows[0]);
           if (profile.display_name) setLastName(profile.display_name);
+          await rememberAccountCreated(profile.created_at);
           return profile;
         }
       }
@@ -1899,6 +1965,7 @@
       if (post.ok) {
         const created = await post.json();
         profile = profileFromRow(Array.isArray(created) ? created[0] : created);
+        await rememberAccountCreated(profile && profile.created_at);
         return profile;
       }
     } catch (e) {}
@@ -2283,6 +2350,7 @@
       user: {
         id: saved.user.id,
         username: sanitizeName(saved.user.username || getLastName() || "PLAYER", true) || "PLAYER",
+        created_at: saved.user.created_at || null,
       },
       at: saved.at || Date.now(),
     };
@@ -3434,6 +3502,8 @@
     isSignedIn,
     currentUser,
     currentProfile,
+    accountCreatedAt,
+    identityCreatedAt,
     displayName,
     totalPlaytimeMs,
     onAuthChange,

@@ -1210,65 +1210,36 @@
   let profileResults = [];
   let profileFocus = null;
   let profileField = 0;
-  /** Ranks hub tab: "ranks" | "media". */
-  let ranksTab = "ranks";
-  /** Purchased / granted social ranks (persisted in locker). */
+  /** Legacy locker fields — no longer shown. Kept so old saves still round-trip. */
   let rankMvp = false;
   let rankMedia = { youtuber: false, tiktok: false, twitch: false };
+  /** Accounts created before Nov 16, 2026 00:00 Pacific wear BETA instead of VIP. */
+  const BETA_BEFORE_MS = Date.UTC(2026, 10, 16, 8, 0, 0);
+  let rankIdentityPrefetchAt = 0;
   const RANK_DEFS = {
     owner: {
       id: "owner",
       label: "OWNER",
-      tab: "ranks",
       fill: "#c9a227",
       edge: "#6a5020",
       face: "#fff4c8",
       blurb: "HENRI ONLY",
     },
-    mvp: {
-      id: "mvp",
-      label: "MVP",
-      tab: "ranks",
-      fill: "#2a9a8a",
-      edge: "#0e4a42",
-      face: "#e8fff8",
-      blurb: "$4.99  SUPPORT THE GAME",
+    beta: {
+      id: "beta",
+      label: "BETA",
+      fill: "#1e9a3a",
+      edge: "#0d4a1c",
+      face: "#e9ffe8",
+      blurb: "ACCOUNT BEFORE NOV 16",
     },
     vip: {
       id: "vip",
       label: "VIP",
-      tab: "ranks",
       fill: "#8a2420",
       edge: "#3a1010",
       face: "#ffd8d0",
-      blurb: "CREATE AN ACCOUNT",
-    },
-    youtuber: {
-      id: "youtuber",
-      label: "YOUTUBER",
-      tab: "media",
-      fill: "#c4302b",
-      edge: "#4a1010",
-      face: "#ffe8e4",
-      blurb: "YT LONG 1K  /  SHORT 30K",
-    },
-    tiktok: {
-      id: "tiktok",
-      label: "TIKTOK",
-      tab: "media",
-      fill: "#1a1a1a",
-      edge: "#000000",
-      face: "#f0f0f0",
-      blurb: "TIKTOK OVER 20K VIEWS",
-    },
-    twitch: {
-      id: "twitch",
-      label: "TWITCH",
-      tab: "media",
-      fill: "#6441a5",
-      edge: "#2a1848",
-      face: "#efe8ff",
-      blurb: "STREAM 20+ VIEWERS",
+      blurb: "ACCOUNT ON NOV 16+",
     },
   };
   /** null = bag slot heldSlot; face/back select disabled in-game (locker only). */
@@ -4165,41 +4136,55 @@
     return !!(api && api.isSignedIn && api.isSignedIn());
   }
 
-  function hasRank(id) {
-    if (id === "owner") return isHenriAccount();
-    if (id === "mvp") return !!rankMvp;
-    if (id === "vip") return isSignedInAccount();
-    if (id === "youtuber") return !!(rankMedia && rankMedia.youtuber);
-    if (id === "tiktok") return !!(rankMedia && rankMedia.tiktok);
-    if (id === "twitch") return !!(rankMedia && rankMedia.twitch);
-    return false;
+  function isBetaCreatedAt(iso) {
+    if (!iso) return false;
+    const t = Date.parse(iso);
+    return !isNaN(t) && t < BETA_BEFORE_MS;
   }
 
-  /** Best social rank for the local player (for nametags). Media takes priority after owner/mvp/vip. */
-  function primaryRankId() {
-    if (hasRank("owner")) return "owner";
-    if (hasRank("mvp")) return "mvp";
-    if (hasRank("youtuber")) return "youtuber";
-    if (hasRank("tiktok")) return "tiktok";
-    if (hasRank("twitch")) return "twitch";
-    if (hasRank("vip")) return "vip";
+  function prefetchRankIdentities() {
+    const api = lbApi();
+    if (!api || typeof api.fetchKnownIdentities !== "function") return;
+    const now = Date.now();
+    if (now - rankIdentityPrefetchAt < 60000) return;
+    rankIdentityPrefetchAt = now;
+    api.fetchKnownIdentities().catch(() => {});
+  }
+
+  /** ISO created-at for a player, or null when we only know they have an account. */
+  function createdAtForName(name) {
+    const api = lbApi();
+    if (!api) return null;
+    const me = (api.displayName && api.displayName()) || "";
+    const n = String(name || "").toUpperCase();
+    if (me && n === String(me).toUpperCase() && typeof api.accountCreatedAt === "function") {
+      const mine = api.accountCreatedAt();
+      if (mine) return mine;
+    }
+    prefetchRankIdentities();
+    if (typeof api.identityCreatedAt === "function") return api.identityCreatedAt(name);
     return null;
   }
 
-  function grantMvpRank() {
-    if (rankMvp) return false;
-    if (!isSignedInAccount()) return false;
-    rankMvp = true;
-    saveLockerProfile();
-    return true;
+  /** Signed-in rank from account age. Guests get nothing. */
+  function accountRankId(name) {
+    return isBetaCreatedAt(createdAtForName(name)) ? "beta" : "vip";
   }
 
-  function setMediaRank(id, on) {
-    if (id !== "youtuber" && id !== "tiktok" && id !== "twitch") return false;
-    if (!rankMedia) rankMedia = { youtuber: false, tiktok: false, twitch: false };
-    rankMedia[id] = !!on;
-    saveLockerProfile();
-    return true;
+  function hasRank(id) {
+    if (id === "owner") return isHenriAccount();
+    if (!isSignedInAccount()) return false;
+    const mine = accountRankId(hubLocalName());
+    if (id === "beta") return mine === "beta";
+    if (id === "vip") return mine === "vip";
+    return false;
+  }
+
+  /** Nametag rank for the local player. Guests have no rank. */
+  function primaryRankId() {
+    if (hasRank("owner")) return "owner";
+    if (!isSignedInAccount()) return null;
+    return accountRankId(hubLocalName());
   }
 
   function drawRankIcon(id, x, y, bg) {
@@ -4215,31 +4200,15 @@
       px(x + 2, y + 3, 7, 2, "#ffe27a");
       px(x + 3, y + 5, 5, 3, "#c9a227");
       px(x + 2, y + 8, 7, 1, "#6a5020");
-    } else if (id === "mvp") {
-      px(x + 5, y + 2, 1, 1, "#e8fff8");
-      px(x + 4, y + 3, 3, 1, "#e8fff8");
-      px(x + 3, y + 4, 5, 1, "#a8ffe8");
-      px(x + 2, y + 5, 7, 2, "#0e4a42");
-      px(x + 4, y + 7, 3, 2, "#e8fff8");
+    } else if (id === "beta") {
+      px(x + 2, y + 3, 7, 5, "#e9ffe8");
+      px(x + 3, y + 4, 2, 3, "#0d4a1c");
+      px(x + 6, y + 4, 2, 3, "#0d4a1c");
     } else if (id === "vip") {
       px(x + 4, y + 2, 3, 2, "#ffd8d0");
       px(x + 3, y + 4, 5, 1, "#ffd8d0");
       px(x + 5, y + 5, 1, 3, "#ffd8d0");
       px(x + 3, y + 8, 5, 1, "#ffd8d0");
-    } else if (id === "youtuber") {
-      px(x + 2, y + 3, 7, 5, "#ffe8e4");
-      px(x + 4, y + 4, 1, 3, "#c4302b");
-      px(x + 5, y + 5, 2, 1, "#c4302b");
-    } else if (id === "tiktok") {
-      px(x + 4, y + 2, 2, 6, "#69c9d0");
-      px(x + 5, y + 2, 2, 6, "#ee1d52");
-      px(x + 3, y + 7, 3, 2, "#f0f0f0");
-      px(x + 6, y + 6, 2, 2, "#f0f0f0");
-    } else if (id === "twitch") {
-      px(x + 3, y + 2, 5, 6, "#efe8ff");
-      px(x + 4, y + 3, 1, 2, "#6441a5");
-      px(x + 6, y + 3, 1, 2, "#6441a5");
-      px(x + 3, y + 8, 2, 1, "#efe8ff");
     }
   }
 
@@ -4289,15 +4258,15 @@
     );
   }
 
-  /** Shared rank pick for boards / hub / locker nametags. */
+  /** Shared rank pick for boards / hub / locker nametags. Guests get no badge. */
   function resolveNametagRank(name, isAccount) {
     if (isOwnerName(name)) return "owner";
     const me = (lbApi() && lbApi().displayName && lbApi().displayName()) || "";
     const isMe =
       me &&
       String(name || "").toUpperCase() === String(me).toUpperCase();
-    if (isMe) return primaryRankId() || (isAccount || isSignedInAccount() ? "vip" : null);
-    if (isAccount) return "vip";
+    if (isMe) return primaryRankId();
+    if (isAccount) return accountRankId(name);
     return null;
   }
 
@@ -15948,7 +15917,7 @@
     const localName = hubLocalName();
     const isAcc = hubLocalIsAccount();
     const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
-    const rankId = resolveNametagRank(localName, isAcc) || (isAcc || isSignedInAccount() ? "vip" : null);
+    const rankId = resolveNametagRank(localName, isAcc);
     const nameW = pixTextWidth(tag) + 4;
     const badgeW = rankId ? rankBadgeWidth(rankId, true) + 2 : 0;
     const lvW = pixTextWidth(String(careerLevel)) + 6;
@@ -21007,7 +20976,6 @@
     });
     drawHubChip("RANKS", ranksX, topY, "hub:ranks", () => {
       uiScreen = "ranks";
-      ranksTab = "ranks";
       srCursor = 0;
     });
     drawHubChip("ACCOUNT", accX, topY, "hub:account", () => {
@@ -21055,7 +21023,7 @@
       const tag = String(localName || "YOU").toUpperCase().slice(0, isAcc ? 8 : 9);
       const nameY = previewY - 40;
       const lvStr = String(careerLevel);
-      const rankId = resolveNametagRank(localName, isAcc) || (isAcc || isSignedInAccount() ? "vip" : null);
+      const rankId = resolveNametagRank(localName, isAcc);
       const nameW = pixTextWidth(tag) + 4;
       const badgeW = rankId ? rankBadgeWidth(rankId, true) + 2 : 0;
       const totalW = badgeW + nameW;
@@ -22071,34 +22039,6 @@
     addMenuHit("prof:esc", x + 8, y + h - 14, 70, 10, () => backToModeMenu(), { hover: true });
   }
 
-  function drawRanksTabSwitchers(x, y, w) {
-    const tabs = [
-      { id: "ranks", label: "RANKS" },
-      { id: "media", label: "MEDIA RANKS" },
-    ];
-    const gap = 3;
-    const tw = ((w - 12 - gap) / 2) | 0;
-    for (let i = 0; i < tabs.length; i++) {
-      const t = tabs[i];
-      const tx = x + 6 + i * (tw + gap);
-      const on = ranksTab === t.id;
-      const hot = !on && menuHovering("rtab:" + t.id);
-      px(tx, y, tw, 11, on ? "#e8c44a" : hot ? "#5c3a21" : "#3a2414");
-      drawPixTextSm(t.label, tx + ((tw / 2) | 0), y + 3, on ? "#2b1c12" : "#c4a574", "center");
-      addMenuHit(
-        "rtab:" + t.id,
-        tx,
-        y,
-        tw,
-        11,
-        () => {
-          ranksTab = t.id;
-        },
-        { hover: true }
-      );
-    }
-  }
-
   function drawRanksScreen() {
     const uiW = canvas.width / SCALE_UI;
     const uiH = canvas.height / SCALE_UI;
@@ -22106,17 +22046,14 @@
     px(0, 0, uiW, uiH, "#0b1a22");
     ctx.globalAlpha = 1;
     const w = 268;
-    const h = Math.min(uiH - 8, 188);
+    const h = Math.min(uiH - 8, 168);
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(2, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, "PLAYER RANKS");
-    drawRanksTabSwitchers(x, y + 18, w);
 
-    const ids =
-      ranksTab === "media"
-        ? ["youtuber", "tiktok", "twitch"]
-        : ["owner", "mvp", "vip"];
-    const listTop = y + 36;
+    const ids = ["owner", "beta", "vip"];
+    const listTop = y + 22;
+    const signed = isSignedInAccount();
     for (let i = 0; i < ids.length; i++) {
       const id = ids[i];
       const def = RANK_DEFS[id];
@@ -22129,35 +22066,13 @@
       const statusX = x + w - 78;
       if (owned) {
         drawPixText("OWNED", statusX, rowY + 12, "#e8c44a");
-      } else if (id === "mvp") {
-        const signed = isSignedInAccount();
-        const key = "rank:buy:mvp";
+      } else if (!signed && (id === "vip" || id === "beta")) {
+        const key = "rank:signin:" + id;
         const hot = menuHovering(key);
-        px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#2a9a8a");
-        drawPixTextSm(signed ? "BUY $4.99" : "SIGN IN", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#e8fff8", "center");
-        addMenuHit(
-          key,
-          statusX - 4,
-          rowY + 8,
-          66,
-          12,
-          () => {
-            if (!isSignedInAccount()) {
-              uiScreen = "account";
-              authMode = "menu";
-              authStatus = "";
-              srCursor = 0;
-              return;
-            }
-            grantMvpRank();
-          },
-          { hover: true }
-        );
-      } else if (id === "vip") {
-        const key = "rank:vip:signin";
-        const hot = menuHovering(key);
-        px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#8a2420");
-        drawPixTextSm("SIGN IN", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#ffd8d0", "center");
+        const btn = id === "beta" ? "#1e9a3a" : "#8a2420";
+        const inkOn = id === "beta" ? "#e9ffe8" : "#ffd8d0";
+        px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : btn);
+        drawPixTextSm("SIGN IN", statusX + 29, rowY + 11, hot ? "#2b1c12" : inkOn, "center");
         addMenuHit(
           key,
           statusX - 4,
@@ -22172,31 +22087,11 @@
           },
           { hover: true }
         );
-      } else if (id === "owner") {
-        drawPixTextSm("LOCKED", statusX + 8, rowY + 12, "#8a6a48");
       } else {
-        // Media ranks — claim note; Henri can self-grant for testing.
-        if (isHenriAccount()) {
-          const key = "rank:grant:" + id;
-          const hot = menuHovering(key);
-          px(statusX - 4, rowY + 8, 66, 12, hot ? "#e8c44a" : "#6441a5");
-          drawPixTextSm("GRANT", statusX + 29, rowY + 11, hot ? "#2b1c12" : "#efe8ff", "center");
-          addMenuHit(
-            key,
-            statusX - 4,
-            rowY + 8,
-            66,
-            12,
-            () => {
-              setMediaRank(id, true);
-            },
-            { hover: true }
-          );
-        } else {
-          drawPixTextSm("MSG HENRI", statusX + 2, rowY + 12, "#8a6a48");
-        }
+        drawPixTextSm("LOCKED", statusX + 8, rowY + 12, "#8a6a48");
       }
     }
+    drawPixTextSm("NO ACCOUNT = GUEST", x + 14, y + h - 22, "#8a6a48");
 
     drawPixText("ESC MENU", x + 10, y + h - 12, "#5c3a21");
     addMenuHit("rank:esc", x + 8, y + h - 14, 70, 10, () => backToModeMenu(), { hover: true });
@@ -22890,14 +22785,6 @@
     if (uiScreen === "ranks") {
       if (k === "escape" || k === "backspace") {
         backToModeMenu();
-        return true;
-      }
-      if (k === "arrowleft" || k === "a") {
-        ranksTab = ranksTab === "media" ? "ranks" : "media";
-        return true;
-      }
-      if (k === "arrowright" || k === "d") {
-        ranksTab = ranksTab === "ranks" ? "media" : "ranks";
         return true;
       }
       return true;
