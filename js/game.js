@@ -4131,6 +4131,26 @@
     if (henriChudFresh && ownsSkin("chud_ball") && playerSkin !== "chud_ball") equipSkin("chud_ball");
   }
 
+  /** Bigmike's account owns Chud Ball without the weekly roll. */
+  function isBigmikeAccount() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return false;
+    const names = [];
+    if (api.displayName) names.push(api.displayName());
+    const user = api.currentUser && api.currentUser();
+    if (user && user.username) names.push(user.username);
+    for (let i = 0; i < names.length; i++) {
+      if (henriAccountNameNorm(names[i]) === "BIGMIKE") return true;
+    }
+    return false;
+  }
+
+  function tryGrantBigmikeChud() {
+    if (!isBigmikeAccount() || ownsSkin("chud_ball")) return;
+    if (!grantSkin("chud_ball")) return;
+    if (playerSkin !== "chud_ball") equipSkin("chud_ball");
+  }
+
   function isSignedInAccount() {
     const api = lbApi();
     return !!(api && api.isSignedIn && api.isSignedIn());
@@ -4713,6 +4733,7 @@
     tryGrantAmericanCloak();
     tryGrantHenriTestPets();
     tryGrantHenriTestSkins();
+    tryGrantBigmikeChud();
     syncLexYoungFromHistory();
     loadCareer();
     backfillCareerFromHistory();
@@ -22521,6 +22542,7 @@
           tryGrantAmericanCloak();
           tryGrantHenriTestPets();
           tryGrantHenriTestSkins();
+          tryGrantBigmikeChud();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
@@ -22535,6 +22557,7 @@
           tryGrantAmericanCloak();
           tryGrantHenriTestPets();
           tryGrantHenriTestSkins();
+          tryGrantBigmikeChud();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
@@ -23004,6 +23027,7 @@
     ensureLaunchSkins();
     syncQuestOwnershipFlags();
     tryGrantHenriTestSkins();
+    tryGrantBigmikeChud();
   }
 
   function accountWorldKey(userId) {
