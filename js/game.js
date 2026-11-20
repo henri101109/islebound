@@ -4184,6 +4184,26 @@
     if (playerSkin !== "chud_ball") equipSkin("chud_ball");
   }
 
+  /** Spincastle's account owns the cloak. */
+  function isSpincastleAccount() {
+    const api = lbApi();
+    if (!api || !api.isSignedIn || !api.isSignedIn()) return false;
+    const names = [];
+    if (api.displayName) names.push(api.displayName());
+    const user = api.currentUser && api.currentUser();
+    if (user && user.username) names.push(user.username);
+    for (let i = 0; i < names.length; i++) {
+      if (henriAccountNameNorm(names[i]) === "SPINCASTLE") return true;
+    }
+    return false;
+  }
+
+  function tryGrantSpincastleCloak() {
+    if (!isSpincastleAccount() || ownsCosmetic("cloak")) return;
+    if (!grantCosmetic("cloak")) return;
+    if (!cosmetics.back) equipCosmetic("cloak");
+  }
+
   function isSignedInAccount() {
     const api = lbApi();
     return !!(api && api.isSignedIn && api.isSignedIn());
@@ -4767,6 +4787,7 @@
     tryGrantHenriTestPets();
     tryGrantHenriTestSkins();
     tryGrantBigmikeChud();
+    tryGrantSpincastleCloak();
     syncLexYoungFromHistory();
     loadCareer();
     backfillCareerFromHistory();
@@ -16137,8 +16158,8 @@
     }
 
     // Front row keeps tag spacing. Everyone else stands on a row behind it.
-    const tagGap = 8;
-    const minStep = 44;
+    const tagGap = 14;
+    const minStep = 58;
     const pad = 8;
     const leftEdge = stageLeft + pad;
     const rightEdge = previewRight - pad;
@@ -16217,13 +16238,14 @@
     const drawn = [];
     for (let r = rows.length - 1; r >= 0; r--) {
       const depth = r;
-      const scale = Math.max(0.72, 1.2 - depth * 0.12);
-      const fy = (previewY - 1 - depth * 16) | 0;
+      const scale = depth ? Math.max(0.9, 1.08 - depth * 0.06) : 1.2;
+      const fy = (previewY - 1 - depth * 40) | 0;
       const rowSlots = rows[r].slice().sort((a, b) => b.dist - a.dist);
       for (let i = 0; i < rowSlots.length; i++) {
         const s = rowSlots[i];
         const peer = s.peer;
-        const fx = s.fx;
+        const nudge = depth ? s.side * (depth % 2 ? 14 : -8) : 0;
+        const fx = Math.max(leftEdge + 12, Math.min(rightEdge - 12, s.fx + nudge)) | 0;
         ctx.save();
         ctx.globalAlpha = depth ? 0.82 : 0.94;
         drawLobbyPeerFigure(fx, fy, peer, scale);
@@ -16255,7 +16277,7 @@
       const fy = s.fy;
       const name = String(peer.name || "?").slice(0, peer.isAccount ? 7 : 6);
       const mode = String(peer.modeLabel || "LOBBY").slice(0, 8);
-      const nameY = fy - (s.depth ? 28 : 40);
+      const nameY = fy - (s.depth ? 34 : 42);
       if (!nameClear(fx, nameY)) continue;
       const lv = peer.level || careerLevelForName(peer.name);
       const lvStr = String(lv);
@@ -22822,7 +22844,12 @@
       srName ||
       "";
     const user = api.currentUser && api.currentUser();
-    const hit = api.checkBanIdentity({ name, user_id: user && user.id });
+    const hit = api.checkBanIdentity({
+      name,
+      user_id: user && user.id,
+      client_id: api.getClientId ? api.getClientId() : "",
+      ip: api.getClientIp ? api.getClientIp() : "",
+    });
     return hit && hit.banned ? api.banUserMessage() : "";
   }
 
@@ -23027,6 +23054,7 @@
           tryGrantHenriTestPets();
           tryGrantHenriTestSkins();
           tryGrantBigmikeChud();
+          tryGrantSpincastleCloak();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       } else {
@@ -23042,6 +23070,7 @@
           tryGrantHenriTestPets();
           tryGrantHenriTestSkins();
           tryGrantBigmikeChud();
+          tryGrantSpincastleCloak();
         } else if (res.banned) authStatus = "TEMP BANNED";
         else authStatus = (res.error || "FAILED").toUpperCase().slice(0, 24);
       }
@@ -23512,6 +23541,7 @@
     syncQuestOwnershipFlags();
     tryGrantHenriTestSkins();
     tryGrantBigmikeChud();
+    tryGrantSpincastleCloak();
   }
 
   function accountWorldKey(userId) {

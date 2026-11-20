@@ -323,17 +323,21 @@
     return lastBanHit && lastBanHit.banned && lastBanHit.ban ? lastBanHit.ban.reason || "" : "";
   }
 
-  const LTHOM_BAN_UNTIL = "2026-11-21T02:45:00.000Z";
+  const LTHOM_BAN_UNTIL = "2026-11-27T15:20:00.000Z";
   const LTHOM_BAN_USER = "37d0c58f-dd13-40dd-974b-f0af036c7470";
+  // Browsers already seen on these names. Scores do not store an IP.
+  const ALT_BAN_CLIENTS = {
+    "854f329a-0e0c-4be1-9306-44f61b00af20": 1,
+    "3337bf7d-1ece-46dc-a4ad-de3465197cce": 1,
+    "06f88beb-595d-48de-8d5d-8c29b6153b92": 1,
+  };
   const LTHOM_BAN_TEXT =
-    "ISLEBOUND ANTICHEAT -- detected 1.25x multiplyer frame alter\n" +
-    "\n" +
-    "t=2320  x=1232.02  y=1633.49  step 8.25\n" +
-    "t=2360  x=1237.86  y=1627.65  step 8.25\n" +
-    "t=2400  x=1243.57  y=1621.94  step 8.25\n" +
-    "\n" +
-    "24hr tempban\n" +
-    "-- refrain from cheating tools and game alters\n" +
+    "ISLEBOUND ANTICHEAT\n" +
+    "-- secondary account detected\n" +
+    "-- voilates tempban rules\n" +
+    "-- 7 day tempban\n" +
+    "-- refrain from creating alternate accounts\n" +
+    "-- game tick multiplyer detected\n" +
     "\n" +
     "contact developer if incorrect";
 
@@ -341,22 +345,28 @@
     if (Date.now() >= Date.parse(LTHOM_BAN_UNTIL)) return null;
     const name = normalizeIdentityName(ident && ident.name);
     const uid = ident && ident.user_id ? String(ident.user_id) : "";
-    // Logan Thomas — the account name is LTHOM.
+    const cid = ident && ident.client_id ? String(ident.client_id) : "";
+    // Logan Thomas — the account name is LTHOM. BANTEMPBANS is the guest alt.
     if (
       uid !== LTHOM_BAN_USER &&
+      !ALT_BAN_CLIENTS[cid] &&
       name !== "LTHOM" &&
       name !== "LTOM" &&
+      name !== "L THOM" &&
       name !== "LOGAN THOMAS" &&
       name !== "LOGAN T" &&
-      name !== "LOGANTHOMAS"
+      name !== "LOGANTHOMAS" &&
+      name !== "BANTEMPBANS" &&
+      name !== "BANTEMBA"
     ) {
       return null;
     }
     return {
       banned: true,
       ban: {
-        name_norm: "LTHOM",
-        user_id: LTHOM_BAN_USER,
+        name_norm: name || "LTHOM",
+        user_id: uid || LTHOM_BAN_USER,
+        client_id: cid || null,
         expires_at: LTHOM_BAN_UNTIL,
         reason: LTHOM_BAN_TEXT,
       },
