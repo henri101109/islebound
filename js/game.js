@@ -528,6 +528,14 @@
   let duelCloudBusy = false;
   let duelReadyResend = 0;
   let duelFinishResend = 0;
+  let duelBeatSeen = 0;
+  let duelBeatAt = 0;
+  let duelMiss = 0;
+  let duelGuestMiss = 0;
+  let duelGuestSince = 0;
+  let duelInserted = false;
+  let duelInserting = false;
+  let duelSawCloud = false;
   const LOGO_FRAMES = 12;
   const LOGO_FRAME_MS = 150;
   const LOGO_POP_MS = 220;
@@ -17838,15 +17846,33 @@
     } catch (e) {}
   }
 
-  function duelBroadcast() {
+  function duelBroadcast(opts) {
     if (!duel || !duelIsHost()) return;
+    // Monotonic host clock. Guests ignore older snapshots and use it as liveness.
+    duel.beat = Date.now();
     duelSend("room", { room: duel });
-    duelCloudPush();
+    duelCloudPush(opts);
   }
 
-  function duelRest(path, opts) {
+  function duelBeatOf(room) {
+    const n = room && typeof room.beat === "number" ? room.beat : Number(room && room.beat);
+    if (!n || n < 0 || n > 8e15) return 0;
+    return n;
+  }
+
+  function duelAckBeat(room) {
+    const beat = duelBeatOf(room);
+    if (beat > duelBeatSeen) {
+      duelBeatSeen = beat;
+      duelBeatAt = Date.now();
+    }
+  }
+
+  function duelRestCall(path, opts) {
     const cfg = window.ISLE_LEADERBOARD || {};
-    if (duelCloudOff || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) return Promise.resolve(null);
+    if (duelCloudOff || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) {
+      return Promise.resolve({ ok: false, status: 0, data: null });
+    }
     const headers = {
       apikey: cfg.SUPABASE_ANON_KEY,
       Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY,
@@ -17865,17 +17891,21 @@
           if (res.status === 404 || detail.indexOf("PGRST205") >= 0) {
             duelCloudOff = true;
           }
-          return null;
+          return { ok: false, status: res.status, data: null };
         }
         const txt = await res.text();
-        if (!txt) return [];
+        if (!txt) return { ok: true, status: res.status, data: [] };
         try {
-          return JSON.parse(txt);
+          return { ok: true, status: res.status, data: JSON.parse(txt) };
         } catch (e) {
-          return [];
+          return { ok: false, status: res.status, data: null };
         }
       })
-      .catch(() => null);
+      .catch(() => ({ ok: false, status: 0, data: null }));
+  }
+
+  function duelRest(path, opts) {
+    return duelRestCall(path, opts).then((res) => (res && res.ok ? res.data : null));
   }
 
   function duelListedFlag(room) {
@@ -17883,60 +17913,106 @@
     return !room.guestId && room.phase !== "done" && room.phase !== "leg" && room.phase !== "rest";
   }
 
+  function duelCloudInsert() {
+    if (duelCloudOff || !duelIsHost() || !duel || duelInserting || duelInserted) return;
+    duelInserting = true;
+    const code = duel.code;
+    const hostId = duel.hostId;
+    duelRestCall("duel_rooms", {
+      method: "POST",
+      prefer: "return=minimal",
+      body: {
+        id: code,
+        host_id: hostId,
+        host_name: duel.hostName || "HOST",
+        guest_id: null,
+        guest_name: null,
+        phase: duel.phase || "wait",
+        listed: duelListedFlag(duel),
+        payload: duel,
+        signal: null,
+        updated_at: new Date().toISOString(),
+      },
+    }).then((res) => {
+      if (duel && duel.code === code) duelInserting = false;
+      if (!duel || !duelIsHost() || duel.code !== code) return;
+      if (res && res.ok) {
+        duelInserted = true;
+        return;
+      }
+      // 409: our first insert landed, or another host already owns this code.
+      if (res && res.status === 409) {
+        duelRest("duel_rooms?id=eq." + encodeURIComponent(code) + "&select=host_id").then((rows) => {
+          if (!duel || !duelIsHost() || duel.code !== code) return;
+          const row = rows && rows[0];
+          if (row && row.host_id === hostId) {
+            duelInserted = true;
+            return;
+          }
+          if (row && row.host_id && row.host_id !== hostId) {
+            duel.code = duelMakeCode();
+            duel.beat = Date.now();
+            duelInserted = false;
+            duelSend("room", { room: duel });
+            duelCloudInsert();
+          }
+        });
+      }
+    });
+  }
+
   function duelCloudPush(opts) {
     if (duelCloudOff || !duelIsHost() || !duel) return;
     const clearGuest = !!(opts && opts.clearGuest);
-    const create = !!(opts && opts.create);
+    // Insert until the row exists. A merge-upsert here would overwrite someone else's room on a code clash.
+    if (!clearGuest && !duelInserted) {
+      duelCloudInsert();
+      return;
+    }
     const body = {
       phase: duel.phase || "wait",
       host_name: duel.hostName || "HOST",
       payload: duel,
       updated_at: new Date().toISOString(),
     };
-    // Never null out guest_id / flip listed=true on a routine heartbeat — that races the guest claim.
+    // Never include guest_id:null on a routine heartbeat — that races the guest claim.
     if (duel.guestId) {
       body.guest_id = duel.guestId;
       body.guest_name = duel.guestName || "GUEST";
       body.listed = false;
-    } else if (clearGuest || create) {
+    } else if (clearGuest) {
       body.guest_id = null;
       body.guest_name = null;
       body.listed = duelListedFlag(duel);
-    } else if (duel.phase === "done" || duel.phase === "leg" || duel.phase === "rest") {
-      body.listed = false;
+    } else {
+      // No guest_id in this patch, so this cannot clobber a claim that just landed.
+      body.listed = duelListedFlag(duel);
     }
-    if (create) {
-      duelRest("duel_rooms?on_conflict=id", {
-        method: "POST",
-        prefer: "resolution=merge-duplicates,return=minimal",
-        body: {
-          id: duel.code,
-          host_id: duel.hostId,
-          host_name: body.host_name,
-          guest_id: null,
-          guest_name: null,
-          phase: body.phase,
-          listed: true,
-          payload: duel,
-          signal: null,
-          updated_at: body.updated_at,
-        },
-      });
-      return;
-    }
-    duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
-      method: "PATCH",
-      prefer: "return=minimal",
-      body: body,
-    });
+    duelRest(
+      "duel_rooms?id=eq." +
+        encodeURIComponent(duel.code) +
+        "&host_id=eq." +
+        encodeURIComponent(duel.hostId),
+      {
+        method: "PATCH",
+        prefer: "return=minimal",
+        body: body,
+      }
+    );
   }
 
   function duelCloudDrop(code) {
     if (duelCloudOff || !code) return;
-    duelRest("duel_rooms?id=eq." + encodeURIComponent(code), {
-      method: "DELETE",
-      prefer: "return=minimal",
-    });
+    duelRest(
+      "duel_rooms?id=eq." +
+        encodeURIComponent(code) +
+        "&host_id=eq." +
+        encodeURIComponent(duelSelfId || ""),
+      {
+        method: "DELETE",
+        prefer: "return=minimal",
+      }
+    );
   }
 
   function duelCloudSignal(msg) {
@@ -17950,6 +18026,7 @@
 
   function duelCloudReleaseClaim(code) {
     if (duelCloudOff || !code || !duelSelfId) return;
+    const inMatch = duel && (duel.phase === "leg" || duel.phase === "rest" || duel.phase === "done");
     duelRest(
       "duel_rooms?id=eq." +
         encodeURIComponent(code) +
@@ -17961,7 +18038,7 @@
         body: {
           guest_id: null,
           guest_name: null,
-          listed: true,
+          listed: !inMatch,
           signal: { type: "leave", from: duelSelfId, code: code, t: Date.now() },
           updated_at: new Date().toISOString(),
         },
@@ -18104,6 +18181,7 @@
       restUntil: 0,
       note: "",
     };
+    duel.beat = Date.now();
     duelStartedToken = -1;
     duelLegLocked = false;
     duelLocalReady = false;
@@ -18113,6 +18191,14 @@
     duelSigSeen = 0;
     duelReadyResend = 0;
     duelFinishResend = 0;
+    duelBeatSeen = 0;
+    duelBeatAt = 0;
+    duelMiss = 0;
+    duelGuestMiss = 0;
+    duelGuestSince = 0;
+    duelInserted = false;
+    duelInserting = false;
+    duelSawCloud = false;
     uiScreen = "duel_room";
     playMode = null;
     srCursor = 0;
@@ -18141,6 +18227,10 @@
     duelLocalReady = false;
     duelLegLocked = false;
     duelStartedToken = -1;
+    duelBeatSeen = 0;
+    duelBeatAt = 0;
+    duelMiss = 0;
+    duelSawCloud = false;
     duelSend("join", { code: c, name: duelMyName() });
     duelCloudJoin(c, duelMyName());
   }
@@ -18164,6 +18254,7 @@
       ready: base.ready && typeof base.ready === "object" ? Object.assign({}, base.ready) : {},
       restUntil: base.restUntil | 0,
       note: base.note || "",
+      beat: duelBeatOf(base),
     };
     if (guestName) {
       room.guestId = duelSelfId;
@@ -18180,6 +18271,8 @@
     room.guestId = duelSelfId;
     if (!room.guestName) room.guestName = duelMyName();
     duel = room;
+    duelAckBeat(room);
+    duelSawCloud = true;
     duelJoinPending = "";
     duelStatus = "";
     duelLocalReady = !!(room.ready && room.ready[duelSelfId]);
@@ -18205,7 +18298,7 @@
     if (duelCloudOff || !code || duelCloudBusy) return;
     duelCloudBusy = true;
     const joinSig = { type: "join", from: duelSelfId, code: code, name: name, t: Date.now() };
-    duelRest("duel_rooms?id=eq." + encodeURIComponent(code) + "&guest_id=is.null", {
+    duelRest("duel_rooms?id=eq." + encodeURIComponent(code) + "&guest_id=is.null&listed=eq.true", {
       method: "PATCH",
       prefer: "return=representation",
       body: {
@@ -18225,13 +18318,16 @@
           duelRest(
             "duel_rooms?id=eq." +
               encodeURIComponent(code) +
-              "&select=id,host_id,host_name,guest_id,guest_name,phase,payload"
+              "&select=id,host_id,host_name,guest_id,guest_name,phase,listed,payload"
           ).then((check) => {
             if (duel || duelJoinPending !== code) return;
-            const row = check && check[0];
+            if (!check) return;
+            const row = check[0];
             if (!row) {
-              duelStatus = "NO ROOM";
-              duelJoinPending = "";
+              if (Date.now() - duelJoinAt > 2000) {
+                duelStatus = "NO ROOM";
+                duelJoinPending = "";
+              }
               return;
             }
             if (row.guest_id && row.guest_id !== duelSelfId) {
@@ -18242,6 +18338,11 @@
             if (row.guest_id === duelSelfId || (row.payload && row.payload.guestId === duelSelfId)) {
               duelEnterAsGuest(duelRoomFromRow(row, name));
               return;
+            }
+            const phase = row.phase || (row.payload && row.payload.phase) || "";
+            if (row.listed === false || phase === "leg" || phase === "rest" || phase === "done") {
+              duelStatus = "ROOM CLOSED";
+              duelJoinPending = "";
             }
             // Still open somehow — retry next tick.
           });
@@ -18277,6 +18378,14 @@
     duelSigSeen = 0;
     duelReadyResend = 0;
     duelFinishResend = 0;
+    duelBeatSeen = 0;
+    duelBeatAt = 0;
+    duelMiss = 0;
+    duelGuestMiss = 0;
+    duelGuestSince = 0;
+    duelInserted = false;
+    duelInserting = false;
+    duelSawCloud = false;
     uiScreen = "duel_home";
     playMode = null;
     srRunning = false;
@@ -18483,9 +18592,15 @@
       room = Object.assign({}, room, { guestId: duelSelfId, guestName: (duel && duel.guestName) || duelMyName() });
     }
     if (room.guestId !== duelSelfId) return;
+    // A dropped host stays dropped. A late snapshot must not pull the guest back into the run.
+    if (duel && duel.note === "HOST LEFT") return;
+    // A slow cloud read must not rewind a leg the host already advanced.
+    const beat = duelBeatOf(room);
+    if (duelBeatSeen && (!beat || beat < duelBeatSeen)) return;
     const prevPhase = duel && duel.phase;
     const prevToken = duel && duel.token;
     duel = room;
+    duelAckBeat(room);
     duelJoinPending = "";
     duelStatus = "";
     if (room.ready && room.ready[duelSelfId]) duelLocalReady = true;
@@ -18539,8 +18654,13 @@
         .slice(0, 12);
       if (name.length < 3) name = "GUEST";
       if (name === duel.hostName) name = (name.slice(0, 10) + " 2").slice(0, 12);
+      const sameGuest = duel.guestId === msg.from;
       duel.guestId = msg.from;
       duel.guestName = name;
+      if (!sameGuest) {
+        duelGuestSince = Date.now();
+        duelGuestMiss = 0;
+      }
       duelBroadcast();
       return;
     }
@@ -18588,18 +18708,18 @@
         duel.guestId = null;
         duel.guestName = "";
         duel.ready = {};
+        duelGuestSince = 0;
+        duelGuestMiss = 0;
         if (mid) {
           duelStuck("OPP LEFT");
-          duelSend("room", { room: duel });
-          duelCloudPush({ clearGuest: true });
+          duelBroadcast({ clearGuest: true });
         } else {
           if (duel.phase === "arm" || duel.phase === "pick") {
             duel.phase = "wait";
             duel.cats = [];
             duel.size = 0;
           }
-          duelSend("room", { room: duel });
-          duelCloudPush({ clearGuest: true });
+          duelBroadcast({ clearGuest: true });
         }
       } else if (!duelIsHost() && msg.from === duel.hostId) {
         duelStuck("HOST LEFT");
@@ -18623,16 +18743,19 @@
     if (duel && !duelIsHost() && duel.code && now - duelGuestBeat > 900) {
       duelGuestBeat = now;
       duelSend("ping", { code: duel.code });
-      // Resend ready/finish until host payload acknowledges — cloud signals can overwrite.
+      // Resend ready/finish until host payload acknowledges — one cloud signal slot, so keep writing it.
       if (duel.phase === "arm" && duelLocalReady && !(duel.ready && duel.ready[duelSelfId])) {
         if (now - duelReadyResend > 900) {
           duelReadyResend = now;
+          duelSend("ready", { code: duel.code });
           duelCloudSignal({ type: "ready", from: duelSelfId, code: duel.code, t: now });
         }
       }
       if (duel.phase === "leg" && duelLegLocked && !(duel.finishes && duel.finishes[duelSelfId])) {
         if (now - duelFinishResend > 900) {
           duelFinishResend = now;
+          const ms = srFinalMs | 0;
+          duelSend("finish", { code: duel.code, leg: duel.leg, token: duel.token, cat: srCat, ms: ms });
           duelCloudSignal({
             type: "finish",
             from: duelSelfId,
@@ -18640,11 +18763,23 @@
             leg: duel.leg,
             token: duel.token,
             cat: srCat,
-            ms: srFinalMs | 0,
+            ms: ms,
             t: now,
           });
         }
       }
+    }
+    if (
+      duel &&
+      !duelIsHost() &&
+      duel.note !== "HOST LEFT" &&
+      duelBeatSeen &&
+      duelBeatAt &&
+      now - duelBeatAt > 12000
+    ) {
+      const gone = duel.code;
+      duelStuck("HOST LEFT");
+      duelCloudReleaseClaim(gone);
     }
     if (now - duelListBeat > 800) {
       duelListBeat = now;
@@ -18695,33 +18830,46 @@
 
   function duelCloudPull() {
     if (duelCloudOff || !duelIsHost() || !duel) return;
+    const code = duel.code;
+    const hostId = duel.hostId;
     duelRest(
       "duel_rooms?id=eq." +
-        encodeURIComponent(duel.code) +
+        encodeURIComponent(code) +
+        "&host_id=eq." +
+        encodeURIComponent(hostId) +
         "&select=signal,guest_id,guest_name"
     ).then((rows) => {
-      const row = rows && rows[0];
+      if (!duel || !duelIsHost() || duel.code !== code) return;
+      if (!rows) return;
+      const row = rows[0];
       if (!row) return;
-      // Absorb a guest claim even if the signal row was overwritten or cleared.
-      if (row.guest_id && !duel.guestId && row.guest_id !== duelSelfId) {
-        duelOnNet({
-          type: "join",
-          from: row.guest_id,
-          code: duel.code,
-          name: row.guest_name || "GUEST",
-          t: Date.now(),
-        });
+      // guest_id is cleared by the guest. Require two reads so a stale response cannot kick them.
+      if (!row.guest_id && duel.guestId) {
+        if (!duelGuestSince || Date.now() - duelGuestSince >= 2500) {
+          duelGuestMiss++;
+          if (duelGuestMiss >= 2) {
+            duelGuestMiss = 0;
+            duelOnNet({ type: "leave", from: duel.guestId, code: code, t: Date.now() });
+          }
+        }
+      } else {
+        duelGuestMiss = 0;
+        if (row.guest_id && !duel.guestId && row.guest_id !== duelSelfId) {
+          duelOnNet({
+            type: "join",
+            from: row.guest_id,
+            code: code,
+            name: row.guest_name || "GUEST",
+            t: Date.now(),
+          });
+        }
       }
       const sig = row.signal;
-      if (!sig || !sig.type) return;
-      const sigT = sig.t | 0;
+      if (!sig || !sig.type || (sig.code && sig.code !== code)) return;
+      // Keep the signal. Nulling it races the guest's next ready/finish write.
+      const sigT = Number(sig.t) || 0;
       if (sigT && sigT <= duelSigSeen) return;
       if (sigT) duelSigSeen = sigT;
-      duelRest("duel_rooms?id=eq." + encodeURIComponent(duel.code), {
-        method: "PATCH",
-        prefer: "return=minimal",
-        body: { signal: null },
-      });
       duelOnNet(sig);
     });
   }
@@ -18734,19 +18882,26 @@
     duelRest(
       "duel_rooms?id=eq." +
         encodeURIComponent(code) +
-        "&select=id,host_id,host_name,guest_id,guest_name,phase,payload,updated_at"
+        "&select=id,host_id,host_name,guest_id,guest_name,phase,listed,payload,updated_at"
     ).then((rows) => {
-      if (!rows || !rows.length) {
-        if (duel && !duelIsHost()) duelStuck("HOST LEFT");
+      const still = (duel && duel.code === code) || duelJoinPending === code;
+      if (!still) return;
+      // null is a failed request. An empty array is a confirmed missing room.
+      if (!rows) return;
+      if (!rows.length) {
+        // Ignore empties until a row has been seen — create can still be inserting.
+        if (duelSawCloud && duel && !duelIsHost() && duel.code === code && duel.note !== "HOST LEFT") {
+          duelMiss++;
+          if (duelMiss >= 2) {
+            duelStuck("HOST LEFT");
+            duelCloudReleaseClaim(code);
+          }
+        }
         return;
       }
+      duelSawCloud = true;
+      duelMiss = 0;
       const row = rows[0];
-      const updated = row.updated_at ? Date.parse(row.updated_at) : 0;
-      if (duel && !duelIsHost() && updated && Date.now() - updated > 8000) {
-        duelStuck("HOST LEFT");
-        duelCloudReleaseClaim(code);
-        return;
-      }
       const room = duelRoomFromRow(row);
       if (!room) return;
       if (duelJoinPending === code && !duel) {
@@ -18756,6 +18911,12 @@
         }
         if (row.guest_id && row.guest_id !== duelSelfId) {
           duelStatus = "ROOM FULL";
+          duelJoinPending = "";
+          return;
+        }
+        const phase = room.phase || "";
+        if (row.listed === false || phase === "leg" || phase === "rest" || phase === "done") {
+          duelStatus = "ROOM CLOSED";
           duelJoinPending = "";
         }
         return;
@@ -18881,7 +19042,7 @@
     if (!duel) return;
     const picking = duel.phase === "pick" && duelIsHost();
     const w = picking ? 250 : 230;
-    const h = picking ? Math.min(uiH - 8, 180) : duel.phase === "arm" ? 224 : 168;
+    const h = Math.min(uiH - 8, picking ? 180 : duel.phase === "arm" ? 224 : 168);
     const x = ((uiW - w) / 2) | 0;
     const y = Math.max(4, ((uiH - h) / 2) | 0);
     drawPanelBox(x, y, w, h, duel.hostName || "DUEL");
@@ -24314,15 +24475,23 @@
     try {
       if (duel && duelIsHost()) {
         duelSend("leave", { code: duel.code });
-        fetch(base + "?id=eq." + encodeURIComponent(duel.code), {
-          method: "DELETE",
-          headers: headers,
-          keepalive: true,
-        }).catch(() => {});
+        fetch(
+          base +
+            "?id=eq." +
+            encodeURIComponent(duel.code) +
+            "&host_id=eq." +
+            encodeURIComponent(duelSelfId || ""),
+          {
+            method: "DELETE",
+            headers: headers,
+            keepalive: true,
+          }
+        ).catch(() => {});
       } else {
         const code = (duel && duel.code) || duelJoinPending;
         if (duel) duelSend("leave", { code: code });
         if (!code) return;
+        const inMatch = duel && (duel.phase === "leg" || duel.phase === "rest" || duel.phase === "done");
         fetch(
           base +
             "?id=eq." +
@@ -24336,7 +24505,7 @@
             body: JSON.stringify({
               guest_id: null,
               guest_name: null,
-              listed: true,
+              listed: !inMatch,
               signal: { type: "leave", from: duelSelfId, code: code, t: Date.now() },
               updated_at: new Date().toISOString(),
             }),
