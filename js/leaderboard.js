@@ -309,7 +309,7 @@
 
   function isBoardHiddenName(name) {
     const n = normalizeIdentityName(name);
-    return n === "LTHOM" || n === "LTOM" || n === "L THOM" || n === "BANTEMPBANS" || n === "BANTEMBA";
+    return n === "LTHOM" || n === "LTOM" || n === "L THOM" || n === "BANTEMPBANS" || n === "BANTEMBA" || n === "MARTIN";
   }
 
   function isVoidScore(row) {

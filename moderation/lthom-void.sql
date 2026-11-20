@@ -2,16 +2,17 @@
 -- The anon key cannot delete. Paste this in the Supabase SQL editor.
 -- To put the runs back, stop hiding the name in js/leaderboard.js
 -- isBoardHiddenName, then reinsert from moderation/lthom-all-runs-restore.json
--- or moderation/bantempbans-runs-restore.json if these deletes have already run.
+-- or moderation/bantempbans-runs-restore.json
+-- or moderation/martin-runs-restore.json if these deletes have already run.
 -- 7-day ban expires 2026-11-27 15:20:00+00.
 -- No IP was stored for either name, so these rows match account, name, and browser id.
 -- 104.28.216.104 is a permanent network ban. It does not expire.
 
 delete from public.speedrun_replays
-where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA');
+where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA', 'MARTIN');
 
 delete from public.speedrun_scores
-where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA')
+where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA', 'MARTIN')
    or user_id = '37d0c58f-dd13-40dd-974b-f0af036c7470';
 
 -- Accidental probe row created while checking delete permission.
