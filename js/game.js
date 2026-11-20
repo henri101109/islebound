@@ -16136,40 +16136,74 @@
       return;
     }
 
-    // A few pixels of air between tag edges. Short names still keep a modest step.
+    // Front row keeps tag spacing. Everyone else stands on a row behind it.
     const tagGap = 8;
     const minStep = 44;
     const pad = 8;
     const leftEdge = stageLeft + pad;
     const rightEdge = previewRight - pad;
     const localHalf = lobbyLocalHalf();
-    const left = [];
-    const right = [];
 
-    function tryPlace(list, peer, side) {
-      if (list.length >= 4) return false;
-      const half = lobbyPeerHalf(peer);
-      const prev = list.length ? list[list.length - 1] : null;
-      const prevDist = prev ? prev.dist : 0;
-      const inner = prev ? prev.dist + prev.half : localHalf;
-      const dist = Math.max(prevDist + minStep, inner + tagGap + half);
-      const fx = stageCx + side * dist;
-      if (fx - half < leftEdge || fx + half > rightEdge) return false;
-      list.push({ peer, side, dist, half, fx: fx | 0 });
-      return true;
+    function placeRow(peers) {
+      const left = [];
+      const right = [];
+      const used = [];
+      function tryPlace(list, peer, side, index) {
+        const half = lobbyPeerHalf(peer);
+        const prev = list.length ? list[list.length - 1] : null;
+        const prevDist = prev ? prev.dist : 0;
+        const inner = prev ? prev.dist + prev.half : localHalf;
+        const dist = Math.max(prevDist + minStep, inner + tagGap + half);
+        const fx = stageCx + side * dist;
+        if (fx - half < leftEdge || fx + half > rightEdge) return false;
+        list.push({ peer, side, dist, half, fx: fx | 0, index });
+        used.push(index);
+        return true;
+      }
+      for (let i = 0; i < peers.length; i++) {
+        const wantLeft = i % 2 === 0;
+        const placed = wantLeft
+          ? tryPlace(left, peers[i], -1, i) || tryPlace(right, peers[i], 1, i)
+          : tryPlace(right, peers[i], 1, i) || tryPlace(left, peers[i], -1, i);
+        if (!placed) break;
+      }
+      const slots = left.concat(right);
+      const rest = [];
+      const taken = {};
+      for (let i = 0; i < used.length; i++) taken[used[i]] = true;
+      for (let i = 0; i < peers.length; i++) if (!taken[i]) rest.push(peers[i]);
+      return { slots, rest };
     }
 
-    for (let i = 0; i < lobbyPeers.length; i++) {
-      const peer = lobbyPeers[i];
-      const wantLeft = i % 2 === 0;
-      const placed = wantLeft
-        ? tryPlace(left, peer, -1) || tryPlace(right, peer, 1)
-        : tryPlace(right, peer, 1) || tryPlace(left, peer, -1);
-      if (!placed) break;
+    const rows = [];
+    let pending = lobbyPeers.slice();
+    while (pending.length && rows.length < 8) {
+      const row = placeRow(pending);
+      if (!row.slots.length) break;
+      rows.push(row.slots);
+      pending = row.rest;
     }
-
-    const slots = left.concat(right);
-    if (!slots.length) {
+    if (pending.length && rows.length) {
+      const cols = rows[0];
+      while (pending.length && rows.length < 12) {
+        const back = [];
+        const n = Math.min(cols.length, pending.length);
+        for (let i = 0; i < n; i++) {
+          const col = cols[i];
+          back.push({
+            peer: pending[i],
+            side: col.side,
+            dist: col.dist,
+            half: col.half,
+            fx: col.fx,
+            index: i,
+          });
+        }
+        rows.push(back);
+        pending = pending.slice(n);
+      }
+    }
+    if (!rows.length) {
       drawPixTextSm(
         lobbyPeerTotal + " ONLINE",
         stageCx,
@@ -16180,44 +16214,59 @@
       return;
     }
 
-    // Draw outer → inner so nearer peers sit cleanly in front of farther ones
-    slots.sort((a, b) => b.dist - a.dist);
+    const drawn = [];
+    for (let r = rows.length - 1; r >= 0; r--) {
+      const depth = r;
+      const scale = Math.max(0.72, 1.2 - depth * 0.12);
+      const fy = (previewY - 1 - depth * 16) | 0;
+      const rowSlots = rows[r].slice().sort((a, b) => b.dist - a.dist);
+      for (let i = 0; i < rowSlots.length; i++) {
+        const s = rowSlots[i];
+        const peer = s.peer;
+        const fx = s.fx;
+        ctx.save();
+        ctx.globalAlpha = depth ? 0.82 : 0.94;
+        drawLobbyPeerFigure(fx, fy, peer, scale);
+        if (peer.pet) {
+          const prevInk = ink;
+          ink = ctx;
+          drawLobbyPet(fx + s.side * 16, fy + 2, peer.pet, scale, -s.side);
+          ink = prevInk;
+        }
+        ctx.restore();
+        drawn.push({ peer, fx, fy, depth });
+      }
+    }
 
-    for (let i = 0; i < slots.length; i++) {
-      const s = slots[i];
+    const takenNames = [];
+    function nameClear(x, y) {
+      for (let i = 0; i < takenNames.length; i++) {
+        const n = takenNames[i];
+        if (Math.abs(n.x - x) < 40 && Math.abs(n.y - y) < 10) return false;
+      }
+      takenNames.push({ x, y });
+      return true;
+    }
+    drawn.sort((a, b) => a.depth - b.depth);
+    for (let i = 0; i < drawn.length; i++) {
+      const s = drawn[i];
       const peer = s.peer;
       const fx = s.fx;
-      const fy = previewY - 1;
-
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      drawLobbyPeerFigure(fx, fy, peer, 1.2);
-      if (peer.pet) {
-        const prevInk = ink;
-        ink = ctx;
-        // Outer side, facing the player, same perch as the local mannequin's pet.
-        drawLobbyPet(fx + s.side * 16, fy + 2, peer.pet, 1.2, -s.side);
-        ink = prevInk;
-      }
-      ctx.restore();
-
+      const fy = s.fy;
       const name = String(peer.name || "?").slice(0, peer.isAccount ? 7 : 6);
       const mode = String(peer.modeLabel || "LOBBY").slice(0, 8);
-      const nameY = fy - 40;
+      const nameY = fy - (s.depth ? 28 : 40);
+      if (!nameClear(fx, nameY)) continue;
       const lv = peer.level || careerLevelForName(peer.name);
       const lvStr = String(lv);
-      drawLevelBadge(lv, (fx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
-      if (peer.isAccount) {
+      if (!s.depth) drawLevelBadge(lv, (fx - (pixTextWidth(lvStr) + 3) / 2) | 0, nameY - 10);
+      if (peer.isAccount && !s.depth) {
         const tag = String(name).toUpperCase();
         drawNameTag(tag, (fx - pixTextWidth(tag) / 2) | 0, nameY);
       } else {
         drawPixTextSm(String(name).toUpperCase(), fx, nameY, "#c4a574", "center");
       }
-      drawPixTextSm(mode, fx, nameY + 10, "#8a6a42", "center");
-    }
-
-    if (lobbyPeerTotal > slots.length) {
-      drawPixTextSm("+" + (lobbyPeerTotal - slots.length), stageCx, previewY - 48, "#8a6a42", "center");
+      if (!s.depth) drawPixTextSm(mode, fx, nameY + 10, "#8a6a42", "center");
     }
   }
 
