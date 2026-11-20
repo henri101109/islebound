@@ -35,6 +35,7 @@
     { x: master.x + 70, y: master.y + RH - 14, w: 42, h: 18, atx: master.x + 91, aty: bot.y + 28 },
     { x: court.x - 2, y: court.y + 78, w: 16, h: 44, atx: master.x + MW - 28, aty: court.y + 100 },
     { x: court.x + 108, y: court.y + RH - 14, w: 44, h: 18, atx: court.x + 130, aty: bot.y + 28 },
+    { x: court.x + 108, y: court.y - 4, w: 44, h: 18, atx: court.x + 130, aty: court.y - 28 },
   ];
   const lockedDoor = { x: locked.x - 4, y: court.y + 74, w: 14, h: 46 };
   const windows = [];
@@ -93,7 +94,7 @@
     let wounds = 0;
     let hitCool = 0;
     let bookWas = false;
-    let doorWas = [false, false, false, false, false];
+    let doorWas = [false, false, false, false, false, false];
     let welcomed = false;
     let fillT = 0;
     let fillX = 0;
@@ -252,6 +253,7 @@
       fill(master.x, master.y, 10, RH, 2);
       fill(court.x, court.y, 10, RH, 2);
       fill(potion.x, potion.y, PW + MW, 10, 2);
+      fill(court.x, court.y, CW, 10, 2);
       fill(potion.x, potion.y + RH - 10, PW + MW + CW, 10, 2);
       fill(locked.x, locked.y, 12, locked.h, 2);
       fill(L - 12, T, 12, left.h, 2);
@@ -464,21 +466,6 @@
           spread: 0.3,
           col: "214,226,255",
           win: true,
-        });
-      }
-      const yards = [70, 150, 220];
-      for (let i = 0; i < yards.length; i++) {
-        const ox = court.x + yards[i];
-        const oy = court.y + 2;
-        const ang = Math.PI / 2 + Math.sin(t * 0.25 + i) * 0.05;
-        rays.push({
-          x: ox,
-          y: oy,
-          ang: ang,
-          len: clearLen(ox, oy, ang, 190),
-          spread: 0.48,
-          col: "168,190,230",
-          win: false,
         });
       }
       return rays;
@@ -1191,7 +1178,7 @@
       welcomed = true;
       alertT = 0;
       bookWas = false;
-      doorWas = [false, false, false, false, false];
+      doorWas = [false, false, false, false, false, false];
       fillT = 0;
       buildGuards();
       if (A.setScene) A.setScene("salt");
@@ -1455,6 +1442,122 @@
       A.px(s.x + 1, s.y + 2, 1, 1, "#fff6d0");
     }
 
+    let basin = null;
+
+    function courtShades() {
+      const shades = [];
+      for (let i = 0; i < columns.length; i++) {
+        const c = columns[i];
+        shades.push({ x: c.x + c.w / 2 + 1, y: c.y + c.h / 2 + 4, rx: 16, ry: 10 });
+      }
+      shades.push({ x: fountain.x + 2, y: fountain.y + 8, rx: 32, ry: 15 });
+      const f = feet();
+      if (inBox(f.x, f.y, court)) shades.push({ x: f.x, y: f.y + 1, rx: 11, ry: 6 });
+      for (let i = 0; i < guards.length; i++) {
+        const g = guards[i];
+        if (!inBox(g.x, g.y, court)) continue;
+        shades.push({ x: g.x + 1, y: g.y + 2, rx: 12, ry: 6 });
+      }
+      return shades;
+    }
+
+    function drawFountain(cam) {
+      const R = 16;
+      const S = R * 2 + 1;
+      if (!basin) {
+        basin = document.createElement("canvas");
+        basin.width = S;
+        basin.height = S;
+      }
+      const bctx = basin.getContext("2d");
+      const img = bctx.createImageData(S, S);
+      const d = img.data;
+      const t = A.time();
+      const drift = t * 2.6;
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          const dx = x - R;
+          const dy = y - R;
+          const dist = Math.hypot(dx, dy);
+          if (dist > R) continue;
+          const ripple =
+            Math.sin(dx * 0.62 + drift) +
+            Math.sin(dy * 0.9 - drift * 0.85) +
+            Math.sin(dist * 0.72 - drift * 1.4);
+          const crest = Math.sin(dist * 0.58 - drift * 1.7);
+          let r = 18;
+          let g = 78;
+          let b = 118;
+          if (ripple > 1.25 || crest > 0.82) {
+            r = 226;
+            g = 250;
+            b = 255;
+          } else if (ripple > 0.35) {
+            r = 118;
+            g = 210;
+            b = 236;
+          } else if (ripple > -0.5) {
+            r = 32;
+            g = 128;
+            b = 176;
+          }
+          if (dist > R - 2.2 && ripple < 1.1) {
+            r = (r * 0.62) | 0;
+            g = (g * 0.66) | 0;
+            b = (b * 0.74) | 0;
+          }
+          const i = (y * S + x) * 4;
+          d[i] = r;
+          d[i + 1] = g;
+          d[i + 2] = b;
+          d[i + 3] = 255;
+        }
+      }
+      bctx.putImageData(img, 0, 0);
+      const s = screen(cam, fountain.x - R, fountain.y - R);
+      const c = A.ctx();
+      const prev = c.imageSmoothingEnabled;
+      c.imageSmoothingEnabled = false;
+      c.drawImage(basin, s.x, s.y);
+      c.imageSmoothingEnabled = prev;
+      for (let a = 0; a < 12; a++) {
+        const ang = (a / 12) * Math.PI * 2;
+        const stone = screen(cam, fountain.x + Math.cos(ang) * 24 - 1, fountain.y + Math.sin(ang) * 16 - 1);
+        A.px(stone.x, stone.y, 3, 3, "#968c84");
+      }
+    }
+
+    function drawPoolWash(cam, x, y, phase) {
+      const c = A.ctx();
+      const s = screen(cam, x, y);
+      const pulse = 0.72 + Math.sin(A.time() * 2.5 + (phase || 0)) * 0.28;
+      c.save();
+      c.globalCompositeOperation = "lighter";
+      const rad = 30;
+      const grad = c.createRadialGradient(s.x, s.y, 3, s.x, s.y, rad);
+      grad.addColorStop(0, "rgba(198, 250, 255," + (0.5 * pulse).toFixed(3) + ")");
+      grad.addColorStop(0.42, "rgba(70, 186, 220," + (0.2 * pulse).toFixed(3) + ")");
+      grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+      c.fillStyle = grad;
+      c.beginPath();
+      c.arc(s.x, s.y, rad, 0, Math.PI * 2);
+      c.fill();
+      c.restore();
+    }
+
+    function drawFountainGlints(cam) {
+      const t = A.time();
+      for (let i = 0; i < 3; i++) {
+        const ang = t * 1.35 + i * 2.2;
+        const rad = 4 + i * 3;
+        const gx = fountain.x + Math.cos(ang) * rad;
+        const gy = fountain.y + Math.sin(ang * 1.15) * (rad * 0.62);
+        if (Math.hypot(gx - fountain.x, gy - fountain.y) > 14) continue;
+        const s = screen(cam, gx, gy);
+        A.px(s.x, s.y, i === 0 ? 2 : 1, 1, i === 1 ? "#9ee8ff" : "#f4feff");
+      }
+    }
+
     function drawFront(cam) {
       if (!isScene()) return;
       const t = A.time();
@@ -1494,16 +1597,27 @@
       A.px(bub.x, bub.y, 2, 2, "#d8c878");
       A.px(bub.x + 6, bub.y + 2, 2, 2, "#8ec8a0");
       drawSleeper(cam);
-      const glow = screen(cam, RETURN.x, RETURN.y + ((Math.sin(t * 3) * 1) | 0));
-      const c = A.ctx();
-      c.save();
-      c.globalAlpha = 0.85;
-      A.px(glow.x - 4, glow.y - 3, 8, 6, "#b48cff");
-      c.restore();
+      const portal = screen(cam, RETURN.x, RETURN.y + ((Math.sin(t * 3) * 1) | 0));
+      A.px(portal.x - 5, portal.y - 3, 10, 7, "#7ad4f0");
+      A.px(portal.x - 3, portal.y - 2, 6, 4, "#e8fbff");
+      A.px(portal.x - 1, portal.y - 1, 2, 2, "#ffffff");
       for (let i = 0; i < guards.length; i++) drawGuard(cam, guards[i]);
+      drawFountain(cam);
       const rays = moonRays();
       for (let i = 0; i < guards.length; i++) rays.push(wandRay(guards[i]));
-      if (A.light) A.light(cam, { rays: rays, torches: TORCHES });
+      if (A.light) {
+        A.light(cam, {
+          rays: rays,
+          torches: TORCHES,
+          court: court,
+          shades: courtShades(),
+          glow: { x: fountain.x, y: fountain.y - 1, r: 48, pulse: 0.78 + Math.sin(t * 2.5) * 0.22 },
+          portal: { x: RETURN.x, y: RETURN.y, r: 48, pulse: 0.78 + Math.sin(t * 2.5 + 1.4) * 0.22 },
+        });
+      }
+      drawPoolWash(cam, fountain.x, fountain.y, 0);
+      drawPoolWash(cam, RETURN.x, RETURN.y, 1.4);
+      drawFountainGlints(cam);
       for (let i = 0; i < TORCHES.length; i++) drawTorch(cam, TORCHES[i], i);
       for (let i = 0; i < guards.length; i++) {
         const g = guards[i];

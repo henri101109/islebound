@@ -15623,7 +15623,101 @@
     }
   }
 
-  /* SALTCROWN — night cones and torch stamps for the west wing. */
+  /* SALTCROWN — night fill, courtyard moonlight, and torch stamps for the west wing. */
+  function paintCourtMoon(g, cpos, court) {
+    if (!court) return;
+    const spill = 52;
+    const x = court.x - cpos.x;
+    const y = court.y - spill - cpos.y;
+    const rw = court.w;
+    const rh = court.h + spill;
+    g.save();
+    g.beginPath();
+    g.rect(x, y, rw, rh);
+    g.clip();
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    const cx = court.x + court.w * 0.5 - cpos.x;
+    const cy = court.y + court.h * 0.46 - cpos.y;
+    const outer = Math.max(court.w, court.h) * 0.78;
+    const grad = g.createRadialGradient(cx, cy, outer * 0.5, cx, cy, outer);
+    grad.addColorStop(0, "rgb(176, 186, 206)");
+    grad.addColorStop(0.72, "rgb(162, 172, 194)");
+    grad.addColorStop(0.9, "rgb(128, 136, 158)");
+    grad.addColorStop(1, "rgb(108, 116, 140)");
+    g.fillStyle = grad;
+    g.fillRect(x, y, rw, rh);
+    const south = y + rh;
+    const edge = g.createLinearGradient(0, south - 26, 0, south);
+    edge.addColorStop(0, "rgba(10, 12, 20, 0)");
+    edge.addColorStop(1, "rgba(10, 12, 20, 0.8)");
+    g.fillStyle = edge;
+    g.fillRect(x, south - 26, rw, 26);
+    const west = g.createLinearGradient(x, 0, x + 22, 0);
+    west.addColorStop(0, "rgba(10, 12, 20, 0.72)");
+    west.addColorStop(1, "rgba(10, 12, 20, 0)");
+    g.fillStyle = west;
+    g.fillRect(x, y + spill, 22, court.h);
+    const eastX = x + rw;
+    const east = g.createLinearGradient(eastX - 22, 0, eastX, 0);
+    east.addColorStop(0, "rgba(10, 12, 20, 0)");
+    east.addColorStop(1, "rgba(10, 12, 20, 0.72)");
+    g.fillStyle = east;
+    g.fillRect(eastX - 22, y + spill, 22, court.h);
+    g.restore();
+  }
+
+  function paintCourtShades(g, cpos, court, shades) {
+    if (!court) return;
+    const spill = 52;
+    const x = court.x - cpos.x;
+    const y = court.y - spill - cpos.y;
+    g.save();
+    g.beginPath();
+    g.rect(x, y, court.w, court.h + spill);
+    g.clip();
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    const list = shades || [];
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const rx = s.rx || 12;
+      const ry = s.ry || 7;
+      g.save();
+      g.translate(s.x - cpos.x, s.y - cpos.y);
+      g.scale(1, ry / rx);
+      const shade = g.createRadialGradient(0, 0, rx * 0.08, 0, 0, rx);
+      shade.addColorStop(0, "rgba(8, 10, 16, 0.92)");
+      shade.addColorStop(0.42, "rgba(12, 14, 22, 0.62)");
+      shade.addColorStop(1, "rgba(12, 14, 22, 0)");
+      g.fillStyle = shade;
+      g.beginPath();
+      g.arc(0, 0, rx, 0, Math.PI * 2);
+      g.fill();
+      g.restore();
+    }
+    g.restore();
+  }
+
+  function paintFountainGlow(g, cpos, glow) {
+    if (!glow) return;
+    const sx = glow.x - cpos.x;
+    const sy = glow.y - cpos.y;
+    const rad = glow.r || 44;
+    const pulse = glow.pulse == null ? 1 : glow.pulse;
+    const grad = g.createRadialGradient(sx, sy, 2, sx, sy, rad);
+    grad.addColorStop(0, "rgba(214, 252, 255," + (0.9 * pulse) + ")");
+    grad.addColorStop(0.28, "rgba(110, 210, 235," + (0.55 * pulse) + ")");
+    grad.addColorStop(0.62, "rgba(40, 130, 170," + (0.2 * pulse) + ")");
+    grad.addColorStop(1, "rgba(20, 70, 100, 0)");
+    g.globalCompositeOperation = "lighter";
+    g.globalAlpha = 1;
+    g.fillStyle = grad;
+    g.beginPath();
+    g.arc(sx, sy, rad, 0, Math.PI * 2);
+    g.fill();
+  }
+
   function drawSaltLight(cpos, spec) {
     if (!cpos || !spec) return;
     ensureGlows();
@@ -15636,6 +15730,7 @@
     g.globalAlpha = 1;
     g.fillStyle = "rgb(108, 116, 140)";
     g.fillRect(0, 0, w, h);
+    paintCourtMoon(g, cpos, spec.court);
     g.globalCompositeOperation = "lighter";
     const rays = spec.rays || [];
     for (let i = 0; i < rays.length; i++) {
@@ -15666,6 +15761,10 @@
       g.globalAlpha = flick;
       stampGlow(glowLamp, torches[i].x, torches[i].y, cpos);
     }
+    g.globalAlpha = 1;
+    paintCourtShades(g, cpos, spec.court, spec.shades);
+    paintFountainGlow(g, cpos, spec.glow);
+    paintFountainGlow(g, cpos, spec.portal);
     g.globalAlpha = 1;
     g.globalCompositeOperation = "source-over";
     ctx.save();
