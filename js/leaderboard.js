@@ -373,8 +373,39 @@
     };
   }
 
+  const NETWORK_BAN_IPS = {
+    "104.28.216.104": 1,
+  };
+  const NETWORK_BAN_TEXT =
+    "ISLEBOUND ANTICHEAT\n" +
+    "-- network banned\n" +
+    "-- no play and no accounts\n" +
+    "\n" +
+    "contact developer if incorrect";
+
+  function networkBanHit(ident) {
+    const ip = String((ident && ident.ip) || clientIp || "").trim();
+    if (!NETWORK_BAN_IPS[ip]) return null;
+    return {
+      banned: true,
+      ban: {
+        ip: ip,
+        expires_at: null,
+        reason: NETWORK_BAN_TEXT,
+      },
+    };
+  }
+
+  function isNetworkBanned() {
+    return !!NETWORK_BAN_IPS[String(clientIp || "").trim()];
+  }
+
+  function networkBanText() {
+    return isNetworkBanned() ? NETWORK_BAN_TEXT : "";
+  }
+
   function checkBanIdentity(ident) {
-    const hit = lthomBanHit(ident || {});
+    const hit = networkBanHit(ident || {}) || lthomBanHit(ident || {});
     lastBanHit = hit || { banned: false };
     return lastBanHit;
   }
@@ -3488,6 +3519,9 @@
     }
   }
 
+  // Read the public IP before the first frame so a network ban can lock the game.
+  refreshClientIp();
+
   // Restore session first so the initial heartbeat includes username + user_id.
   Promise.resolve(initAuth())
     .catch(() => {})
@@ -3685,6 +3719,8 @@
     submitScore,
     validateReplaySteps,
     checkBanIdentity,
+    isNetworkBanned,
+    networkBanText,
     getBanStatus,
     banUserMessage,
     applyCheatBan,

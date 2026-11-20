@@ -5,6 +5,7 @@
 -- or moderation/bantempbans-runs-restore.json if these deletes have already run.
 -- 7-day ban expires 2026-11-27 15:20:00+00.
 -- No IP was stored for either name, so these rows match account, name, and browser id.
+-- 104.28.216.104 is a permanent network ban. It does not expire.
 
 delete from public.speedrun_replays
 where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA');
@@ -16,6 +17,18 @@ where upper(trim(player_name)) in ('LTHOM', 'LTOM', 'BANTEMPBANS', 'BANTEMBA')
 -- Accidental probe row created while checking delete permission.
 delete from public.speedrun_scores
 where id = 834 and player_name = 'ZZZRESTORE';
+
+insert into public.player_bans (ip, match_mode, expires_at, reason)
+select
+  '104.28.216.104',
+  'ip',
+  null,
+  E'ISLEBOUND ANTICHEAT\n-- network banned\n-- no play and no accounts\n\ncontact developer if incorrect'
+where not exists (
+  select 1 from public.player_bans
+  where ip = '104.28.216.104'
+    and (expires_at is null or expires_at > now())
+);
 
 insert into public.player_bans (name_norm, user_id, client_id, match_mode, expires_at, reason)
 select

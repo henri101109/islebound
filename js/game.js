@@ -23921,7 +23921,29 @@
   }
 
   let last = performance.now();
+  function drawNetworkBan(text) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#140e0a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+    const lines = String(text || "NETWORK BANNED").split("\n");
+    const uiW = canvas.width / SCALE_UI;
+    const uiH = canvas.height / SCALE_UI;
+    const y0 = ((uiH - lines.length * 10) / 2) | 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]) drawPixText(lines[i], (uiW / 2) | 0, y0 + i * 10, "#f2e2c4", "center");
+    }
+    ctx.restore();
+  }
+
   function loop(now) {
+    const netApi = lbApi();
+    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
+      drawNetworkBan(netApi.networkBanText ? netApi.networkBanText() : "");
+      requestAnimationFrame(loop);
+      return;
+    }
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     time = now / 1000;
@@ -24020,6 +24042,11 @@
   }
 
   window.addEventListener("keydown", (e) => {
+    const netApi = lbApi();
+    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
+      e.preventDefault();
+      return;
+    }
     const k = e.key.toLowerCase();
     keys[k] = true;
     ensureAudio();
@@ -24303,6 +24330,11 @@
   });
 
   canvas.addEventListener("mousedown", (e) => {
+    const netApi = lbApi();
+    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
+      e.preventDefault();
+      return;
+    }
     if (e.button !== 0) return;
     ensureAudio();
     const p = eventToUi(e);
