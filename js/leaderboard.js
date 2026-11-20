@@ -63,6 +63,8 @@
     angler_fish: { id: "angler_fish", label: "ANGLER%" },
     storm_fish: { id: "storm_fish", label: "STORM%" },
     hammerhead: { id: "hammerhead", label: "HAMMER%" },
+    love_potion: { id: "love_potion", label: "LOVE%" },
+    clone_potion: { id: "clone_potion", label: "CLONE%" },
   };
 
   /** Replay validation removed — always accept. */

@@ -55,7 +55,7 @@ create policy "Insert speedrun_scores guests or accounts"
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
       'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech',
-      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead'
+      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead','love_potion','clone_potion'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -112,7 +112,7 @@ alter table public.speedrun_prs add constraint speedrun_prs_category_check check
   category in (
     'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
     'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech',
-    'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead'
+    'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead','love_potion','clone_potion'
   )
 );
 alter table public.speedrun_prs enable row level security;
@@ -207,7 +207,7 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
       'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech',
-      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead'
+      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead','love_potion','clone_potion'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -298,7 +298,7 @@ create policy "Insert speedrun_scores guests or accounts"
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
       'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech',
-      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead'
+      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead','love_potion','clone_potion'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12
@@ -333,7 +333,7 @@ create policy "Public insert speedrun_replays" on public.speedrun_replays for in
     category in (
       'shark','jelly_white','chest','death','boat','full_inv','shark_cloak',
       'serpent','blowfish','megalodon','coins_10','coins_25','coins_100','mask','waterfall_eel','portal_leech',
-      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead'
+      'kings_race','full_kings','trip','egypt_cat','blue_crab','angler_fish','storm_fish','hammerhead','love_potion','clone_potion'
     )
     and time_ms > 0
     and char_length(player_name) between 3 and 12

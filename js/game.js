@@ -460,6 +460,8 @@
     "angler_fish",
     "storm_fish",
     "hammerhead",
+    "love_potion",
+    "clone_potion",
   ];
   /** Category-screen groups. Every SPEED_ORDER id is in exactly one. */
   const SPEED_GROUPS = [
@@ -489,7 +491,7 @@
     {
       id: "adventure",
       label: "ADVENTURE",
-      cats: ["mask", "serpent"],
+      cats: ["mask", "serpent", "love_potion", "clone_potion"],
     },
     {
       id: "race",
@@ -937,6 +939,8 @@
     angler_fish: 3.5,
     storm_fish: 4.2,
     hammerhead: 3.3,
+    love_potion: 3.4,
+    clone_potion: 4.6,
   };
   /** Soft target times (ms) used when no board WR is cached. */
   const CAT_SOFT_WR = {
@@ -962,6 +966,8 @@
     angler_fish: 200000,
     storm_fish: 260000,
     hammerhead: 160000,
+    love_potion: 180000,
+    clone_potion: 280000,
   };
   let careerXp = 0;
   let careerLevel = 1;
@@ -19739,7 +19745,13 @@
     if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
     if (srCat === "coins_10" && player.coins >= 10) finishSpeedrun();
     else if (srCat === "coins_25" && player.coins >= 25) finishSpeedrun();
-    else if (srCat === "coins_100" && player.coins >= 100) finishSpeedrun();
+    else     if (srCat === "coins_100" && player.coins >= 100) finishSpeedrun();
+  }
+
+  function checkPotionSpeedEnd() {
+    if (!speedrunActive() || !srTiming || uiScreen === "finish") return;
+    if (srCat === "love_potion" && saltHasItem("potion_love")) finishSpeedrun();
+    else if (srCat === "clone_potion" && saltHasItem("potion_clone")) finishSpeedrun();
   }
 
   function finishLexYoungQuest(equip) {
@@ -20119,8 +20131,15 @@
     srCat = cat;
     pinSurvivalWorld();
     playMode = "speedrun";
+    if (salt && salt.isSpeedCat && !salt.isSpeedCat(cat)) leaveSaltSpeed();
     resetSpeedrunWorld();
     if (rome && rome.isSpeedCat(cat)) rome.prepareSpeed(cat);
+    if (salt && salt.isSpeedCat && salt.isSpeedCat(cat)) {
+      salt.prepareSpeed(cat);
+      camera.x = player.x + player.w / 2 - viewW / 2;
+      camera.y = player.y + player.h / 2 - viewH * 0.36;
+      clampCamera();
+    }
     uiScreen = "ready";
     srCursor = 0;
     srStatus = "";
@@ -20203,6 +20222,16 @@
     backToModeMenu();
   }
 
+  function leaveSaltSpeed() {
+    if (!salt || !salt.inSpeed || !salt.inSpeed()) return;
+    salt.endSpeed();
+    scene = "island";
+    player.x = spawnX;
+    player.y = spawnY;
+    player.aboard = false;
+    aboardKind = null;
+  }
+
   function backToModeMenu() {
     if (serpent) endSerpentFight("flee");
     bumpReplayPlayGen();
@@ -20220,6 +20249,7 @@
         saveGame();
       } catch (e) {}
     }
+    leaveSaltSpeed();
     playMode = null;
     uiScreen = "mode";
     srCursor = restoreCursor;
@@ -20255,6 +20285,7 @@
   }
 
   function backToCategories() {
+    leaveSaltSpeed();
     bumpReplayPlayGen();
     clearReplayPlayback();
     replayCutT = 0;
@@ -22457,6 +22488,15 @@
       drawCoinIcon(x, y);
       return;
     }
+    if (id === "love_potion" || id === "clone_potion") {
+      const glass = id === "love_potion" ? "#e07098" : "#7a5ad0";
+      const core = id === "love_potion" ? "#ffb0c8" : "#c8b0ff";
+      px(x + 3, y, 2, 1, "#f3e2c4");
+      px(x + 2, y + 1, 4, 1, "#c4a574");
+      px(x + 2, y + 2, 4, 5, glass);
+      px(x + 3, y + 3, 2, 3, core);
+      return;
+    }
     if (id === "kings_race" || id === "full_kings") {
       px(x + 1, y + 1, 1, 2, "#c9a227");
       px(x + 3, y, 1, 2, "#e8c44a");
@@ -23703,6 +23743,7 @@
     if (scene === "vein" && vein) vein.update(dt);
     if (rome) rome.update(dt);
     if (salt) salt.update(dt); /* SALTCROWN */
+    checkPotionSpeedEnd();
     updateDive(dt);
     updateMaskGoal();
     if (srTiming) captureReplayFrame(false);
@@ -24407,6 +24448,10 @@
       light: (cpos, spec) => drawSaltLight(cpos, spec),
       wearingMask: () => cosmetics.face === "jade_mask" || saltHasItem("jade_mask"),
       speedMode: () => playMode === "speedrun",
+      speedLive: () => playMode !== "speedrun" || srTiming,
+      setScene: (s) => {
+        scene = s;
+      },
       aboard: () => player.aboard && aboardKind === "skiff",
       setAboard: (on) => {
         player.aboard = !!on;

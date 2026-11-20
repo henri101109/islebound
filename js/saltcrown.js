@@ -99,8 +99,39 @@
     let fillX = 0;
     let fillY = 0;
     let moonPull = false;
+    let speedRun = false;
+    let speedHold = null;
 
     const state = load();
+
+    function freshWing() {
+      return {
+        hairTaken: 0,
+        flaskTaken: 0,
+        lovePetals: 0,
+        loveWater: 0,
+        loveDone: 0,
+        cloneHair: 0,
+        cloneChai: 0,
+        cloneWater: 0,
+        cloneDone: 0,
+        roseAt: 0,
+        chaiAt: 0,
+        seen: 1,
+        recipe: "",
+      };
+    }
+
+    function copyState(src) {
+      const blank = freshWing();
+      Object.keys(blank).forEach(function (k) {
+        state[k] = src && src[k] != null ? src[k] : blank[k];
+      });
+    }
+
+    function speedFrozen() {
+      return !!(speedRun && A.speedLive && !A.speedLive());
+    }
 
     function load() {
       const blank = {
@@ -146,6 +177,7 @@
     }
 
     function save() {
+      if (speedRun) return;
       try {
         localStorage.setItem(SAVE, JSON.stringify(state));
       } catch (e) {}
@@ -813,7 +845,10 @@
 
     function potUse() {
       const id = heldId();
-      if (!state.recipe || (state.recipe === "clone" && id !== HAIR && id !== CHAI && id !== FLASK_FULL && id !== FLASK_EMPTY)) {
+      if (
+        !speedRun &&
+        (!state.recipe || (state.recipe === "clone" && id !== HAIR && id !== CHAI && id !== FLASK_FULL && id !== FLASK_EMPTY))
+      ) {
         state.recipe = "love";
         save();
         return "LOVE POTION. FOLLOW THE LIST";
@@ -916,7 +951,7 @@
     }
 
     function watchReturn() {
-      if (A.fading() || grace > 0 || A.player.dead > 0) return;
+      if (speedRun || A.fading() || grace > 0 || A.player.dead > 0) return;
       if (!nearReturn()) return;
       grace = 1;
       const back = beachExit();
@@ -1100,13 +1135,14 @@
         return "";
       }
       if (!isScene()) return "";
+      if (speedFrozen()) return "MOVE TO START";
       const f = feet();
       if (Math.hypot(f.x - (lockedDoor.x + 8), f.y - (lockedDoor.y + 20)) < 36) return "THIS DOOR STAYS SHUT";
       return stationPrompt(nearestStation());
     }
 
     function interact() {
-      if (!isScene() || A.playBlocked()) return false;
+      if (!isScene() || A.playBlocked() || speedFrozen()) return false;
       const k = nearestStation();
       if (!k) return false;
       if (k === "well") script = fillFlask();
@@ -1116,11 +1152,15 @@
     }
 
     function onKey(k) {
-      if (!isScene()) return false;
+      if (!isScene() || speedFrozen()) return false;
       if (k !== "y" || A.player.dead > 0) return false;
       const f = feet();
       const p = potCenter();
       if (Math.hypot(f.x - p.x, f.y - p.y) > 60) return false;
+      if (speedRun && state.recipe === "love") {
+        script = "THIS RUN IS THE LOVE POTION";
+        return true;
+      }
       state.recipe = "clone";
       save();
       script = "CLONE POTION. FOLLOW THE LIST";
@@ -1133,6 +1173,46 @@
 
     function holdEnter() {
       return fillT > 0;
+    }
+
+    function isSpeedCat(cat) {
+      return cat === "love_potion" || cat === "clone_potion";
+    }
+
+    function prepareSpeed(cat) {
+      if (!isSpeedCat(cat)) return;
+      if (!speedRun) speedHold = JSON.parse(JSON.stringify(state));
+      speedRun = true;
+      copyState(freshWing());
+      state.recipe = cat === "love_potion" ? "love" : "clone";
+      wounds = 0;
+      grace = 0.6;
+      script = "";
+      welcomed = true;
+      alertT = 0;
+      bookWas = false;
+      doorWas = [false, false, false, false, false];
+      fillT = 0;
+      buildGuards();
+      if (A.setScene) A.setScene("salt");
+      A.player.x = SPAWN.x;
+      A.player.y = SPAWN.y;
+      A.player.facing = 1;
+      A.player.dead = 0;
+      A.player.moving = false;
+    }
+
+    function endSpeed() {
+      if (!speedRun) return;
+      speedRun = false;
+      if (speedHold) {
+        copyState(speedHold);
+        speedHold = null;
+      }
+      wounds = 0;
+      script = "";
+      alertT = 0;
+      fillT = 0;
     }
 
     function arrive(sc) {
@@ -1574,6 +1654,12 @@
       drawGate: drawGate,
       ashoreAt: ashoreAt,
       respawn: respawn,
+      isSpeedCat: isSpeedCat,
+      inSpeed: function () {
+        return speedRun;
+      },
+      prepareSpeed: prepareSpeed,
+      endSpeed: endSpeed,
     };
   }
 
