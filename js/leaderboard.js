@@ -307,8 +307,16 @@
     return false;
   }
 
-  function isBoardHiddenName() {
-    return false;
+  function isBoardHiddenName(name) {
+    const n = normalizeIdentityName(name);
+    return n === "LTHOM" || n === "LTOM" || n === "L THOM";
+  }
+
+  function isVoidScore(row) {
+    if (!row) return false;
+    if (isBoardHiddenName(row.player_name)) return true;
+    if (row.user_id && String(row.user_id) === LTHOM_BAN_USER) return true;
+    return isVoidRun(row.run_id);
   }
 
   function banUserMessage() {
@@ -796,7 +804,7 @@
     const ids = identities || identityCache.rows || [];
     const enriched = list
       .map((r) => enrichRowIdentity(normalizeScoreRow(r), ids))
-      .filter((r) => !isBoardHiddenName(r.player_name) && !isVoidRun(r.run_id));
+      .filter((r) => !isVoidScore(r));
     enriched.sort((a, b) => (a.time_ms | 0) - (b.time_ms | 0));
     const lim = Math.max(1, Math.min(25, limit | 0 || enriched.length));
     return enriched.slice(0, lim);
@@ -1071,7 +1079,7 @@
       if (!raw) return null;
       const data = JSON.parse(raw);
       if (!data || !Array.isArray(data.frames) || !data.frames.length) return null;
-      if (isVoidRun(data.run_id)) return null;
+      if (isBoardHiddenName(data.player_name) || isVoidRun(data.run_id)) return null;
       return data;
     } catch (e) {
       return null;
@@ -1118,7 +1126,7 @@
   }
 
   function replayFromRow(row) {
-    if (!row || isVoidRun(row.run_id) || !Array.isArray(row.frames) || !row.frames.length) return null;
+    if (!row || isVoidScore(row) || !Array.isArray(row.frames) || !row.frames.length) return null;
     return {
       v: 1,
       run_id: row.run_id,
