@@ -91,6 +91,7 @@
   let presenceHasMode = true; // false if mode/category columns missing
   let presenceHasHub = true; // false if hub pose columns missing
   let presenceHasSkin = true; // false if skin_id column missing on players_online
+  let presenceHasPet = true; // false if pet_id column missing on players_online
   let onlineCount = null; // null = unknown / unavailable
   let totalPlayerCount = null; // all-time unique IPs (null = unknown / table missing)
   let ipsAvailable = true; // false if player_ips table missing
@@ -100,7 +101,7 @@
   let presenceActivity = { mode: "menu", category: null }; // set by game
   let hubPresencePose = null; // { x,y,face,face_id,back_id,emote } while in hub
   /** Always-on loadout published with presence (menu/survival/hub). */
-  let presenceLoadout = { face_id: null, back_id: null, skin_id: null };
+  let presenceLoadout = { face_id: null, back_id: null, skin_id: null, pet_id: null };
   const LOADOUT_CACHE_KEY = "islebound-loadout-cache";
   let dailyClaimsAvailable = true;
   const DAILY_CLAIMS = "daily_claims";
@@ -309,11 +310,52 @@
   }
 
   function banUserMessage() {
-    return "";
+    return lastBanHit && lastBanHit.banned && lastBanHit.ban ? lastBanHit.ban.reason || "" : "";
   }
 
-  function checkBanIdentity() {
-    lastBanHit = { banned: false };
+  const LTHOM_BAN_UNTIL = "2026-11-21T02:45:00.000Z";
+  const LTHOM_BAN_USER = "37d0c58f-dd13-40dd-974b-f0af036c7470";
+  const LTHOM_BAN_TEXT =
+    "ISLEBOUND ANTICHEAT -- detected 1.25x multiplyer frame alter\n" +
+    "\n" +
+    "t=2320  x=1232.02  y=1633.49  step 8.25\n" +
+    "t=2360  x=1237.86  y=1627.65  step 8.25\n" +
+    "t=2400  x=1243.57  y=1621.94  step 8.25\n" +
+    "\n" +
+    "24hr tempban\n" +
+    "-- refrain from cheating tools and game alters\n" +
+    "\n" +
+    "contact developer if incorrect";
+
+  function lthomBanHit(ident) {
+    if (Date.now() >= Date.parse(LTHOM_BAN_UNTIL)) return null;
+    const name = normalizeIdentityName(ident && ident.name);
+    const uid = ident && ident.user_id ? String(ident.user_id) : "";
+    // Logan Thomas — the account name is LTHOM.
+    if (
+      uid !== LTHOM_BAN_USER &&
+      name !== "LTHOM" &&
+      name !== "LTOM" &&
+      name !== "LOGAN THOMAS" &&
+      name !== "LOGAN T" &&
+      name !== "LOGANTHOMAS"
+    ) {
+      return null;
+    }
+    return {
+      banned: true,
+      ban: {
+        name_norm: "LTHOM",
+        user_id: LTHOM_BAN_USER,
+        expires_at: LTHOM_BAN_UNTIL,
+        reason: LTHOM_BAN_TEXT,
+      },
+    };
+  }
+
+  function checkBanIdentity(ident) {
+    const hit = lthomBanHit(ident || {});
+    lastBanHit = hit || { banned: false };
     return lastBanHit;
   }
 
@@ -409,8 +451,10 @@
     bansInsertOk = false;
   }
 
-  function banBlockResult() {
-    return { ok: true, banned: false };
+  function banBlockResult(hit) {
+    const ban = (hit && hit.ban) || (lastBanHit && lastBanHit.ban) || null;
+    if (!ban) return { ok: true, banned: false };
+    return { ok: false, banned: true, error: ban.reason || "TEMP BANNED", until: ban.expires_at || null };
   }
 
   function nameTokens(name) {
@@ -672,6 +716,74 @@
     return r;
   }
 
+  // Frame-alter runs pulled off the board. Put one back by deleting its id.
+  // Full rows live in moderation/lthom-frame-alter-restore.json.
+  const VOID_RUN_IDS = {
+    "b85f6417-40ca-40d0-ad83-a7e00b2838ad": 1,
+    "519c89e1-7a4c-4fbe-a22a-c95b6f5bfc83": 1,
+    "d881fc91-fe17-46da-8b9f-01a4feda2a00": 1,
+    "8b1f4930-2ddb-4041-adf3-344f06809dd8": 1,
+    "7f3174f8-d796-426e-ace1-2bc91f3abafe": 1,
+    "82b8ee0b-876f-4b58-99c9-876ed79d7900": 1,
+    "8a0b715f-c09d-4131-88ae-6413d952200f": 1,
+    "649893b8-7f86-452c-a59a-b278e65eab75": 1,
+    "413fb37a-aef6-4c04-a35e-105dd1dca3f3": 1,
+    "e6d19474-662d-4523-9b8e-8a616f99093b": 1,
+    "dc2a643f-b0be-4741-9ff2-c9fb3e787a25": 1,
+    "93f75ae9-6b01-42d6-87be-1e79c5b54eda": 1,
+    "60396e5a-6589-4ebf-b74f-09dd69d9923e": 1,
+    "f37f9bcc-70db-43c2-ad38-204c4bd04554": 1,
+    "2c241d74-5cbc-4f06-98a6-d23c950cada0": 1,
+    "ea37ed3c-f490-44d5-80d0-f62094e94aec": 1,
+    "438c2fd2-696a-4593-bd26-7e86e0404ff7": 1,
+    "0c901e40-2c6c-4029-94c1-068b8267d4d7": 1,
+    "24ec0c72-12e5-4d90-a9fe-40a9a2feb371": 1,
+    "83b0f6a6-95b9-4540-bd53-a57ee59a9525": 1,
+    "5cfb23e8-3dcb-4574-8b4a-eb1b86c6bce5": 1,
+    "c3024179-81c9-420f-aa28-e279d756313d": 1,
+    "7e2c8078-3576-4cc1-9bc8-ea4764116baf": 1,
+    "91887fb9-538f-4770-99ae-27f1f72e0a3c": 1,
+    "89f76704-1dc6-4187-8490-daa61b276416": 1,
+    "7c2d3eb6-292b-484a-a2fb-3b50dc2e0e15": 1,
+    "81713b40-df4a-4b37-9a58-1b18829a5faf": 1,
+    "860571c5-a14d-490e-ad7c-b65b5e5f2ad1": 1,
+    "e4b155b7-c9f9-4701-b4d7-cf9b0155682b": 1,
+    "6035d258-8047-48be-abea-b08f77edb1ee": 1,
+    "a5b3b8d4-02e0-4078-90a9-cd1221f6c2b0": 1,
+    "28628530-e797-461b-a932-548a7f7cd355": 1,
+    "d76bc8b1-07d1-4958-98bc-cca2d3909e26": 1,
+    "6a685252-2538-4262-b7bb-b3537fc50731": 1,
+    "06c8c81f-245e-4c1e-818a-80648332c452": 1,
+    "62611674-4196-46e7-accd-19dfb0c2a534": 1,
+    "d043a5a5-8a34-4a3a-855b-0e75b112daed": 1,
+    "5e453e64-adde-4f94-a7b4-2c19a79032dd": 1,
+    "6841b59f-bc36-406b-af56-bd2d3b09988a": 1,
+    "d490456d-d97e-4606-b5b0-ffa668e9bb2a": 1,
+    "eaffaebc-fb4b-4d0e-b0dc-774e298bfcb3": 1,
+    "622971c3-9399-4ec7-a82a-64d6a3260d60": 1,
+    "739281b7-21c3-4679-afa7-25573c0a519a": 1,
+    "e030f7df-ca17-4f83-b3d9-6df034d8dd0d": 1,
+    "d9b26885-3367-45ee-adf3-3571761e41c0": 1,
+    "60fafbeb-8fff-4f2b-9ac4-16d84684eb2f": 1,
+    "637feb89-f639-4b35-9b93-d9b16d872cb2": 1,
+    "cc6219f5-64a9-4d08-a471-fef89e9dcd8f": 1,
+    "6f714e5f-06d1-4539-beb2-66dbd33cf90f": 1,
+    "16602498-7d3b-44c4-8790-f2c4863b7a58": 1,
+    "0b94e360-dad8-4725-b051-9ea632e3b6bf": 1,
+    "d4ba1e71-5666-4610-be2a-18417770122c": 1,
+    "fa025cb9-0bb6-4207-a130-aeaeb5721fcf": 1,
+    "e2a23086-a5d5-476f-8df3-fbcb956dc0fa": 1,
+    "4df441ac-7615-40f8-a2cf-b304d91b74e4": 1,
+    "8d3a1379-c1e6-4306-977e-dfc9143129ee": 1,
+    "6c3e67d8-0eca-463f-8fcb-5fba7a2cdf16": 1,
+    "0f2206f9-2587-4831-81cf-74afd7a014f9": 1,
+    "dbc07ae7-d59f-4461-94e6-a13dee949bd0": 1,
+    "95cb0faa-0719-4584-8a91-2aecb51e8aec": 1,
+  };
+  function isVoidRun(id) {
+    return !!(id && VOID_RUN_IDS[String(id)]);
+  }
+
   /**
    * Enrich board rows with account identity (display name + is_account styling)
    * via fuzzy name match. Does NOT collapse multiple runs from the same person —
@@ -682,7 +794,7 @@
     const ids = identities || identityCache.rows || [];
     const enriched = list
       .map((r) => enrichRowIdentity(normalizeScoreRow(r), ids))
-      .filter((r) => !isBoardHiddenName(r.player_name));
+      .filter((r) => !isBoardHiddenName(r.player_name) && !isVoidRun(r.run_id));
     enriched.sort((a, b) => (a.time_ms | 0) - (b.time_ms | 0));
     const lim = Math.max(1, Math.min(25, limit | 0 || enriched.length));
     return enriched.slice(0, lim);
@@ -957,6 +1069,7 @@
       if (!raw) return null;
       const data = JSON.parse(raw);
       if (!data || !Array.isArray(data.frames) || !data.frames.length) return null;
+      if (isVoidRun(data.run_id)) return null;
       return data;
     } catch (e) {
       return null;
@@ -1003,7 +1116,7 @@
   }
 
   function replayFromRow(row) {
-    if (!row || !Array.isArray(row.frames) || !row.frames.length) return null;
+    if (!row || isVoidRun(row.run_id) || !Array.isArray(row.frames) || !row.frames.length) return null;
     return {
       v: 1,
       run_id: row.run_id,
@@ -1262,6 +1375,13 @@
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
     const ms = timeMs | 0;
     if (ms <= 0) return { ok: false, error: "bad time" };
+    const banHit = checkBanIdentity({
+      name,
+      user_id: resolved.user_id || (session && session.user && session.user.id) || null,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+    if (banHit.banned) return banBlockResult(banHit);
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     setLastName(name);
     if (!configured()) {
@@ -1347,6 +1467,8 @@
   }
 
   async function submitScoreLegacy(category, ms, name) {
+    const banHit = checkBanIdentity({ name, client_id: getClientId(), ip: clientIp });
+    if (banHit.banned) return banBlockResult(banHit);
     try {
       const res = await fetch(restBase() + "/" + TABLE, {
         method: "POST",
@@ -2591,13 +2713,14 @@
 
   function setPresenceLoadout(lo) {
     if (!lo) {
-      presenceLoadout = { face_id: null, back_id: null, skin_id: null };
+      presenceLoadout = { face_id: null, back_id: null, skin_id: null, pet_id: null };
       return;
     }
     presenceLoadout = {
       face_id: lo.face_id ? String(lo.face_id).slice(0, 24) : null,
       back_id: lo.back_id ? String(lo.back_id).slice(0, 24) : null,
       skin_id: lo.skin_id ? String(lo.skin_id).slice(0, 24) : null,
+      pet_id: lo.pet_id ? String(lo.pet_id).slice(0, 24) : null,
     };
     const me = displayName() || getLastName() || "";
     if (me) {
@@ -2605,6 +2728,7 @@
         skin: presenceLoadout.skin_id,
         face: presenceLoadout.face_id,
         back: presenceLoadout.back_id,
+        pet: presenceLoadout.pet_id,
       });
     }
   }
@@ -2635,6 +2759,7 @@
       skin: patch.skin != null ? patch.skin || null : prev.skin || null,
       face: patch.face !== undefined ? patch.face || null : prev.face || null,
       back: patch.back !== undefined ? patch.back || null : prev.back || null,
+      pet: patch.pet !== undefined ? patch.pet || null : prev.pet || null,
       at: Date.now(),
     };
     map[n] = next;
@@ -2649,6 +2774,73 @@
         });
     }
     saveLoadoutCache(map);
+  }
+
+  /** Equipped pet from public profiles.locker, keyed by username. */
+  let lobbyPetAvailable = true;
+  const lobbyPetCache = Object.create(null);
+
+  function getLobbyPet(name) {
+    const n = sanitizeName(name, true);
+    if (!n || !lobbyPetCache[n]) return undefined;
+    return lobbyPetCache[n].pet || null;
+  }
+
+  async function refreshLobbyPets(rows) {
+    if (!configured() || !lobbyPetAvailable) return;
+    const now = Date.now();
+    const want = [];
+    const seen = Object.create(null);
+    for (let i = 0; i < (rows || []).length; i++) {
+      const p = rows[i];
+      if (!p || !p.username || !p.user_id) continue;
+      const n = sanitizeName(p.username, true);
+      if (!n || seen[n]) continue;
+      seen[n] = 1;
+      if (p.pet_id) {
+        lobbyPetCache[n] = { pet: String(p.pet_id), at: now };
+        continue;
+      }
+      if (p.pet_id === null) continue;
+      const hit = lobbyPetCache[n];
+      if (hit && now - hit.at < 20000) continue;
+      want.push(n);
+    }
+    if (!want.length) return;
+    const quoted = want.map((n) => '"' + n.replace(/"/g, "") + '"').join(",");
+    const url =
+      restBase() +
+      "/profiles?select=display_name,equippedPet:locker-%3E%3EequippedPet&display_name=in.(" +
+      encodeURIComponent(quoted) +
+      ")";
+    try {
+      const res = await fetch(url, { headers: anonHeaders() });
+      if (!res.ok) {
+        let err = null;
+        try {
+          err = await res.json();
+        } catch (e) {}
+        const detail = String(presenceErrorDetail(res, err) || "").toLowerCase();
+        if (detail.indexOf("locker") >= 0 && (detail.indexOf("column") >= 0 || detail.indexOf("42703") >= 0)) {
+          lobbyPetAvailable = false;
+        }
+        return;
+      }
+      const data = await res.json();
+      const found = Object.create(null);
+      if (Array.isArray(data)) {
+        for (let i = 0; i < data.length; i++) {
+          const row = data[i];
+          const n = sanitizeName(row && row.display_name, true);
+          if (!n) continue;
+          lobbyPetCache[n] = { pet: row.equippedPet ? String(row.equippedPet) : null, at: now };
+          found[n] = 1;
+        }
+      }
+      for (let i = 0; i < want.length; i++) {
+        if (!found[want[i]]) lobbyPetCache[want[i]] = { pet: null, at: now };
+      }
+    } catch (e) {}
   }
 
   function getCachedLoadout(name) {
@@ -2673,6 +2865,24 @@
         d.indexOf("back_id") >= 0 ||
         d.indexOf("emote") >= 0 ||
         d.indexOf("in_hub") >= 0) &&
+      (raw.indexOf("PGRST204") >= 0 ||
+        d.indexOf("pgrst204") >= 0 ||
+        d.indexOf("42703") >= 0 ||
+        d.indexOf("column") >= 0 ||
+        d.indexOf("schema cache") >= 0 ||
+        d.indexOf("does not exist") >= 0 ||
+        status === 400)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function presenceLooksMissingPet(status, detail) {
+    const raw = String(detail || "");
+    const d = raw.toLowerCase();
+    if (
+      d.indexOf("pet_id") >= 0 &&
       (raw.indexOf("PGRST204") >= 0 ||
         d.indexOf("pgrst204") >= 0 ||
         d.indexOf("42703") >= 0 ||
@@ -2766,6 +2976,9 @@
       if (presenceHasSkin) {
         body.skin_id = presenceLoadout.skin_id || null;
       }
+      if (presenceHasPet) {
+        body.pet_id = presenceLoadout.pet_id || null;
+      }
       if (hubPresencePose) {
         body.in_hub = true;
         body.hub_x = hubPresencePose.x;
@@ -2785,7 +2998,11 @@
       // Soft-drop missing optional columns and retry.
       for (let attempt = 0; attempt < 6 && !res.ok; attempt++) {
         let retried = false;
-        if (body.skin_id != null && presenceLooksMissingSkin(res.status, detail)) {
+        if ("pet_id" in body && presenceLooksMissingPet(res.status, detail)) {
+          presenceHasPet = false;
+          delete body.pet_id;
+          retried = true;
+        } else if (body.skin_id != null && presenceLooksMissingSkin(res.status, detail)) {
           presenceHasSkin = false;
           delete body.skin_id;
           retried = true;
@@ -2804,6 +3021,7 @@
           delete body.back_id;
           delete body.emote;
           delete body.skin_id;
+          delete body.pet_id;
           retried = true;
         } else if (body.user_id && presenceLooksMissingUserId(res.status, detail)) {
           presenceHasUserId = false;
@@ -2829,6 +3047,7 @@
           delete body.back_id;
           delete body.emote;
           delete body.skin_id;
+          delete body.pet_id;
           retried = true;
         }
         if (!retried) break;
@@ -2858,6 +3077,7 @@
     if (presenceHasMode) cols += ",mode,category";
     if (presenceHasHub) cols += ",in_hub,hub_x,hub_y,hub_face,face_id,back_id,emote";
     if (presenceHasHub && presenceHasSkin) cols += ",skin_id";
+    if (presenceHasHub && presenceHasPet) cols += ",pet_id";
     return cols;
   }
 
@@ -2882,6 +3102,11 @@
         } catch (e) {}
         const detail = presenceErrorDetail(res, err);
         // Missing optional columns → drop and retry (do NOT kill presence).
+        // pet_id is newer than the other columns, so drop it before any blanket 400 handler.
+        if (presenceHasPet && presenceLooksMissingPet(res.status, detail)) {
+          presenceHasPet = false;
+          return fetchOnlinePresence();
+        }
         if (presenceHasMode && (presenceLooksMissingMode(res.status, detail) || res.status === 400)) {
           presenceHasMode = false;
           return fetchOnlinePresence();
@@ -2919,16 +3144,25 @@
         face_id: r && r.face_id ? String(r.face_id) : null,
         back_id: r && r.back_id ? String(r.back_id) : null,
         skin_id: r && r.skin_id ? String(r.skin_id) : null,
+        pet_id:
+          r && Object.prototype.hasOwnProperty.call(r, "pet_id")
+            ? r.pet_id
+              ? String(r.pet_id)
+              : null
+            : undefined,
         emote: r && r.emote ? String(r.emote) : "",
       }));
       for (let i = 0; i < onlinePresence.length; i++) {
         const p = onlinePresence[i];
         if (!p || !p.username) continue;
-        if (p.skin_id || p.face_id || p.back_id) {
-          rememberLoadout(p.username, { skin: p.skin_id, face: p.face_id, back: p.back_id });
+        if (p.skin_id || p.face_id || p.back_id || p.pet_id !== undefined) {
+          const patch = { skin: p.skin_id, face: p.face_id, back: p.back_id };
+          if (p.pet_id !== undefined) patch.pet = p.pet_id;
+          rememberLoadout(p.username, patch);
         }
       }
       onlineCount = onlinePresence.length;
+      await refreshLobbyPets(onlinePresence);
       return onlineCount;
     } catch (e) {
       return onlineCount;
@@ -3464,6 +3698,7 @@
     setPresenceLoadout,
     rememberLoadout,
     getCachedLoadout,
+    getLobbyPet,
     hubPresenceSupported,
     claimDailyIdol,
     getDailyClaimLocal,

@@ -9,6 +9,8 @@ alter table public.players_online add column if not exists hub_y integer;
 alter table public.players_online add column if not exists hub_face integer;
 alter table public.players_online add column if not exists face_id text;
 alter table public.players_online add column if not exists back_id text;
+alter table public.players_online add column if not exists skin_id text;
+alter table public.players_online add column if not exists pet_id text;
 alter table public.players_online add column if not exists emote text;
 
 -- ========== Account-bound daily idol claims (UTC calendar day) ==========

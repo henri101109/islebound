@@ -78,6 +78,13 @@
     potion_mend: { name: "Mend draught", max: 6, xp: 6 },
     potion_fly: { name: "Sky draught", max: 4, xp: 10 },
     potion_mystery: { name: "Mystery draught", max: 4, xp: 12 },
+    rose_petal: { name: "Rose petals", max: 16, xp: 2 },
+    chai_leaf: { name: "Chai leaf", max: 16, xp: 2 },
+    master_hair: { name: "Master's hair", max: 1, xp: 4 },
+    flask_empty: { name: "Empty flask", max: 1, xp: 0 },
+    flask_full: { name: "Full flask", max: 1, xp: 0 },
+    potion_love: { name: "Love potion", max: 4, xp: 8 },
+    potion_clone: { name: "Clone potion", max: 4, xp: 8 },
     vein_gem: { name: "Vein gem", max: 24, xp: 22 },
     mountain_heart: { name: "Heart of the Mountain", max: 8, xp: 100 },
     key_bronze: { name: "Bronze key", max: 1, xp: 5 },
@@ -401,6 +408,7 @@
   let dockExit = null;
   /** Designated skiff slip at the finger-pier tip: { x, y, w, h, face }. */
   let boatBerth = null;
+  let saltIsle = null; /* SALTCROWN */
   /** T-head deck at the end of the finger pier (where Enter drops you off). */
   let boatBerthDeck = null;
   /** Blocks walk-on auto-board after hopping off the berth (old magnet was yanking you back). */
@@ -1070,6 +1078,13 @@
    * Local curated lists for now.
    */
   const WHATS_NEW = [
+    {
+      kind: "update",
+      id: "castle",
+      title: "CASTLE",
+      blurb: "BETA V5.0",
+      detail: "WEST WING PORTAL",
+    },
     {
       kind: "weekly",
       id: "weekly_roll",
@@ -3768,6 +3783,10 @@
           player.x = cp.x;
           player.y = cp.y;
           if (vein.lockCam) vein.lockCam();
+        } else if (scene === "salt" && salt && salt.respawn) { /* SALTCROWN */
+          const sp = salt.respawn();
+          player.x = sp.x;
+          player.y = sp.y;
         } else {
           player.x = spawnX;
           player.y = spawnY;
@@ -6526,6 +6545,27 @@
     }
   }
 
+  /* SALTCROWN — door and bookcase. */
+  function playSaltWood(kind) {
+    ensureAudio();
+    if (!audioCtx) return;
+    const st = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    osc.type = "triangle";
+    const hi = kind === "book" ? 240 : 150;
+    const lo = kind === "book" ? 70 : 52;
+    osc.frequency.setValueAtTime(hi, st);
+    osc.frequency.exponentialRampToValueAtTime(lo, st + 0.2);
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.0001, st);
+    g.gain.exponentialRampToValueAtTime(0.05, st + 0.016);
+    g.gain.exponentialRampToValueAtTime(0.0001, st + 0.22);
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+    osc.start(st);
+    osc.stop(st + 0.24);
+  }
+
   function tileAtWorld(px, py) {
     const c = Math.floor(px / TILE);
     const r = Math.floor(py / TILE);
@@ -7754,10 +7794,28 @@
     return true;
   }
 
+  function trySaltAshore() {
+    if (!salt || !salt.ashoreAt || aboardKind === "dinghy" || !ownedBoat || scene !== "island") return false;
+    const spot = salt.ashoreAt(ownedBoat.x + ownedBoat.w / 2, ownedBoat.y + ownedBoat.h / 2);
+    if (!spot) return false;
+    player.aboard = false;
+    aboardKind = null;
+    player.x = spot.x;
+    player.y = spot.y;
+    player.inWater = false;
+    player.submerged = 0;
+    player.moving = false;
+    ownedBoat.landed = true;
+    ownedBoat.docked = false;
+    boatBoardCool = 1.2;
+    return true;
+  }
+
   function onEnter() {
     if (player.dead > 0) return;
     // Dinghy exit / skiff → T-head. Always first so nothing else eats Enter.
     if (player.aboard && aboardKind === "dinghy" && exitDinghy()) return;
+    if (player.aboard && trySaltAshore()) return; /* SALTCROWN */
     if (player.aboard && exitBoatToDockT()) return;
     // Cosmetics equip only in the locker menu — not in-game.
     if (isIndoor()) {
@@ -7772,6 +7830,7 @@
 
   function tryTradeKey() {
     if (player.dead > 0 || fadeMode) return;
+    if (salt && salt.interact()) return; /* SALTCROWN */
     if (tryCabinChestTrade()) return;
     const mid = playerCenter();
     if (tryHarborDeal()) return;
@@ -8325,6 +8384,11 @@
     if (cosSelect) return;
     const stack = inventory[heldSlot];
     if (!stack) return;
+    if (salt && salt.blockDrop && salt.blockDrop(stack.id)) {
+      cosTip = "FINISH THE POTION FIRST";
+      cosTipT = 1.4;
+      return;
+    }
     // Cosmetics live in the locker — never drop from the bag.
     if (isCosmeticId(stack.id)) {
       grantCosmetic(stack.id);
@@ -12003,6 +12067,16 @@
     islandSolids.length = 0;
     keepouts.length = 0;
     walkPads.push(pier, finger, berthDeck, boatA, rowA, rowB, ramp, moorDeck, moorPlank, subPad);
+    /* SALTCROWN — tiny ocean isle, 50 tiles left of the dock. */
+    {
+      const iw = 58;
+      const ih = 40;
+      let ix = (pier.x + pier.w / 2 - 50 * TILE - iw / 2) | 0;
+      if (ix < 16) ix = 16;
+      const shore = restShoreY(ix + iw / 2);
+      saltIsle = { x: ix, y: shore + 24, w: iw, h: ih };
+      walkPads.push(saltIsle);
+    }
     walkPads.push({ x: door.x - 4, y: door.y, w: door.w + 8, h: pier.y + pier.h - door.y });
     walkPads.push({ x: hutDoor.x - 3, y: hutDoor.y, w: hutDoor.w + 6, h: pier.y + pier.h - hutDoor.y });
     islandSolids.push({ x: shop.x, y: shop.y, w: shop.w, h: shop.h - 10 });
@@ -12283,7 +12357,8 @@
       next.scene === "floor" ||
       next.scene === "wreck" ||
       next.scene === "vein" ||
-      (rome && rome.isScene(next.scene))
+      (rome && rome.isScene(next.scene)) ||
+      (salt && salt.isScene(next.scene)) /* SALTCROWN */
         ? 1
         : -1;
     if (
@@ -12294,11 +12369,13 @@
       next.scene === "floor" ||
       next.scene === "wreck" ||
       next.scene === "vein" ||
-      (rome && rome.isScene(next.scene))
+      (rome && rome.isScene(next.scene)) ||
+      (salt && salt.isScene(next.scene)) /* SALTCROWN */
     ) {
       player.aboard = false;
     }
     if (rome && rome.isScene(next.scene)) rome.onEnter(next.scene);
+    if (salt) salt.arrive(next.scene); /* SALTCROWN */
     if (next.scene === "floor") scatterFloorSharks();
     if (next.scene === "vein") {
       ensureVein();
@@ -14240,6 +14317,8 @@
     if (id === "potion_slow") return "#7a3a9a";
     if (id === "potion_mend") return "#3ecf7a";
     if (id === "potion_fly") return "#7ec8ff";
+    if (id === "potion_love") return "#e05098";
+    if (id === "potion_clone") return "#3ecf7a";
     if (id === "potion_mystery") {
       const cols = ["#e85ad4", "#44e0c0", "#ffe14a", "#ff5a2a", "#7a4bff"];
       return cols[((time * 4) | 0) % cols.length];
@@ -14259,6 +14338,23 @@
       px(sx + 6, sy + 8, 12, 6, c2);
       px(sx + 10, sy + 14, 4, 2, "#1a8a86");
       px(sx + 10, sy + 10, 4, 2, "#e8ffff");
+    } else if (id === "rose_petal") {
+      px(sx + 8, sy + 10, 2, 6, "#2a4a28");
+      px(sx + 6, sy + 6, 4, 4, "#a02838");
+      px(sx + 11, sy + 7, 4, 4, "#c43848");
+    } else if (id === "chai_leaf") {
+      px(sx + 10, sy + 6, 2, 8, "#2a4a28");
+      px(sx + 6, sy + 8, 5, 3, "#3e8a40");
+      px(sx + 12, sy + 7, 5, 3, "#5aaa52");
+    } else if (id === "master_hair") {
+      px(sx + 8, sy + 6, 1, 10, "#3a2418");
+      px(sx + 11, sy + 5, 1, 11, "#2a1810");
+      px(sx + 14, sy + 7, 1, 8, "#4a3020");
+    } else if (id === "flask_empty" || id === "flask_full") {
+      px(sx + 10, sy + 4, 4, 2, "#d0d8e0");
+      px(sx + 8, sy + 6, 8, 10, "#c8d0d8");
+      if (id === "flask_full") px(sx + 9, sy + 9, 6, 6, "#7eb8c4");
+      px(sx + 10, sy + 2, 4, 3, "#e8eef4");
     } else if (String(id).indexOf("potion_") === 0) {
       const fill = potionFill(id);
       px(sx + 10, sy + 4, 4, 2, "#d0d8e0");
@@ -14360,6 +14456,22 @@
       px(-3, 5, 6, 2, "#8a6a18");
       px(-2, -3, 2, 2, "#fff3c0");
       px(0, -1, 2, 5, "#fff1a8");
+    } else if (id === "rose_petal") {
+      px(-2, 0, 2, 6, "#2a4a28");
+      px(-4, -4, 4, 4, "#a02838");
+      px(1, -3, 4, 4, "#c43848");
+    } else if (id === "chai_leaf") {
+      px(0, -4, 2, 8, "#2a4a28");
+      px(-4, -2, 5, 3, "#3e8a40");
+      px(2, -3, 5, 3, "#5aaa52");
+    } else if (id === "master_hair") {
+      px(-2, -5, 1, 10, "#3a2418");
+      px(1, -6, 1, 11, "#2a1810");
+      px(4, -4, 1, 8, "#4a3020");
+    } else if (id === "flask_empty" || id === "flask_full") {
+      px(-1, -10, 3, 2, "#e8eef4");
+      px(-3, -8, 7, 10, "#c8d0d8");
+      if (id === "flask_full") px(-2, -4, 5, 5, "#7eb8c4");
     } else if (String(id).indexOf("potion_") === 0) {
       px(-1, -10, 3, 2, "#e8eef4");
       px(-3, -8, 7, 10, "#c8d0d8");
@@ -15474,6 +15586,57 @@
       ctx.fillRect(0, 0, viewW, viewH);
       ctx.restore();
     }
+  }
+
+  /* SALTCROWN — night cones and torch stamps for the west wing. */
+  function drawSaltLight(cpos, spec) {
+    if (!cpos || !spec) return;
+    ensureGlows();
+    ensureLightCanvas();
+    const g = lightCtx;
+    const w = lightCanvas.width;
+    const h = lightCanvas.height;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = "source-over";
+    g.globalAlpha = 1;
+    g.fillStyle = "rgb(108, 116, 140)";
+    g.fillRect(0, 0, w, h);
+    g.globalCompositeOperation = "lighter";
+    const rays = spec.rays || [];
+    for (let i = 0; i < rays.length; i++) {
+      const r = rays[i];
+      const len = r.len || 8;
+      const sx = r.x - cpos.x;
+      const sy = r.y - cpos.y;
+      if (sx < -len || sy < -len || sx > w + len || sy > h + len) continue;
+      g.save();
+      g.translate(sx, sy);
+      g.rotate(r.ang || 0);
+      const grad = g.createRadialGradient(0, 0, 2, 0, 0, len);
+      const col = r.col || "210,220,255";
+      grad.addColorStop(0, "rgba(" + col + ",0.95)");
+      grad.addColorStop(0.42, "rgba(" + col + ",0.4)");
+      grad.addColorStop(1, "rgba(" + col + ",0)");
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(0, 0);
+      g.arc(0, 0, len, -(r.spread || 0.25), r.spread || 0.25);
+      g.closePath();
+      g.fill();
+      g.restore();
+    }
+    const torches = spec.torches || [];
+    for (let i = 0; i < torches.length; i++) {
+      const flick = 0.72 + Math.sin(time * 7 + i * 1.7) * 0.18;
+      g.globalAlpha = flick;
+      stampGlow(glowLamp, torches[i].x, torches[i].y, cpos);
+    }
+    g.globalAlpha = 1;
+    g.globalCompositeOperation = "source-over";
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.drawImage(lightCanvas, 0, 0);
+    ctx.restore();
   }
 
   function drawIndoorLight(cpos) {
@@ -17236,6 +17399,8 @@
         vein.draw(cpos, t);
       } else if (rome && rome.isScene()) {
         rome.draw(cpos);
+      } else if (salt && salt.isScene()) {
+        salt.draw(cpos); /* SALTCROWN */
       } else {
         const room =
           scene === "fish"
@@ -17258,7 +17423,7 @@
         if (room) ctx.drawImage(room, 0, 0, rw, rh, -cpos.x, -cpos.y, rw, rh);
       }
       if (scene === "sub" || scene === "floor" || scene === "wreck") drawDiveWorld(cpos, t);
-      if (scene !== "sub" && scene !== "floor" && scene !== "wreck" && scene !== "vein" && !(rome && rome.isScene())) drawIndoorLight(cpos);
+      if (scene !== "sub" && scene !== "floor" && scene !== "wreck" && scene !== "vein" && !(rome && rome.isScene()) && !(salt && salt.isScene())) drawIndoorLight(cpos); /* SALTCROWN */
       if (scene === "shop") drawShopGoldSpark(cpos, t);
       if (scene === "cabin") {
         drawCabinChest(cpos);
@@ -17269,15 +17434,16 @@
       if (scene === "hub") {
         drawHubPeers(cpos, t);
       }
-      if (!(rome && rome.isScene())) {
+      if (!(rome && rome.isScene()) && !(salt && salt.isScene())) {
         for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
-      }
+      } /* SALTCROWN */
       if (scene === "cabin") drawWardenMagic(cpos, t);
       else if (scene === "shop" || scene === "fish") drawShopkeeperBubble(cpos, t);
       drawLoot(cpos);
       drawPetWorld(cpos);
       drawPlayerLit(cpos, false);
       if (rome && rome.isScene()) rome.drawFront(cpos);
+      if (salt && salt.isScene()) salt.drawFront(cpos); /* SALTCROWN */
       if (scene === "vein") drawWandBolts(cpos);
       if (scene === "floor" || scene === "wreck") drawAirBubble(cpos);
       if (scene === "cabin") drawCabinMotes(cpos);
@@ -17327,6 +17493,7 @@
       }
       drawMooredSailLit(cpos);
       drawSubmarine(cpos, t);
+      if (salt) salt.drawGate(cpos); /* SALTCROWN */
       for (let i = 0; i < npcs.length; i++) drawNpcLit(cpos, npcs[i], t);
       drawHarborBubble(cpos, t);
       drawLightSources(cpos, t, litFrame ? litFrame.lamps : 0);
@@ -17365,6 +17532,10 @@
       ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
       rome.drawHud();
     }
+    if (salt && salt.isScene()) {
+      ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
+      salt.drawHud();
+    } /* SALTCROWN */
     drawHubOverlay();
     drawDiveHud();
     drawGuide();
@@ -20610,6 +20781,10 @@
 
   function openWhatsNewItem(item) {
     if (!item) return;
+    if (item.kind === "update") {
+      window.location.href = sitePage("wiki.html") + "#castle";
+      return;
+    }
     if (item.kind === "weekly") {
       openRewardsMenu("weekly");
       return;
@@ -20674,6 +20849,7 @@
     if (kind === "item") return "ITEM";
     if (kind === "weekly") return "ROLL";
     if (kind === "particle") return "PART";
+    if (kind === "update") return "BETA";
     return "NEW";
   }
 
@@ -20723,6 +20899,15 @@
       cosmetics.face = prev;
     } else if (item.kind === "item") {
       drawHudIcon(item.id, -6, -6);
+    } else if (item.kind === "update") {
+      ink.fillStyle = "#1a3a8a";
+      ink.fillRect(-7, -16, 14, 22);
+      ink.fillStyle = "#3d6bff";
+      ink.fillRect(-5, -14, 10, 18);
+      ink.fillStyle = "#9bb6ff";
+      ink.fillRect(-3, -10, 6, 10);
+      ink.fillStyle = "#f4f7ff";
+      ink.fillRect(-1, -7, 3, 4);
     }
     ink.restore();
   }
@@ -20962,7 +21147,7 @@
 
     const pad = 10;
     const topY = 6;
-    const topBandH = 32;
+    const topBandH = 48;
     px(0, 0, uiW, topBandH, "#0a1520");
 
     // Corner chips — left: REWARDS + STATS + WIKI; right: PROFILES + RANKS + ACCOUNT
@@ -21010,7 +21195,8 @@
 
     const cx = (uiW / 2) | 0;
     drawPixText("ISLEBOUND", cx, topY + 1, "#f3e2c4", "center");
-    drawOnlineChip(cx, topY + chipH + 2);
+    drawPixTextSm("CASTLE UPDATE - BETA V5.0", cx, topY + 20, "#e8c44a", "center");
+    drawOnlineChip(cx, topY + 30);
 
     const modeH = 26;
     const modeY = uiH - modeH - 10;
@@ -22370,6 +22556,53 @@
     else if (uiScreen === "duel_home") drawDuelHome();
     else if (uiScreen === "duel_room") drawDuelRoom();
     else if (uiScreen === "duel_card") drawDuelCard();
+    if (uiScreen === "mode" || uiScreen === "account" || uiScreen === "finish") {
+      drawAnticheatNotice(currentBanText());
+    }
+  }
+
+  function currentBanText() {
+    const api = lbApi();
+    if (!api || !api.checkBanIdentity || !api.banUserMessage) return "";
+    const name =
+      (api.displayName && api.displayName()) ||
+      (api.getLastName && api.getLastName()) ||
+      authUser ||
+      authName ||
+      srName ||
+      "";
+    const user = api.currentUser && api.currentUser();
+    const hit = api.checkBanIdentity({ name, user_id: user && user.id });
+    return hit && hit.banned ? api.banUserMessage() : "";
+  }
+
+  function drawAnticheatNotice(text) {
+    if (!text) return;
+    const raw = String(text).split("\n");
+    const lines = [];
+    for (let i = 0; i < raw.length; i++) {
+      let rest = raw[i];
+      if (!rest) {
+        lines.push("");
+        continue;
+      }
+      while (rest.length > 46) {
+        let cut = rest.lastIndexOf(" ", 46);
+        if (cut < 12) cut = 46;
+        lines.push(rest.slice(0, cut));
+        rest = rest.slice(cut).replace(/^ /, "");
+      }
+      lines.push(rest);
+    }
+    const uiW = canvas.width / SCALE_UI;
+    const w = Math.min(uiW - 12, 292);
+    const h = 8 + lines.length * 9;
+    const x = ((uiW - w) / 2) | 0;
+    const y = 6;
+    drawPanelBox(x, y, w, h, "");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]) drawPixText(lines[i], x + 6, y + 4 + i * 9, "#3a2414");
+    }
   }
 
   async function submitSpeedScore() {
@@ -22516,7 +22749,8 @@
       api.setLastName(n);
       srName = n;
       guestNameLocked = false;
-      authStatus = "GUEST READY";
+      const guestBan = api.checkBanIdentity && api.checkBanIdentity({ name: n });
+      authStatus = guestBan && guestBan.banned ? "TEMP BANNED" : "GUEST READY";
       authBusy = false;
       authMode = "menu";
       srCursor = 0;
@@ -23155,6 +23389,8 @@
       bagOut.push(s && s.id ? { id: s.id, count: s.count | 0 } : null);
     }
     const cityExit = rome && rome.cityExitSave ? rome.cityExitSave() : null;
+    const saltExit = salt && salt.isScene(); /* SALTCROWN */
+    const saltHome = saltExit && boatBerth ? { x: boatBerth.x, y: boatBerth.y - 28 } : null;
     return {
       slots,
       heldSlot,
@@ -23163,11 +23399,11 @@
       xp: player.xp | 0,
       level: player.level | 0,
       hp: player.hp | 0,
-      x: cityExit ? cityExit.x : player.x,
-      y: cityExit ? cityExit.y : player.y,
+      x: cityExit ? cityExit.x : saltHome ? saltHome.x : player.x,
+      y: cityExit ? cityExit.y : saltHome ? saltHome.y : player.y,
       facing: player.facing,
-      aboard: !!player.aboard,
-      scene: cityExit ? "rome" : scene,
+      aboard: saltExit ? false : !!player.aboard,
+      scene: cityExit ? "rome" : saltExit ? "island" : scene, /* SALTCROWN */
       cloak: cloakOn,
       cosmetics: { face: cosmetics.face, back: cosmetics.back },
       locker: lockerSnapshot(),
@@ -23324,7 +23560,7 @@
     ) {
       scene = data.scene;
       if (rome && rome.isScene(scene)) rome.restore(data.rome);
-    } else if (data.scene === "hub" || data.scene === "vein") {
+    } else if (data.scene === "hub" || data.scene === "vein" || (typeof data.scene === "string" && data.scene.indexOf("salt") === 0)) { /* SALTCROWN */
       // Hub and the removed mountain dungeon remount to the dock.
       scene = "island";
       player.x = spawnX;
@@ -23466,6 +23702,7 @@
     updateWandBolts(dt);
     if (scene === "vein" && vein) vein.update(dt);
     if (rome) rome.update(dt);
+    if (salt) salt.update(dt); /* SALTCROWN */
     updateDive(dt);
     updateMaskGoal();
     if (srTiming) captureReplayFrame(false);
@@ -23678,7 +23915,7 @@
     }
     if (guideOpen || cabinCut.kind) return;
     if (e.repeat) {
-      if (k === "enter" && isIndoor() && !cosSelect) dropHeld();
+      if (k === "enter" && isIndoor() && !cosSelect && !(salt && salt.isScene && salt.isScene())) dropHeld(); /* SALTCROWN */
       return;
     }
     if (k >= "1" && k <= "8") {
@@ -23690,6 +23927,7 @@
       }
     }
     if (rome && rome.isScene() && rome.onKey(k)) return;
+    if (salt && salt.onKey(k)) return; /* SALTCROWN */
     if (k === "enter") onEnter();
     if (k === " ") {
       if (!tryCatchLandCrab()) useHeld();
@@ -23973,7 +24211,10 @@
   function zoomGoal() {
     const goingRome = fadeMode && fadeNext && rome && rome.isScene(fadeNext.scene);
     const onRome = rome && rome.isScene(scene);
+    const goingSalt = fadeMode && fadeNext && salt && salt.isScene(fadeNext.scene); /* SALTCROWN */
+    const onSalt = salt && salt.isScene(scene); /* SALTCROWN */
     const goingOut = fadeMode && fadeNext && fadeNext.scene === "island";
+    if ((onSalt && !goingOut) || goingSalt) return indoorZoom(); /* SALTCROWN */
     if ((onRome && !goingOut) || goingRome) return keys.z ? SCALE_FAR : SCALE_DEFAULT;
     const goingShop =
       fadeMode &&
@@ -24087,6 +24328,109 @@
     duelUnloadCleanup();
   });
 
+  function saltHasItem(id) {
+    for (let i = 0; i < inventory.length; i++) {
+      if (inventory[i] && inventory[i].id === id && inventory[i].count > 0) return true;
+    }
+    for (let i = 0; i < satchel.length; i++) {
+      if (satchel[i] && satchel[i].id === id && satchel[i].count > 0) return true;
+    }
+    return false;
+  }
+
+  function saltTakeItem(id) {
+    const held = inventory[heldSlot];
+    if (held && held.id === id && held.count > 0) {
+      held.count -= 1;
+      if (held.count <= 0) inventory[heldSlot] = null;
+      return true;
+    }
+    for (let i = 0; i < inventory.length; i++) {
+      const stack = inventory[i];
+      if (stack && stack.id === id && stack.count > 0) {
+        stack.count -= 1;
+        if (stack.count <= 0) inventory[i] = null;
+        return true;
+      }
+    }
+    for (let i = 0; i < satchel.length; i++) {
+      const stack = satchel[i];
+      if (stack && stack.id === id && stack.count > 0) {
+        stack.count -= 1;
+        if (stack.count <= 0) satchel[i] = null;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /* SALTCROWN — delete this function with the other marked hooks to undo the castle. */
+  function ensureSalt() {
+    if (salt) return salt;
+    if (typeof IsleSaltBuild !== "function") return null;
+    salt = IsleSaltBuild({
+      player,
+      pxi,
+      px,
+      drawPixText,
+      ctx: () => ctx,
+      time: () => time,
+      viewW: () => viewW,
+      viewH: () => viewH,
+      uiW: () => (canvas.width / SCALE_UI) | 0,
+      uiH: () => (canvas.height / SCALE_UI) | 0,
+      getScene: () => scene,
+      fade: (sc, spawn) => beginFade(sc, spawn),
+      fading: () => !!fadeMode,
+      playBlocked: () => uiBlocksPlay() || !!guideOpen,
+      shake: (n) => {
+        shake = Math.max(shake, n | 0);
+      },
+      coins: () => player.coins,
+      spend: (n) => {
+        if (player.coins < n) return false;
+        player.coins -= n;
+        return true;
+      },
+      refund: (n) => {
+        player.coins += n;
+      },
+      give: (id) => giveBoughtItem(id),
+      holding: (id) => saltHasItem(id),
+      consume: (id) => saltTakeItem(id),
+      heldId: () => {
+        const s = inventory[heldSlot];
+        return s && s.count > 0 ? s.id : "";
+      },
+      down: (k) => !!keys[k],
+      sfx: (kind) => playSaltWood(kind),
+      light: (cpos, spec) => drawSaltLight(cpos, spec),
+      wearingMask: () => cosmetics.face === "jade_mask" || saltHasItem("jade_mask"),
+      speedMode: () => playMode === "speedrun",
+      aboard: () => player.aboard && aboardKind === "skiff",
+      setAboard: (on) => {
+        player.aboard = !!on;
+        aboardKind = on ? "skiff" : null;
+      },
+      boat: () => ownedBoat,
+      boatPos: () =>
+        ownedBoat
+          ? { x: ownedBoat.x + ownedBoat.w / 2, y: ownedBoat.y + ownedBoat.h / 2 }
+          : null,
+      berth: () => boatBerth,
+      onLand: (x, y) => onIslandLand(x, y) && !hitPad(x, y, islandSolids), /* SALTCROWN */
+      nearBerth: () => {
+        if (!boatBerth || scene !== "island") return false;
+        const mid = playerCenter();
+        return Math.hypot(mid.x - (boatBerth.x + boatBerth.w / 2), mid.y - (boatBerth.y + boatBerth.h / 2)) < 96;
+      },
+      worldH: () => ROWS * TILE,
+      island: () => saltIsle, /* SALTCROWN */
+      storm: () => weather.phase !== "clear",
+    });
+    return salt;
+  }
+
   function ensureRome() {
     if (rome) return rome;
     if (typeof IsleRomeBuild !== "function") return null;
@@ -24165,6 +24509,7 @@
 
   ensureRome();
   buildWorld();
+  ensureSalt(); /* SALTCROWN */
   resizeCanvas();
   camera.x = player.x + player.w / 2 - viewW / 2;
   camera.y = player.y + player.h / 2 - viewH * 0.36;
