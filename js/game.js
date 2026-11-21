@@ -18318,6 +18318,10 @@
   }
 
   function openDuelMenu() {
+    if (competitiveRestrictActive()) {
+      srCursor = 0;
+      return;
+    }
     closeIslandChat();
     duelEnsureId();
     duelEnsureNet();
@@ -19456,16 +19460,44 @@
     return true;
   }
 
+  function competitiveRestrictActive() {
+    const api = lbApi();
+    if (!api || !api.isCompetitiveRestricted) return false;
+    const name =
+      (api.displayName && api.displayName()) ||
+      (api.getLastName && api.getLastName()) ||
+      authUser ||
+      authName ||
+      srName ||
+      "";
+    const user = api.currentUser && api.currentUser();
+    return !!api.isCompetitiveRestricted({
+      name,
+      user_id: user && user.id,
+      client_id: api.getClientId ? api.getClientId() : "",
+      ip: api.getClientIp ? api.getClientIp() : "",
+    });
+  }
+
   function activateModeOpt(i) {
     if (i === 0) enterNormalMode();
     else if (i === 1) {
+      if (competitiveRestrictActive()) {
+        srCursor = 0;
+        return;
+      }
       playMode = "speedrun";
       uiScreen = "categories";
       srGroup = 0;
       srCursor = 0;
       refreshSpeedBoard(SPEED_GROUPS[0].cats[0]);
-    } else if (i === 2) openDuelMenu();
-    else if (i === 3) {
+    } else if (i === 2) {
+      if (competitiveRestrictActive()) {
+        srCursor = 0;
+        return;
+      }
+      openDuelMenu();
+    } else if (i === 3) {
       uiScreen = "account";
       authMode = "menu";
       authStatus = "";
@@ -21894,6 +21926,7 @@
       { label: "SPEEDRUN", idx: 1 },
       { label: "DUELS", idx: 2 },
     ];
+    const lockedCompetitive = competitiveRestrictActive();
     const tileW = 78;
     const tileH = modeH;
     const tileGap = 10;
@@ -21903,18 +21936,22 @@
       const m = modes[i];
       const tx = tileX0 + i * (tileW + tileGap);
       const key = "mode:" + m.idx;
-      const sel = srCursor === m.idx || menuHovering(key);
-      px(tx, modeY, tileW, tileH, sel ? "#e8c44a" : "#2b1c12");
-      px(tx + 1, modeY + 1, tileW - 2, tileH - 2, sel ? "#e8c44a" : "#8a5a32");
-      px(tx + 2, modeY + 2, tileW - 4, tileH - 4, sel ? "#f3e2c4" : "#5c3a21");
+      const locked = lockedCompetitive && m.idx !== 0;
+      const sel = !locked && (srCursor === m.idx || menuHovering(key));
+      px(tx, modeY, tileW, tileH, locked ? "#1a120c" : sel ? "#e8c44a" : "#2b1c12");
+      px(tx + 1, modeY + 1, tileW - 2, tileH - 2, locked ? "#2b1c12" : sel ? "#e8c44a" : "#8a5a32");
+      px(tx + 2, modeY + 2, tileW - 4, tileH - 4, locked ? "#3a2414" : sel ? "#f3e2c4" : "#5c3a21");
       const labelY = modeY + (((tileH - 7) / 2) | 0) + 1;
-      const ink = sel ? "#2b1c12" : "#f3e2c4";
+      const ink = locked ? "#5c3a21" : sel ? "#2b1c12" : "#f3e2c4";
       if (m.label === "DUELS") {
-        drawPixText("VS", tx + 5, labelY, sel ? "#2b1c12" : "#e8c44a");
+        drawPixText("VS", tx + 5, labelY, locked ? "#5c3a21" : sel ? "#2b1c12" : "#e8c44a");
         drawPixText(m.label, tx + 20, labelY, ink);
       } else {
         drawModeMenuIcon(m.label === "SURVIVAL" ? "NORMAL" : m.label, tx + 7, labelY - 1);
         drawPixText(m.label, tx + 20, labelY, ink);
+      }
+      if (locked) {
+        drawPixTextSm("LOCK", tx + ((tileW / 2) | 0), modeY + tileH - 8, "#8a5a32", "center");
       }
       addMenuHit(
         key,
@@ -21923,10 +21960,14 @@
         tileW,
         tileH,
         () => {
+          if (locked) {
+            srCursor = 0;
+            return;
+          }
           srCursor = m.idx;
           activateModeOpt(m.idx);
         },
-        { hover: true }
+        { hover: !locked }
       );
     }
 
@@ -22934,7 +22975,7 @@
 
   function currentBanText() {
     const api = lbApi();
-    if (!api || !api.checkBanIdentity || !api.banUserMessage) return "";
+    if (!api) return "";
     const name =
       (api.displayName && api.displayName()) ||
       (api.getLastName && api.getLastName()) ||
@@ -22943,12 +22984,17 @@
       srName ||
       "";
     const user = api.currentUser && api.currentUser();
-    const hit = api.checkBanIdentity({
+    const ident = {
       name,
       user_id: user && user.id,
       client_id: api.getClientId ? api.getClientId() : "",
       ip: api.getClientIp ? api.getClientIp() : "",
-    });
+    };
+    if (api.competitiveRestrictText && api.isCompetitiveRestricted && api.isCompetitiveRestricted(ident)) {
+      return api.competitiveRestrictText(ident);
+    }
+    if (!api.checkBanIdentity || !api.banUserMessage) return "";
+    const hit = api.checkBanIdentity(ident);
     return hit && hit.banned ? api.banUserMessage() : "";
   }
 
@@ -23126,7 +23172,10 @@
       srName = n;
       guestNameLocked = false;
       const guestBan = api.checkBanIdentity && api.checkBanIdentity({ name: n });
-      authStatus = guestBan && guestBan.banned ? "TEMP BANNED" : "GUEST READY";
+      if (guestBan && guestBan.banned) authStatus = "TEMP BANNED";
+      else if (api.isCompetitiveRestricted && api.isCompetitiveRestricted({ name: n, client_id: api.getClientId ? api.getClientId() : "", ip: api.getClientIp ? api.getClientIp() : "" })) {
+        authStatus = "SURVIVAL ONLY";
+      } else authStatus = "GUEST READY";
       authBusy = false;
       authMode = "menu";
       srCursor = 0;
@@ -23184,6 +23233,11 @@
     }
     if (uiScreen === "duel_home" || uiScreen === "duel_room" || uiScreen === "duel_card") return onDuelKey(k);
     if (uiScreen === "mode") {
+      if (competitiveRestrictActive()) {
+        srCursor = 0;
+        if (k === "enter" || k === " ") activateModeOpt(0);
+        return true;
+      }
       if (k === "arrowleft" || k === "a") srCursor = (srCursor + 2) % 3;
       if (k === "arrowright" || k === "d") srCursor = (srCursor + 1) % 3;
       if (k === "arrowup" || k === "w") srCursor = (srCursor + 2) % 3;
@@ -24020,29 +24074,7 @@
   }
 
   let last = performance.now();
-  function drawNetworkBan(text) {
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = "#140e0a";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(SCALE_UI, 0, 0, SCALE_UI, 0, 0);
-    const lines = String(text || "NETWORK BANNED").split("\n");
-    const uiW = canvas.width / SCALE_UI;
-    const uiH = canvas.height / SCALE_UI;
-    const y0 = ((uiH - lines.length * 10) / 2) | 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i]) drawPixText(lines[i], (uiW / 2) | 0, y0 + i * 10, "#f2e2c4", "center");
-    }
-    ctx.restore();
-  }
-
   function loop(now) {
-    const netApi = lbApi();
-    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
-      drawNetworkBan(netApi.networkBanText ? netApi.networkBanText() : "");
-      requestAnimationFrame(loop);
-      return;
-    }
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     time = now / 1000;
@@ -24141,11 +24173,6 @@
   }
 
   window.addEventListener("keydown", (e) => {
-    const netApi = lbApi();
-    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
-      e.preventDefault();
-      return;
-    }
     const k = e.key.toLowerCase();
     keys[k] = true;
     ensureAudio();
@@ -24429,11 +24456,6 @@
   });
 
   canvas.addEventListener("mousedown", (e) => {
-    const netApi = lbApi();
-    if (netApi && netApi.isNetworkBanned && netApi.isNetworkBanned()) {
-      e.preventDefault();
-      return;
-    }
     if (e.button !== 0) return;
     ensureAudio();
     const p = eventToUi(e);

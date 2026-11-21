@@ -323,90 +323,102 @@
     return lastBanHit && lastBanHit.banned && lastBanHit.ban ? lastBanHit.ban.reason || "" : "";
   }
 
-  const LTHOM_BAN_UNTIL = "2026-11-27T15:20:00.000Z";
+  // LTHOM / BANTEMPBANS / 104.28.216.104 — survival restored.
+  // Speedruns and duels stay locked. Old board times stay hidden.
   const LTHOM_BAN_USER = "37d0c58f-dd13-40dd-974b-f0af036c7470";
-  // Browsers already seen on these names. Scores do not store an IP.
   const ALT_BAN_CLIENTS = {
     "854f329a-0e0c-4be1-9306-44f61b00af20": 1,
     "3337bf7d-1ece-46dc-a4ad-de3465197cce": 1,
     "06f88beb-595d-48de-8d5d-8c29b6153b92": 1,
   };
-  const LTHOM_BAN_TEXT =
+  const COMPETITIVE_RESTRICT_IPS = {
+    "104.28.216.104": 1,
+  };
+  const COMPETITIVE_RESTRICT_TEXT =
     "ISLEBOUND ANTICHEAT\n" +
-    "-- secondary account detected\n" +
-    "-- voilates tempban rules\n" +
-    "-- 7 day tempban\n" +
-    "-- refrain from creating alternate accounts\n" +
-    "-- game tick multiplyer detected\n" +
+    "-- survival restored\n" +
+    "-- speedruns and duels locked\n" +
+    "-- refrain from cheating tools and game alters\n" +
     "\n" +
     "contact developer if incorrect";
 
-  function lthomBanHit(ident) {
-    if (Date.now() >= Date.parse(LTHOM_BAN_UNTIL)) return null;
+  function matchesLthomIdentity(ident) {
     const name = normalizeIdentityName(ident && ident.name);
     const uid = ident && ident.user_id ? String(ident.user_id) : "";
     const cid = ident && ident.client_id ? String(ident.client_id) : "";
-    // Logan Thomas — the account name is LTHOM. BANTEMPBANS is the guest alt.
-    if (
-      uid !== LTHOM_BAN_USER &&
-      !ALT_BAN_CLIENTS[cid] &&
-      name !== "LTHOM" &&
-      name !== "LTOM" &&
-      name !== "L THOM" &&
-      name !== "LOGAN THOMAS" &&
-      name !== "LOGAN T" &&
-      name !== "LOGANTHOMAS" &&
-      name !== "BANTEMPBANS" &&
-      name !== "BANTEMBA"
-    ) {
-      return null;
-    }
-    return {
-      banned: true,
-      ban: {
-        name_norm: name || "LTHOM",
-        user_id: uid || LTHOM_BAN_USER,
-        client_id: cid || null,
-        expires_at: LTHOM_BAN_UNTIL,
-        reason: LTHOM_BAN_TEXT,
-      },
-    };
+    return (
+      uid === LTHOM_BAN_USER ||
+      !!ALT_BAN_CLIENTS[cid] ||
+      name === "LTHOM" ||
+      name === "LTOM" ||
+      name === "L THOM" ||
+      name === "LOGAN THOMAS" ||
+      name === "LOGAN T" ||
+      name === "LOGANTHOMAS" ||
+      name === "BANTEMPBANS" ||
+      name === "BANTEMBA"
+    );
   }
 
-  const NETWORK_BAN_IPS = {
-    "104.28.216.104": 1,
-  };
-  const NETWORK_BAN_TEXT =
-    "ISLEBOUND ANTICHEAT\n" +
-    "-- network banned\n" +
-    "-- no play and no accounts\n" +
-    "\n" +
-    "contact developer if incorrect";
-
-  function networkBanHit(ident) {
+  function competitiveRestrictHit(ident) {
     const ip = String((ident && ident.ip) || clientIp || "").trim();
-    if (!NETWORK_BAN_IPS[ip]) return null;
+    const byIp = !!COMPETITIVE_RESTRICT_IPS[ip];
+    const byIdent = matchesLthomIdentity(ident || {});
+    if (!byIp && !byIdent) return null;
+    const name = normalizeIdentityName(ident && ident.name);
+    const uid = ident && ident.user_id ? String(ident.user_id) : "";
+    const cid = ident && ident.client_id ? String(ident.client_id) : "";
     return {
-      banned: true,
+      restricted: true,
       ban: {
-        ip: ip,
+        name_norm: name || (byIp ? "NETWORK" : "LTHOM"),
+        user_id: uid || (byIdent ? LTHOM_BAN_USER : null),
+        client_id: cid || null,
+        ip: byIp ? ip : null,
         expires_at: null,
-        reason: NETWORK_BAN_TEXT,
+        reason: COMPETITIVE_RESTRICT_TEXT,
       },
     };
   }
 
+  function isCompetitiveRestricted(ident) {
+    if (ident) return !!competitiveRestrictHit(ident);
+    return !!competitiveRestrictHit({
+      name: (session && session.user && session.user.username) || getLastName() || "",
+      user_id: session && session.user && session.user.id,
+      client_id: getClientId(),
+      ip: clientIp,
+    });
+  }
+
+  function competitiveRestrictText(ident) {
+    const hit = competitiveRestrictHit(
+      ident || {
+        name: (session && session.user && session.user.username) || getLastName() || "",
+        user_id: session && session.user && session.user.id,
+        client_id: getClientId(),
+        ip: clientIp,
+      }
+    );
+    return hit && hit.ban ? hit.ban.reason || "" : "";
+  }
+
+  // Full play bans lifted for LTHOM / 104 — survival, accounts, chat, and hub work.
+  // Keep stubs so older callers do not crash.
   function isNetworkBanned() {
-    return !!NETWORK_BAN_IPS[String(clientIp || "").trim()];
+    return false;
   }
 
   function networkBanText() {
-    return isNetworkBanned() ? NETWORK_BAN_TEXT : "";
+    return "";
   }
 
   function checkBanIdentity(ident) {
-    const hit = networkBanHit(ident || {}) || lthomBanHit(ident || {});
-    lastBanHit = hit || { banned: false };
+    // Competitive lock is not a full ban — sign-in and survival stay open.
+    const hit = competitiveRestrictHit(ident || {});
+    lastBanHit = hit
+      ? { banned: false, competitive: true, ban: hit.ban }
+      : { banned: false };
     return lastBanHit;
   }
 
@@ -1426,13 +1438,24 @@
     if (!name) return { ok: false, error: "name must be 3-12 letters/numbers" };
     const ms = timeMs | 0;
     if (ms <= 0) return { ok: false, error: "bad time" };
-    const banHit = checkBanIdentity({
+    const restrictIdent = {
       name,
       user_id: resolved.user_id || (session && session.user && session.user.id) || null,
       client_id: getClientId(),
       ip: clientIp,
-    });
+    };
+    const banHit = checkBanIdentity(restrictIdent);
     if (banHit.banned) return banBlockResult(banHit);
+    const competitiveHit = competitiveRestrictHit(restrictIdent);
+    if (competitiveHit) {
+      return {
+        ok: false,
+        banned: true,
+        competitive: true,
+        error: (competitiveHit.ban && competitiveHit.ban.reason) || "SPEEDRUNS LOCKED",
+        until: null,
+      };
+    }
     if (ms > 24 * 60 * 60 * 1000) return { ok: false, error: "time too high" };
     setLastName(name);
     if (!configured()) {
@@ -3721,6 +3744,8 @@
     checkBanIdentity,
     isNetworkBanned,
     networkBanText,
+    isCompetitiveRestricted,
+    competitiveRestrictText,
     getBanStatus,
     banUserMessage,
     applyCheatBan,
